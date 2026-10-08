@@ -1,12 +1,11 @@
 use bfd_winservice::{
-    config::Options,
-    packet::AuthConfig,
+    config::{load_registry, SERVICE_NAME},
     runtime::{Engine, Logger},
 };
 use std::{
     ffi::OsString,
     io,
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -20,14 +19,9 @@ use windows_service::{
     service_dispatcher,
 };
 
-const SERVICE_NAME: &str = "BfdWinService";
-static CONFIGURATION: OnceLock<(Options, AuthConfig)> = OnceLock::new();
 define_windows_service!(service_main, service_entry);
 
-pub fn run(options: Options, auth: AuthConfig) -> Result<(), Box<dyn std::error::Error>> {
-    CONFIGURATION
-        .set((options, auth))
-        .map_err(|_| "service configuration already initialized")?;
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     service_dispatcher::start(SERVICE_NAME, service_main)?;
     Ok(())
 }
@@ -67,48 +61,54 @@ fn run_service() -> Result<(), Box<dyn std::error::Error>> {
         reporter.handle = Some(handle);
         reporter.publish(ServiceExitCode::Win32(0))?;
     }
+    let mut log = Logger::new(false);
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        let (options, auth) = CONFIGURATION.get().ok_or("missing service configuration")?;
-        let mut log = Logger::open(options)?;
-        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            let mut engine = Engine::open(options.clone(), auth.clone(), &mut log)?;
-            reporter
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .set(ServiceState::Running, ServiceExitCode::Win32(0))?;
-            // The engine thread waits for provider cleanup. After a Stop/Shutdown
-            // request, advance SCM StopPending checkpoints until it finishes.
-            let (done_tx, done_rx) = mpsc::channel();
-            thread::scope(|scope| -> io::Result<()> {
-                let worker_log = &mut log;
-                let worker = scope.spawn(move || {
-                    let result = engine.run(&stop_rx, worker_log);
-                    let _ = done_tx.send(());
-                    result
-                });
-                while let Err(mpsc::RecvTimeoutError::Timeout) =
-                    done_rx.recv_timeout(Duration::from_secs(1))
-                {
-                    let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
-                    if let Err(error) = reporter.heartbeat() {
-                        eprintln!("Unable to report BFD shutdown progress: {error}");
-                    }
-                    // The receiver also wakes if the worker unwinds.
-                    if worker.is_finished() {
-                        break;
-                    }
-                }
-                worker
-                    .join()
-                    .map_err(|_| io::Error::other("BFD engine worker panicked"))?
-            })?;
-            Ok(())
-        })();
-        if let Err(error) = &result {
-            log.log(format!("service failed: {error}"));
+        let mut options = load_registry(false)?;
+        let auth = options
+            .validate()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        log.open_file(options.log_file.as_deref())?;
+        let mut engine = Engine::open(options, auth, &mut log)?;
+        let started = {
+            let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
+            reporter.set(ServiceState::Running, ServiceExitCode::Win32(0))?;
+            reporter.state == ServiceState::Running
+        };
+        if started {
+            log.service_started();
         }
-        result
+        // The engine thread waits for provider cleanup. After a Stop/Shutdown
+        // request, advance SCM StopPending checkpoints until it finishes.
+        let (done_tx, done_rx) = mpsc::channel();
+        thread::scope(|scope| -> io::Result<()> {
+            let worker_log = &mut log;
+            let worker = scope.spawn(move || {
+                let result = engine.run(&stop_rx, worker_log);
+                let _ = done_tx.send(());
+                result
+            });
+            while let Err(mpsc::RecvTimeoutError::Timeout) =
+                done_rx.recv_timeout(Duration::from_secs(1))
+            {
+                let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
+                if let Err(error) = reporter.heartbeat() {
+                    eprintln!("Unable to report BFD shutdown progress: {error}");
+                }
+                // The receiver also wakes if the worker unwinds.
+                if worker.is_finished() {
+                    break;
+                }
+            }
+            worker
+                .join()
+                .map_err(|_| io::Error::other("BFD engine worker panicked"))?
+        })?;
+        Ok(())
     })();
+    if let Err(error) = &result {
+        log.service_failed(error);
+    }
+    log.service_stopped(u32::from(result.is_err()));
     reporter
         .lock()
         .unwrap_or_else(|error| error.into_inner())

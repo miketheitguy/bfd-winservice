@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<instrumentationManifest
+    xmlns="http://schemas.microsoft.com/win/2004/08/events"
+    xmlns:win="http://manifests.microsoft.com/win/2004/08/windows/events">
+  <instrumentation>
+    <events>
+      <provider name="BFD-Service"
+                guid="{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}"
+                symbol="BFD_SERVICE_PROVIDER"
+                resourceFileName="bfd-winservice.exe"
+                messageFileName="bfd-winservice.exe"
+                message="$(string.Provider.Name)">
+        <channels>
+          <channel name="BFD-Service/Operational" chid="Operational"
+                   symbol="BFD_OPERATIONAL" value="16" type="Operational" enabled="true"/>
+        </channels>
+        <tasks>
+          <task name="ServiceLifecycle" symbol="BFD_SERVICE_LIFECYCLE" value="1"
+                message="$(string.Task.ServiceLifecycle)"/>
+          <task name="PeerCommunication" symbol="BFD_PEER_COMMUNICATION" value="2"
+                message="$(string.Task.PeerCommunication)"/>
+        </tasks>
+        <keywords>
+          <keyword name="Service" symbol="BFD_KEYWORD_SERVICE" mask="0x1"
+                   message="$(string.Keyword.Service)"/>
+          <keyword name="Communication" symbol="BFD_KEYWORD_COMMUNICATION" mask="0x2"
+                   message="$(string.Keyword.Communication)"/>
+        </keywords>
+        <maps>
+          <valueMap name="RunMode">
+            <map value="0" message="$(string.RunMode.Service)"/>
+            <map value="1" message="$(string.RunMode.Console)"/>
+          </valueMap>
+          <valueMap name="BfdState">
+            <map value="0" message="$(string.State.AdminDown)"/>
+            <map value="1" message="$(string.State.Down)"/>
+            <map value="2" message="$(string.State.Init)"/>
+            <map value="3" message="$(string.State.Up)"/>
+          </valueMap>
+          <valueMap name="BfdDiagnostic">
+            <map value="0" message="$(string.Diagnostic.None)"/>
+            <map value="1" message="$(string.Diagnostic.DetectionExpired)"/>
+            <map value="3" message="$(string.Diagnostic.NeighborDown)"/>
+            <map value="7" message="$(string.Diagnostic.AdminDown)"/>
+          </valueMap>
+          <valueMap name="BfdAuthenticationType">
+            <map value="0" message="$(string.Authentication.None)"/>
+            <map value="1" message="$(string.Authentication.SimplePassword)"/>
+            <map value="2" message="$(string.Authentication.KeyedMd5)"/>
+            <map value="3" message="$(string.Authentication.MeticulousMd5)"/>
+            <map value="4" message="$(string.Authentication.KeyedSha1)"/>
+            <map value="5" message="$(string.Authentication.MeticulousSha1)"/>
+          </valueMap>
+        </maps>
+        <templates>
+          <template tid="ServiceStartedData">
+            <data name="Mode" inType="win:UInt8" map="RunMode"/>
+          </template>
+          <template tid="ServiceStoppedData">
+            <data name="Mode" inType="win:UInt8" map="RunMode"/>
+            <data name="ExitCode" inType="win:UInt32"/>
+          </template>
+          <template tid="ServiceFailedData">
+            <data name="Mode" inType="win:UInt8" map="RunMode"/>
+            <data name="Error" inType="win:UnicodeString"/>
+          </template>
+          <template tid="SessionData">
+            <data name="LocalAddress" inType="win:UnicodeString"/>
+            <data name="PeerAddress" inType="win:UnicodeString"/>
+            <data name="LocalDiscriminator" inType="win:UInt32"/>
+            <data name="RemoteDiscriminator" inType="win:UInt32"/>
+            <data name="PreviousState" inType="win:UInt8" map="BfdState"/>
+            <data name="State" inType="win:UInt8" map="BfdState"/>
+            <data name="Diagnostic" inType="win:UInt8" map="BfdDiagnostic"/>
+            <data name="TransmitIntervalUs" inType="win:UInt64"/>
+            <data name="DetectionTimeUs" inType="win:UInt64"/>
+          </template>
+          <template tid="AuthenticationFailedData">
+            <data name="LocalAddress" inType="win:UnicodeString"/>
+            <data name="PeerAddress" inType="win:UnicodeString"/>
+            <data name="PacketSource" inType="win:UnicodeString"/>
+            <data name="LocalDiscriminator" inType="win:UInt32"/>
+            <data name="AuthenticationType" inType="win:UInt8" map="BfdAuthenticationType"/>
+            <data name="KeyId" inType="win:UInt8"/>
+            <data name="Reason" inType="win:UnicodeString"/>
+          </template>
+        </templates>
+        <events>
+          <event value="1" version="0" symbol="SERVICE_STARTED" channel="Operational"
+                 level="win:Informational" task="ServiceLifecycle" keywords="Service"
+                 template="ServiceStartedData" message="$(string.Event.ServiceStarted)"/>
+          <event value="2" version="0" symbol="SERVICE_STOPPED" channel="Operational"
+                 level="win:Informational" task="ServiceLifecycle" keywords="Service"
+                 template="ServiceStoppedData" message="$(string.Event.ServiceStopped)"/>
+          <event value="3" version="0" symbol="SERVICE_FAILED" channel="Operational"
+                 level="win:Error" task="ServiceLifecycle" keywords="Service"
+                 template="ServiceFailedData" message="$(string.Event.ServiceFailed)"/>
+          <event value="100" version="0" symbol="PEER_COMMUNICATION_STARTED" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.PeerCommunicationStarted)"/>
+          <event value="101" version="0" symbol="PEER_COMMUNICATION_STOPPED" channel="Operational"
+                 level="win:Warning" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.PeerCommunicationStopped)"/>
+          <event value="102" version="0" symbol="SESSION_UP" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.SessionUp)"/>
+          <event value="103" version="0" symbol="SESSION_DOWN" channel="Operational"
+                 level="win:Warning" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.SessionDown)"/>
+          <event value="104" version="0" symbol="SESSION_STATE_CHANGED" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.SessionStateChanged)"/>
+          <event value="105" version="0" symbol="AUTHENTICATION_FAILED" channel="Operational"
+                 level="win:Warning" task="PeerCommunication" keywords="Communication"
+                 template="AuthenticationFailedData" message="$(string.Event.AuthenticationFailed)"/>
+        </events>
+      </provider>
+    </events>
+  </instrumentation>
+  <localization>
+    <resources culture="en-US">
+      <stringTable>
+        <string id="Provider.Name" value="BFD-Service"/>
+        <string id="Task.ServiceLifecycle" value="Service lifecycle"/>
+        <string id="Task.PeerCommunication" value="BFD peer communication"/>
+        <string id="Keyword.Service" value="Service"/>
+        <string id="Keyword.Communication" value="Communication"/>
+        <string id="RunMode.Service" value="Windows service"/>
+        <string id="RunMode.Console" value="Console"/>
+        <string id="State.AdminDown" value="AdminDown"/>
+        <string id="State.Down" value="Down"/>
+        <string id="State.Init" value="Init"/>
+        <string id="State.Up" value="Up"/>
+        <string id="Diagnostic.None" value="None"/>
+        <string id="Diagnostic.DetectionExpired" value="Control Detection Time Expired"/>
+        <string id="Diagnostic.NeighborDown" value="Neighbor Signaled Session Down"/>
+        <string id="Diagnostic.AdminDown" value="Administratively Down"/>
+        <string id="Authentication.None" value="None"/>
+        <string id="Authentication.SimplePassword" value="Simple Password"/>
+        <string id="Authentication.KeyedMd5" value="Keyed MD5"/>
+        <string id="Authentication.MeticulousMd5" value="Meticulous Keyed MD5"/>
+        <string id="Authentication.KeyedSha1" value="Keyed SHA1"/>
+        <string id="Authentication.MeticulousSha1" value="Meticulous Keyed SHA1"/>
+        <string id="Event.ServiceStarted" value="BFD service started. Mode: %1."/>
+        <string id="Event.ServiceStopped" value="BFD service stopped. Mode: %1. Exit code: %2."/>
+        <string id="Event.ServiceFailed" value="BFD service failed. Mode: %1. Error: %2."/>
+        <string id="Event.PeerCommunicationStarted" value="Remote peer %2 started sending valid BFD control packets to %1. Local discriminator: %3. Remote discriminator: %4. State: %6."/>
+        <string id="Event.PeerCommunicationStopped" value="Remote peer %2 stopped sending valid BFD control packets to %1 within the detection interval (%9 microseconds). Local discriminator: %3. Last remote discriminator: %4. State: %6."/>
+        <string id="Event.SessionUp" value="BFD session with remote peer %2 is Up. Local address: %1. Previous state: %5. Local discriminator: %3. Remote discriminator: %4."/>
+        <string id="Event.SessionDown" value="BFD session with remote peer %2 is Down. Local address: %1. Previous state: %5. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4."/>
+        <string id="Event.SessionStateChanged" value="BFD session with remote peer %2 changed from %5 to %6. Local address: %1. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4."/>
+        <string id="Event.AuthenticationFailed" value="BFD authentication failed for a packet from %3 to %1, configured peer %2. Authentication type: %5. Configured key ID: %6. Reason: %7. Local discriminator: %4."/>
+      </stringTable>
+    </resources>
+  </localization>
+</instrumentationManifest>

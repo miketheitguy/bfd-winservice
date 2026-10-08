@@ -85,7 +85,7 @@ impl AuthConfig {
         };
         if kind == AuthType::None {
             if !key.is_empty() {
-                return Err("an authentication key requires --auth".into());
+                return Err("an authentication key requires Auth".into());
             }
         } else if key.is_empty() || key.len() > max {
             return Err(format!("{kind:?} requires a key of 1..{max} bytes"));

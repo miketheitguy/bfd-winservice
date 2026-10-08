@@ -9,6 +9,8 @@ pub mod session;
 #[cfg(windows)]
 mod bgp;
 #[cfg(windows)]
+mod event_log;
+#[cfg(windows)]
 pub mod runtime;
 #[cfg(windows)]
 pub mod transport;

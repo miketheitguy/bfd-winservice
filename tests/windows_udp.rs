@@ -6,7 +6,6 @@ use bfd_winservice::{
     runtime::{Engine, Logger},
     transport::{Datagram, Transport},
 };
-use clap::Parser;
 use std::{
     io,
     net::UdpSocket,
@@ -16,21 +15,10 @@ use std::{
 };
 
 fn options(local: &str, peer: &str, mode: &str) -> Options {
-    let mut options = Options::parse_from([
-        "bfd",
-        "--local",
-        local,
-        "--peer",
-        peer,
-        "--mode",
-        mode,
-        "--discriminator",
-        "7",
-        "--min-tx-us",
-        "100000",
-        "--min-rx-us",
-        "100000",
-    ]);
+    let mut options = Options::new(local.parse().unwrap(), peer.parse().unwrap());
+    options.discriminator = Some(7);
+    options.min_tx_us = 100000;
+    options.min_rx_us = 100000;
     // Transport tests discover the loopback interface through packet metadata.
     options.mode = if mode == "single-hop" {
         Mode::SingleHop
@@ -58,6 +46,24 @@ fn receive(transport: &Transport) -> Datagram {
 struct RunningEngine {
     stop: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<io::Result<()>>>,
+}
+
+struct TestLog(std::path::PathBuf);
+
+impl TestLog {
+    fn new(label: &str) -> Self {
+        Self(std::env::temp_dir().join(format!(
+            "bfd-{label}-{}-{}.log",
+            std::process::id(),
+            rand::random::<u64>(),
+        )))
+    }
+}
+
+impl Drop for TestLog {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 impl RunningEngine {
@@ -122,11 +128,14 @@ fn peer_packet(state: State) -> ControlPacket {
 
 #[test]
 fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
+    let log = TestLog::new("authentication");
     let mut options = options("127.0.0.50", "127.0.0.51", "multihop");
     options.passive = true;
     options.auth = AuthType::MeticulousSha1;
     options.auth_key_id = 9;
     options.auth_key = Some("secret".to_owned());
+    options.log_file = Some(log.0.clone());
+    assert!(!options.verbose);
     let auth = options.validate().unwrap();
     let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
     let peer = UdpSocket::bind("127.0.0.51:4784").unwrap();
@@ -187,6 +196,87 @@ fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     ));
     engine.stop();
+    let contents = std::fs::read_to_string(&log.0).unwrap();
+    assert!(
+        contents.contains("authentication failed for packet from 127.0.0.51:"),
+        "{contents}"
+    );
+    assert!(contents.contains("authentication required"), "{contents}");
+    assert!(!contents.contains("secret"), "{contents}");
+    assert!(!contents.contains("discarded packet"), "{contents}");
+}
+
+#[test]
+fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once() {
+    // Declared before the engine so the worker closes its log before removal.
+    let log = TestLog::new("communication");
+    let mut options = options("127.0.0.60", "127.0.0.61", "multihop");
+    options.passive = true;
+    options.log_file = Some(log.0.clone());
+    let peer = UdpSocket::bind("127.0.0.61:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let sender = bfd_sender("127.0.0.61");
+    let mut engine = RunningEngine::start(options);
+    let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+    let mut packet = peer_packet(State::AdminDown);
+    packet.poll = true;
+    packet.detect_mult = 1;
+    packet.desired_min_tx_us = 100000;
+    packet.required_min_rx_us = 0;
+    let mut buffer = [0; 256];
+    for _ in 0..3 {
+        sender
+            .send_to(&packet.encode(&auth, 0), "127.0.0.60:4784")
+            .unwrap();
+        let (length, _) = peer.recv_from(&mut buffer).unwrap();
+        let reply = ControlPacket::decode(&buffer[..length]).unwrap();
+        assert!(reply.final_bit);
+        assert_eq!(reply.state, State::Down);
+    }
+    // Valid AdminDown packets keep communication alive even though local state
+    // never leaves Down. Expiry must still notify once without a state change.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if std::fs::read_to_string(&log.0)
+            .unwrap()
+            .contains("communication=stopped")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "peer timeout was not logged");
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(40));
+    packet.state = State::Init;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.60:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    assert_eq!(
+        ControlPacket::decode(&buffer[..length]).unwrap().state,
+        State::Up
+    );
+    engine.stop();
+    let contents = std::fs::read_to_string(&log.0).unwrap();
+    assert_eq!(
+        contents.matches("communication=started").count(),
+        2,
+        "{contents}"
+    );
+    assert_eq!(
+        contents.matches("communication=stopped").count(),
+        1,
+        "{contents}"
+    );
+    assert!(
+        contents.contains("communication=stopped remote_discriminator=99"),
+        "{contents}"
+    );
+    assert!(contents.contains("state=Up diagnostic=None"), "{contents}");
+    assert!(
+        contents.contains("state=AdminDown diagnostic=AdminDown"),
+        "{contents}"
+    );
 }
 
 #[test]
@@ -443,7 +533,7 @@ fn point_to_point_bootstrap_and_source_changes_keep_the_configured_destination()
     assert_eq!(up.state, State::Up);
     assert!(up.poll);
 
-    // A later Poll from the changed source must also get its Final at --peer.
+    // A later Poll from the changed source must also get its Final at Peer.
     packet.state = State::Up;
     packet.final_bit = true;
     // Acknowledge our Poll first; the peer's separate Poll never sets both bits.

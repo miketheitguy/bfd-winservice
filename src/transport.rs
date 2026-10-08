@@ -51,7 +51,7 @@ impl Datagram {
             return Err("single-hop TTL/hop limit must be 255");
         }
         if options.mode == Mode::Multihop && options.min_ttl.is_some_and(|minimum| ttl < minimum) {
-            return Err("multihop TTL/hop limit below --min-ttl");
+            return Err("multihop TTL/hop limit below MinTtl");
         }
         Ok(())
     }
@@ -391,7 +391,6 @@ fn read_control(bytes: &[u8], packet: &mut Datagram) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
 
     // Encode native ancillary bytes without raw-pointer writes, so the fixtures can
     // exercise the parser's unsafe reads independently of Winsock and alignment.
@@ -520,15 +519,8 @@ mod tests {
 
     #[test]
     fn rejects_wrong_peer_port_interface_and_ttl() {
-        let mut options = Options::parse_from([
-            "bfd",
-            "--local",
-            "192.0.2.1",
-            "--peer",
-            "192.0.2.2",
-            "--interface-index",
-            "2",
-        ]);
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.interface_index = Some(2);
         options.validate().unwrap();
         let mut packet = Datagram {
             data: vec![],
@@ -558,16 +550,9 @@ mod tests {
             ("192.0.2.1", "192.0.2.2", "192.0.2.3:49152"),
             ("2001:db8::1", "2001:db8::2", "[2001:db8::3]:49152"),
         ] {
-            let mut options = Options::parse_from([
-                "bfd",
-                "--local",
-                local,
-                "--peer",
-                peer,
-                "--interface-index",
-                "2",
-                "--point-to-point",
-            ]);
+            let mut options = Options::new(local.parse().unwrap(), peer.parse().unwrap());
+            options.interface_index = Some(2);
+            options.point_to_point = true;
             options.validate().unwrap();
             let mut packet = Datagram {
                 data: vec![],
@@ -612,22 +597,12 @@ mod tests {
         };
         use std::time::Instant;
 
-        let mut options = Options::parse_from([
-            "bfd",
-            "--local",
-            "192.0.2.1",
-            "--peer",
-            "192.0.2.2",
-            "--interface-index",
-            "2",
-            "--point-to-point",
-            "--discriminator",
-            "7",
-            "--auth",
-            "meticulous-sha1",
-            "--auth-key",
-            "secret",
-        ]);
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.interface_index = Some(2);
+        options.point_to_point = true;
+        options.discriminator = Some(7);
+        options.auth = crate::packet::AuthType::MeticulousSha1;
+        options.auth_key = Some("secret".to_owned());
         let auth = options.validate().unwrap();
         let mut session = Session::new(options.clone(), auth.clone()).unwrap();
         let now = Instant::now();

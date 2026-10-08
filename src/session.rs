@@ -37,6 +37,22 @@ pub struct Received {
     pub state_changed: bool,
 }
 
+/// Internal rejection classification for logging; public callers retain the
+/// existing static-string error API. Reasons never contain packet/key bytes.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ReceiveError {
+    Packet(&'static str),
+    Authentication(&'static str),
+}
+
+impl ReceiveError {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Packet(reason) | Self::Authentication(reason) => reason,
+        }
+    }
+}
+
 impl Session {
     /// Create a session only from valid, matching configuration and authentication.
     ///
@@ -164,9 +180,22 @@ impl Session {
     /// Rejects malformed, wrong-session, or incorrectly authenticated packets without
     /// changing session state, timers, or sequence tracking.
     pub fn receive(&mut self, data: &[u8], now: Instant) -> Result<Received, &'static str> {
-        let packet = ControlPacket::decode(data)?;
+        self.receive_checked(data, now)
+            .map_err(ReceiveError::reason)
+    }
+
+    /// Preserve the rejection stage so runtime logging does not classify errors
+    /// by comparing human-readable messages.
+    pub(crate) fn receive_checked(
+        &mut self,
+        data: &[u8],
+        now: Instant,
+    ) -> Result<Received, ReceiveError> {
+        let packet = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
         if packet.your_discriminator != 0 && packet.your_discriminator != self.local_discriminator {
-            return Err("receiver discriminator does not identify this session");
+            return Err(ReceiveError::Packet(
+                "receiver discriminator does not identify this session",
+            ));
         }
         // RFC 6.8.1 permits resynchronization after twice the Detection Time.
         let last_seq = if self
@@ -180,7 +209,10 @@ impl Session {
         // RFC 5880 section 6.8.6: authentication must succeed before learning
         // peer state, refreshing detection, or processing Poll/Final. A rejected
         // packet is discarded without a response, even if it carries Poll.
-        let sequence = self.auth.verify(data, last_seq)?;
+        let sequence = self
+            .auth
+            .verify(data, last_seq)
+            .map_err(ReceiveError::Authentication)?;
         let previous_state = self.state;
         let previous_tx = self.desired_min_tx_us();
         self.received_auth_seq = sequence;
@@ -297,23 +329,13 @@ impl Session {
 mod tests {
     use super::*;
     use crate::packet::{test_packet, AuthType};
-    use clap::Parser;
 
     fn session() -> Session {
-        let mut options = Options::parse_from([
-            "bfd",
-            "--local",
-            "192.0.2.1",
-            "--peer",
-            "192.0.2.2",
-            "--multihop",
-            "--discriminator",
-            "7",
-            "--min-rx-us",
-            "200000",
-            "--min-tx-us",
-            "100000",
-        ]);
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.multihop = true;
+        options.discriminator = Some(7);
+        options.min_rx_us = 200000;
+        options.min_tx_us = 100000;
         let auth = options.validate().unwrap();
         Session::new(options, auth).unwrap()
     }
@@ -465,6 +487,89 @@ mod tests {
         AuthType::KeyedSha1,
         AuthType::MeticulousSha1,
     ];
+
+    #[test]
+    fn receive_classifies_verification_failures_without_changing_session_state() {
+        let now = Instant::now();
+        let peer = test_packet(State::Down);
+        for kind in AUTH_TYPES {
+            let mut session = session();
+            let auth = AuthConfig::new(kind, 9, b"secret".to_vec()).unwrap();
+            session.auth = auth.clone();
+            let wrong_id = AuthConfig::new(kind, 10, b"secret".to_vec()).unwrap();
+            let wrong_key = AuthConfig::new(kind, 9, b"wrong!".to_vec()).unwrap();
+            let other_kind = if kind == AuthType::SimplePassword {
+                AuthType::MeticulousSha1
+            } else {
+                AuthType::SimplePassword
+            };
+            let wrong_type = AuthConfig::new(other_kind, 9, b"secret".to_vec()).unwrap();
+            let mut invalid_length = peer.encode(&auth, 100);
+            invalid_length[25] = 0;
+            for (data, reason) in [
+                (wire(&peer), "authentication required"),
+                (
+                    peer.encode(&wrong_id, 100),
+                    "authentication key ID mismatch",
+                ),
+                (
+                    peer.encode(&wrong_type, 100),
+                    "authentication type mismatch",
+                ),
+                (invalid_length, "invalid authentication length"),
+                (
+                    peer.encode(&wrong_key, 100),
+                    if kind == AuthType::SimplePassword {
+                        "password mismatch"
+                    } else {
+                        "authentication digest mismatch"
+                    },
+                ),
+            ] {
+                assert_eq!(
+                    session.receive_checked(&data, now).err(),
+                    Some(ReceiveError::Authentication(reason)),
+                    "{kind:?}"
+                );
+                assert_eq!(session.state, State::Down);
+                assert_eq!(session.remote_discriminator, 0);
+                assert_eq!(session.last_received, None);
+                assert_eq!(session.received_auth_seq, None);
+            }
+            assert_eq!(
+                session.receive_checked(&[0; 24], now).err(),
+                Some(ReceiveError::Packet("unsupported version"))
+            );
+            let mut wrong_session = peer.clone();
+            wrong_session.your_discriminator = 42;
+            assert_eq!(
+                session.receive_checked(&wire(&wrong_session), now).err(),
+                Some(ReceiveError::Packet(
+                    "receiver discriminator does not identify this session"
+                ))
+            );
+            session
+                .receive_checked(&peer.encode(&auth, 100), now)
+                .unwrap();
+            if kind != AuthType::SimplePassword {
+                assert_eq!(
+                    session.receive_checked(&peer.encode(&auth, 99), now).err(),
+                    Some(ReceiveError::Authentication(
+                        "authentication sequence outside receive window"
+                    ))
+                );
+                assert_eq!(session.received_auth_seq, Some(100));
+            }
+        }
+        let mut session = session();
+        let auth = AuthConfig::new(AuthType::MeticulousSha1, 9, b"secret".to_vec()).unwrap();
+        assert_eq!(
+            session.receive_checked(&peer.encode(&auth, 100), now).err(),
+            Some(ReceiveError::Authentication(
+                "unexpected authenticated packet"
+            ))
+        );
+    }
 
     #[test]
     fn authentication_is_required_before_handshake_or_poll_reply() {
