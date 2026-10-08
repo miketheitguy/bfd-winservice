@@ -1,7 +1,7 @@
 //! Compile the ETW manifest and embed its metadata/messages in the service binary.
-use std::{env, fs, io, path::PathBuf, process::Command};
+use std::{env, error::Error, fs, io, path::PathBuf, process::Command};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=events/BFD-Service.man");
     for variable in [
@@ -59,11 +59,11 @@ fn sdk_tool(name: &str, override_variable: &str) -> io::Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
     if let Some(path) = env::var_os("PATH") {
-        for directory in env::split_paths(&path) {
-            let tool = directory.join(name);
-            if tool.is_file() {
-                return Ok(tool);
-            }
+        if let Some(tool) = env::split_paths(&path)
+            .map(|directory| directory.join(name))
+            .find(|tool| tool.is_file())
+        {
+            return Ok(tool);
         }
     }
     let sdk = env::var_os("WindowsSdkDir").map(PathBuf::from).or_else(|| {

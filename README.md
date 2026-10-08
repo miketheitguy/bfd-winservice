@@ -65,7 +65,7 @@ New-ItemProperty -Path $parameters -Name InterfaceIndex -PropertyType DWord -Val
 | `AuthKeyId` | `REG_DWORD` | `0` | Authentication key ID, 0..255 |
 | `AuthKey` | `REG_SZ` | None | ASCII key; authentication requires this or `AuthKeyHex` |
 | `AuthKeyHex` | `REG_SZ` | None | Binary key encoded as hexadecimal text, instead of `AuthKey` |
-| `LogFile` | `REG_SZ` | None | Absolute path to an append log; timestamps are Unix milliseconds |
+| `LogFile` | `REG_SZ` | None | Path to an append log; use an absolute path for SCM execution; timestamps are Unix milliseconds |
 | `BgpPeerName` | `REG_SZ` | None | Enable native MI Start/Stop control for this configured BGP peer name |
 | `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional routing domain; requires `BgpPeerName` |
 | `Verbose` | `REG_DWORD` | `0` | Log discarded packet reasons, at most one per second |
@@ -99,6 +99,8 @@ After provisioning the registry, start foreground execution:
 BFD log messages, including configuration failures, go directly to **STDOUT** in this mode. Console mode does not register or write the ETW provider. To capture STDOUT, use `> .\bfd-console.log`; `LogFile` can also be configured for an append log. Both execution modes read the same registry settings once at startup, so stop the process before editing settings and restart afterward.
 
 Ctrl+C sets AdminDown, attempts a shutdown packet when transmission is permitted, and waits for any BGP cleanup before exiting. Passive sessions with no learned remote discriminator do not send a shutdown packet; send failures are logged. Shutdown attempts one packet rather than continuing transmission for the detection period recommended by [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16).
+
+If a STDOUT write fails, for example when a downstream pipe reader closes, that logger disables further console writes and attempts one diagnostic on STDERR. BFD execution, shutdown cleanup, and any configured `LogFile` continue. A failed diagnostic write is ignored. Console mode continues to use no ETW provider after an output failure.
 
 ## Control a Windows BGP peer with BFD
 
@@ -165,7 +167,7 @@ SCM Running means registry configuration was validated, engine initialization su
 
 ## Windows Event Log / ETW
 
-The manifest-based provider is **BFD-Service**, GUID `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`, with one enabled channel: **BFD-Service/Operational**. Its source is [events/BFD-Service.man](events/BFD-Service.man), following Microsoft's [instrumentation manifest documentation](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). SCM execution emits these events; `--console` writes the corresponding messages directly to STDOUT. Lifecycle events retain their Mode field, with `service` for SCM execution.
+The manifest-based provider is **BFD-Service**, GUID `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`, with one enabled channel: **BFD-Service/Operational**. Its source is [events/BFD-Service.man](events/BFD-Service.man), following Microsoft's [instrumentation manifest documentation](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). SCM execution emits these events; `--console` writes the corresponding messages directly to STDOUT. Lifecycle events use numeric Mode `0`, rendered as `Windows service` by the manifest, for SCM execution. The console text startup message uses `mode=console`.
 
 After building, register the manifest **once on each target machine**, from Administrator PowerShell, before starting the service. Use the final installed executable path because Event Viewer loads the embedded resources from it. Deploy the `.man` file alongside the executable, or resolve its source path as shown here:
 
@@ -197,7 +199,7 @@ Get-WinEvent -FilterHashtable @{ LogName = 'BFD-Service/Operational' } -MaxEvent
 | 104 | Information | Session entered Init or local AdminDown |
 | 105 | Warning | Authentication verification failed; includes packet source, configured authentication type/key ID, and reason |
 
-Events 100–104 record the local/peer addresses, local/remote discriminators, previous/current BFD states, diagnostic, transmit interval, and detection time in microseconds. Events 100/101 track reception independently of session establishment: a peer can keep sending Down or AdminDown packets without being Up. Invalid transport metadata, authentication, or session identifiers never count as communication. Repeated valid packets and repeated timeout checks do not emit duplicate communication events. Other packet discards and ordinary send errors remain in the optional text/console log.
+Events 100–104 record the local/peer addresses, local/remote discriminators, previous/current BFD states, diagnostic, transmit interval, and detection time in microseconds. Events 100/101 track reception independently of session establishment: a peer can keep sending Down or AdminDown packets without being Up. Invalid transport metadata, authentication, or session identifiers never count as communication. Repeated valid packets and repeated timeout checks do not emit duplicate communication events. Other packet discard reasons are logged only with `Verbose=1`, at most once per second. Ordinary send errors are also limited to once per second. These messages go to console STDOUT or `LogFile` when configured; they do not produce Operational events.
 
 Authentication Warning event 105 records the local/peer addresses, actual packet source address/port, local discriminator, configured authentication type/key ID, and a static rejection reason. Reasons cover missing/unexpected authentication, type/key ID/length mismatches, password/digest failures, and invalid sequence windows. No password, key bytes, digest, or packet payload is logged. Warnings are limited to one per second per process independently of the verbose discard limit, and are enabled regardless of `Verbose`. Generic malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate event 105.
 

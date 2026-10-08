@@ -45,6 +45,20 @@ Registry configuration checks on 2026-10-07 passed: 69 tests including the docte
 
 No full 265-rule reassessment or complete Rust skill compliance is claimed. The crate still uses string-based configuration errors, does not declare an MSRV, and has no checked-in CI workflow. These are guideline gaps rather than confirmed runtime defects.
 
+## Code and documentation review — 2026-10-07
+
+The complete service source, tests, build configuration, manifest, and documentation were reviewed against the registry/ETW implementation and relevant Rust skill rules. That review recorded a P2 finding: console STDOUT errors could panic and bypass AdminDown/BGP Stop cleanup or terminate the BGP worker. A standalone Windows closed-pipe probe reproduced the logger panic. The initial review changed documentation only; the finding was subsequently fixed by the rust-check remediation described below and in the [correctness review](CODE_REVIEW.md).
+
+Documentation corrections also cover `LogFile` path handling, lifecycle Mode rendering, generic discard/send logging conditions, and the historical scope of the earlier CLI compatibility and validation results. The default 69 tests and strict Clippy passed again during this review; the opt-in schema test was ignored. Formatting, rustdoc with warnings denied, release help, and all 310 local Markdown file links passed their checks after the edits. A source comparison with API comments removed confirmed unchanged production code. Native service deployment, Event Viewer rendering, and real BGP mutations remain outside these checks.
+
+## rust-check remediation — 2026-10-07
+
+Applied [.codex/skills/rust-check/SKILL.md](.codex/skills/rust-check/SKILL.md). Console output now uses fallible writes and disables the failed destination per logger, preserving file output and engine/BGP cleanup. Logger STDERR diagnostics are best-effort. A subprocess regression reproduced the old failure before implementation and now verifies successful engine shutdown and continued file logging with a closed STDOUT pipe. Normal console output still has a separate subprocess regression.
+
+Internal receive rejections derive `thiserror::Error`, while the existing public error APIs remain compatible. `Received` derives the applicable value traits. Imports, automatic error conversion, and SDK lookup were simplified. File fixtures use `tempfile`; subprocess assertions use `assert_cmd`. These targeted changes follow the skill's minimal-change guidance; the existing Winsock polling loop and MI worker do not require an async-runtime migration.
+
+Required formatting and strict Clippy passed. The default test suite passed 71 tests, including the new regression and logger example, with one opt-in schema test ignored. The closed-pipe regression additionally passed with STDERR closed, confirming unavailable diagnostics do not interrupt cleanup. Rustdoc with warnings denied, the release build, release help, all 311 local documentation links, and `git diff --check` passed. Full Miri, live service deployment, Event Viewer delivery, and BGP provider mutations were not rerun for this remediation.
+
 ## Documentation review — 2026-10-05
 
 The README, CLI help, API documentation, source/test comments, and project review records were checked against the implementation. Corrected descriptions cover startup interval clamping, passive transmission, authentication discard, packet-generation sequence advancement, BGP queue supersession, MI timeout/cleanup limits, and SCM status versus protocol readiness. Shutdown attempts one AdminDown packet when the role permits; it does not transmit for a full detection period. The archived matrix is explicitly historical, and instruction-file skill paths now name the actual directories.

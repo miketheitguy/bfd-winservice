@@ -8,6 +8,7 @@ use crate::{
     transport::Transport,
 };
 use std::{
+    fmt::Display,
     fs::{File, OpenOptions},
     io::{self, Write},
     path::Path,
@@ -20,6 +21,7 @@ use std::{
 pub struct Logger {
     file: Option<File>,
     console: bool,
+    stdout_failed: bool,
     event_log: Option<Provider>,
 }
 
@@ -30,6 +32,7 @@ impl Logger {
         let mut log = Self {
             file: None,
             console,
+            stdout_failed: false,
             event_log: None,
         };
         if !console {
@@ -38,7 +41,10 @@ impl Logger {
                 // Registry settings and the optional file log are not open
                 // yet; use stderr so this failure has a fallback destination.
                 Err(error) => {
-                    eprintln!("unable to register BFD-Service ETW provider: {error}");
+                    let _ = writeln!(
+                        io::stderr().lock(),
+                        "unable to register BFD-Service ETW provider: {error}"
+                    );
                 }
             }
         }
@@ -82,7 +88,7 @@ impl Logger {
     }
 
     /// Record an initialization or execution failure without authentication data.
-    pub fn service_failed(&mut self, error: impl std::fmt::Display) {
+    pub fn service_failed(&mut self, error: impl Display) {
         let error = error.to_string();
         self.log(format_args!("service failed: {error}"));
         self.event(|provider, console| provider.service_failed(console, &error));
@@ -112,20 +118,37 @@ impl Logger {
             provider.session_event(event, options, session, previous, remote_discriminator)
         });
     }
-    /// Write a Unix-millisecond timestamp and message. File write failures are
-    /// reported to stderr rather than returned to the caller.
-    pub fn log(&mut self, message: impl std::fmt::Display) {
+    /// Write a Unix-millisecond timestamp and message. Output errors are
+    /// reported to stderr on a best-effort basis rather than returned or panicked.
+    /// A failed STDOUT write disables further console writes for this logger;
+    /// file logging, ETW mode selection, and engine execution continue.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use bfd_winservice::runtime::Logger;
+    ///
+    /// let mut log = Logger::new(true);
+    /// log.log("BFD initialization started");
+    /// ```
+    pub fn log(&mut self, message: impl Display) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
         let line = format!("{timestamp} {message}\n");
-        if self.console {
-            print!("{line}");
+        if self.console && !self.stdout_failed {
+            if let Err(error) = io::stdout().lock().write_all(line.as_bytes()) {
+                self.stdout_failed = true;
+                // Diagnostics must not panic if STDERR is also unavailable.
+                let _ = writeln!(
+                    io::stderr().lock(),
+                    "unable to write BFD console log: {error}"
+                );
+            }
         }
         if let Some(file) = &mut self.file {
             if let Err(error) = file.write_all(line.as_bytes()) {
-                eprintln!("Unable to write BFD log: {error}");
+                let _ = writeln!(io::stderr().lock(), "unable to write BFD file log: {error}");
             }
         }
     }
@@ -144,7 +167,8 @@ impl Engine {
     /// This does not wait for BFD establishment or the background BGP status query.
     ///
     /// # Errors
-    /// Returns configuration/authentication mismatch, socket, log, or worker startup errors.
+    /// Returns configuration/authentication mismatch or socket errors. When BGP
+    /// control is configured, also returns worker file-log or thread startup errors.
     pub fn open(mut options: Options, auth: AuthConfig, log: &mut Logger) -> io::Result<Self> {
         options
             .validate()
@@ -397,6 +421,89 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
+    fn closed_stdout_does_not_interrupt_engine_shutdown_or_file_logging() {
+        use std::{
+            io::{BufRead, BufReader, Read},
+            process::{Command, Stdio},
+            sync::mpsc,
+        };
+
+        const CHILD: &str = "BFD_TEST_CLOSED_STDOUT_CHILD";
+        const LOG_PATH: &str = "BFD_TEST_CLOSED_STDOUT_LOG";
+        if std::env::var_os(CHILD).is_some() {
+            let mut options =
+                Options::new("127.0.0.70".parse().unwrap(), "127.0.0.71".parse().unwrap());
+            options.multihop = true;
+            options.console = true;
+            options.log_file = Some(std::env::var_os(LOG_PATH).unwrap().into());
+            let auth = options.validate().unwrap();
+            let mut log = Logger::open(&options).unwrap();
+            let mut engine = Engine::open(options, auth, &mut log).unwrap();
+            log.service_started();
+            // Wait until the parent closes the pipe reader. This runs in a
+            // subprocess so native STDOUT changes cannot affect other tests.
+            eprintln!("ready");
+            io::stdin().read_exact(&mut [0]).unwrap();
+            let (stop, receiver) = mpsc::channel();
+            drop(stop);
+            engine.run(&receiver, &mut log).unwrap();
+            log.service_failed("synthetic failure after STDOUT closed");
+            log.service_stopped(0);
+            assert!(log.console && log.event_log.is_none());
+            drop(engine);
+            drop(log);
+            // Libtest's own completion output also uses STDOUT; avoid it after
+            // verifying the application completed with the pipe reader closed.
+            std::process::exit(0);
+        }
+
+        // Also cover redirected STDERR sharing an unavailable output sink.
+        for close_stderr in [false, true] {
+            let log = tempfile::NamedTempFile::new().unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::tests::closed_stdout_does_not_interrupt_engine_shutdown_or_file_logging",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(LOG_PATH, log.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+            let mut stderr = BufReader::new(child.stderr.take().unwrap());
+            let mut ready = String::new();
+            stderr.read_line(&mut ready).unwrap();
+            drop(child.stdout.take());
+            let mut stderr = (!close_stderr).then_some(stderr);
+            // Dropping the temporary stdin writer also wakes the child on failure.
+            child.stdin.take().unwrap().write_all(&[1]).unwrap();
+            let mut diagnostic = String::new();
+            if let Some(stderr) = &mut stderr {
+                stderr.read_to_string(&mut diagnostic).unwrap();
+            }
+            let status = child.wait().unwrap();
+            assert_eq!(ready.trim(), "ready");
+            assert!(status.success(), "{status}: {diagnostic}");
+            if !close_stderr {
+                assert_eq!(diagnostic.lines().count(), 1, "{diagnostic}");
+                assert!(diagnostic.contains("unable to write BFD console log"));
+            }
+            let contents = std::fs::read_to_string(log.path()).unwrap();
+            for message in [
+                "state=AdminDown",
+                "synthetic failure after STDOUT closed",
+                "service stopped exit_code=0",
+            ] {
+                assert!(contents.contains(message), "{contents}");
+            }
+        }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
     fn console_events_are_written_to_stdout_without_etw() {
         const CHILD: &str = "BFD_TEST_CONSOLE_LOG_CHILD";
         if std::env::var_os(CHILD).is_some() {
@@ -410,16 +517,17 @@ mod tests {
 
         // A subprocess provides real STDOUT/STDERR handles without libtest's
         // in-process capture or changes to the installed service's registry.
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = assert_cmd::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "runtime::tests::console_events_are_written_to_stdout_without_etw",
                 "--nocapture",
             ])
             .env(CHILD, "1")
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
+            .assert()
+            .success()
+            .get_output()
+            .clone();
         assert!(output.stderr.is_empty(), "{output:?}");
         let stdout = String::from_utf8(output.stdout).unwrap();
         for message in [

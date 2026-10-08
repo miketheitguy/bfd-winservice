@@ -30,6 +30,7 @@ pub struct Session {
 }
 
 /// Effects of accepting a control packet; no response has been transmitted yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Received {
     /// Send a Final reply independently of the periodic transmit schedule.
     pub reply_final: bool,
@@ -39,9 +40,11 @@ pub struct Received {
 
 /// Internal rejection classification for logging; public callers retain the
 /// existing static-string error API. Reasons never contain packet/key bytes.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub(crate) enum ReceiveError {
+    #[error("{0}")]
     Packet(&'static str),
+    #[error("{0}")]
     Authentication(&'static str),
 }
 

@@ -3,6 +3,7 @@ use bfd_winservice::{
     runtime::{Engine, Logger},
 };
 use std::{
+    error::Error,
     ffi::OsString,
     io,
     sync::{mpsc, Arc, Mutex},
@@ -21,7 +22,7 @@ use windows_service::{
 
 define_windows_service!(service_main, service_entry);
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run() -> Result<(), Box<dyn Error>> {
     service_dispatcher::start(SERVICE_NAME, service_main)?;
     Ok(())
 }
@@ -32,7 +33,7 @@ fn service_entry(_arguments: Vec<OsString>) {
     }
 }
 
-fn run_service() -> Result<(), Box<dyn std::error::Error>> {
+fn run_service() -> Result<(), Box<dyn Error>> {
     let (stop_tx, stop_rx) = mpsc::channel();
     let reporter = Arc::new(Mutex::new(StatusReporter {
         handle: None,
@@ -62,7 +63,7 @@ fn run_service() -> Result<(), Box<dyn std::error::Error>> {
         reporter.publish(ServiceExitCode::Win32(0))?;
     }
     let mut log = Logger::new(false);
-    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+    let result = (|| -> Result<(), Box<dyn Error>> {
         let mut options = load_registry(false)?;
         let auth = options
             .validate()

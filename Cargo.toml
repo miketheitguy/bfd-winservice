@@ -9,9 +9,14 @@ md5 = "0.8"
 rand = "0.8"
 sha1 = "0.10"
 subtle = "2.6"
+thiserror = "2"
 
 [target.'cfg(windows)'.dependencies]
 ctrlc = "3.5"
 socket2 = { version = "0.6", features = ["all"] }
 windows-service = "0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_System_Diagnostics_Etw", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Wmi"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"

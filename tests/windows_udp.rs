@@ -13,6 +13,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tempfile::NamedTempFile;
 
 fn options(local: &str, peer: &str, mode: &str) -> Options {
     let mut options = Options::new(local.parse().unwrap(), peer.parse().unwrap());
@@ -48,22 +49,12 @@ struct RunningEngine {
     worker: Option<thread::JoinHandle<io::Result<()>>>,
 }
 
-struct TestLog(std::path::PathBuf);
-
-impl TestLog {
-    fn new(label: &str) -> Self {
-        Self(std::env::temp_dir().join(format!(
-            "bfd-{label}-{}-{}.log",
-            std::process::id(),
-            rand::random::<u64>(),
-        )))
-    }
-}
-
-impl Drop for TestLog {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+fn test_log(label: &str) -> NamedTempFile {
+    tempfile::Builder::new()
+        .prefix(&format!("bfd-{label}-"))
+        .suffix(".log")
+        .tempfile()
+        .unwrap()
 }
 
 impl RunningEngine {
@@ -128,13 +119,13 @@ fn peer_packet(state: State) -> ControlPacket {
 
 #[test]
 fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
-    let log = TestLog::new("authentication");
+    let log = test_log("authentication");
     let mut options = options("127.0.0.50", "127.0.0.51", "multihop");
     options.passive = true;
     options.auth = AuthType::MeticulousSha1;
     options.auth_key_id = 9;
     options.auth_key = Some("secret".to_owned());
-    options.log_file = Some(log.0.clone());
+    options.log_file = Some(log.path().to_path_buf());
     assert!(!options.verbose);
     let auth = options.validate().unwrap();
     let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
@@ -196,7 +187,7 @@ fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     ));
     engine.stop();
-    let contents = std::fs::read_to_string(&log.0).unwrap();
+    let contents = std::fs::read_to_string(log.path()).unwrap();
     assert!(
         contents.contains("authentication failed for packet from 127.0.0.51:"),
         "{contents}"
@@ -209,10 +200,10 @@ fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
 #[test]
 fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once() {
     // Declared before the engine so the worker closes its log before removal.
-    let log = TestLog::new("communication");
+    let log = test_log("communication");
     let mut options = options("127.0.0.60", "127.0.0.61", "multihop");
     options.passive = true;
-    options.log_file = Some(log.0.clone());
+    options.log_file = Some(log.path().to_path_buf());
     let peer = UdpSocket::bind("127.0.0.61:4784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let sender = bfd_sender("127.0.0.61");
@@ -237,7 +228,7 @@ fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once()
     // never leaves Down. Expiry must still notify once without a state change.
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        if std::fs::read_to_string(&log.0)
+        if std::fs::read_to_string(log.path())
             .unwrap()
             .contains("communication=stopped")
         {
@@ -257,7 +248,7 @@ fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once()
         State::Up
     );
     engine.stop();
-    let contents = std::fs::read_to_string(&log.0).unwrap();
+    let contents = std::fs::read_to_string(log.path()).unwrap();
     assert_eq!(
         contents.matches("communication=started").count(),
         2,

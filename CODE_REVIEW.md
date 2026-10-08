@@ -1,8 +1,44 @@
-# Correctness review — 2026-10-05
+# Correctness reviews
+
+## rust-check remediation — 2026-10-07
+
+Applied the explicitly requested [rust-check skill](.codex/skills/rust-check/SKILL.md) to the service code, using its minimal-change guidance. **The P2 console-output finding below is resolved.** `Logger` now uses fallible `Write` calls, reports console failure once per logger on a best-effort basis, and suppresses subsequent STDOUT writes while preserving console mode, file logging, and engine/BGP execution. Failed STDERR diagnostics cannot panic in the logger. The closed-pipe regression first failed on the old implementation with OS error 232, then passed after the fix, reaching AdminDown and recording subsequent lifecycle messages in the file log. No BGP provider mutation is needed for this regression.
+
+Other targeted changes use `thiserror` for the internal receive-rejection enum, derive the applicable value traits for the small `Received` result, simplify entry-point imports and automatic error conversion, and express SDK PATH lookup with iterators. Native UDP log fixtures now use `tempfile` for ownership and cleanup; the existing console subprocess assertion uses `assert_cmd`. Public logger docs include a compiled example and describe output-error handling.
+
+The synchronous Winsock timer loop and dedicated MI worker remain appropriate for the current runtime; adding an async executor would require a separate architectural change. Key-bearing configuration types continue to omit `Debug`. Existing public string error APIs remain compatible; the skill's preferences do not justify rewriting those interfaces in this fix. The skill's note-taking CLI examples and undefined “Constitution II” reference do not describe this project; its test-first instruction was applied to the stdout regression. No complete Rust-skill compliance claim is made.
+
+The required `cargo fmt` and strict `cargo clippy --all-targets` checks passed. The default test suite passed 71 tests: 60 library tests, 2 service tests, 7 native UDP integration tests, and 2 doctests; the opt-in CIM schema test was ignored. The closed-pipe regression also passed with both STDOUT and STDERR unavailable, checking the diagnostic failure path. Rustdoc with warnings denied, the release build, release help, all 311 local documentation links, and `git diff --check` passed. Live SCM deployment, Event Viewer delivery, and actual BGP Start/Stop remain untested here.
+
+## Review before remediation — 2026-10-07
+
+Reviewed all service Rust modules, unit/integration tests, `build.rs`, Cargo configuration and lockfile, the ETW manifest, README, API comments, instruction files, and validation/review records at commit `66eeaf6`. Applied the local [Rust skill](.codex/skills/rust-skills/SKILL.md), concentrating on ownership/borrowing, native handle lifetimes and drop order, memory layout/alignment, unsafe pointer bounds, error handling, numeric conversion, and concurrency. Vendored skill examples and their checks crates are reference material rather than service code. This is a defect review, not a new 265-rule compliance matrix.
+
+### Finding subsequently resolved
+
+**P2 — Handle failed console writes without bypassing shutdown.** [Logger::log](src/runtime.rs) uses `print!` for STDOUT. Rust's [print documentation](https://doc.rust-lang.org/std/macro.print.html#panics) confirms that write failures panic. A standalone Windows probe connected STDOUT to an anonymous pipe, closed its reader, and called `Logger::new(true).service_started()`: `catch_unwind` observed a panic with OS error 232 (“The pipe is being closed”). The probe used no service configuration or BGP provider calls.
+
+In that revision, a downstream reader closing the console pipe could unwind out of `run_session` before `Engine::run` reached AdminDown and its shutdown packet. A panic in the state-change log could also occur before the BGP Stop was queued. `Controller::drop` joined the worker and preserved already queued Stops but did not create a new Stop, so a previously started BGP peer could be left running. A log failure in the BGP worker could terminate that worker and prevent subsequent queued actions. The recommendation was to replace the panicking write with fallible `Write` handling and add a closed-pipe regression. This finding was open at the end of the documentation-only review and was subsequently resolved as described above.
+
+No P0/P1 ownership, borrowing, or memory-safety defect was identified. Authentication rejection remains before session mutation; registry data has bounded initialized buffers and checked narrowing; ETW field order/widths and descriptors match the compiled manifest. Winsock ancillary parsing checks lengths before unaligned reads. MI results are copied while their operations remain live, child objects are released before parents, and provider calls stay outside the mailbox mutex. The existing BGP supersession and SCM lifecycle regressions cover the previously corrected races. This does not establish the absence of other defects.
+
+### Documentation corrections
+
+The README now distinguishes permitted relative `LogFile` paths from the recommendation to use absolute paths under SCM, describes numeric lifecycle Mode `0` and its `Windows service` rendering, and states the actual verbose gating and rate limits for generic discards/send errors. Console output failure and its cleanup implications are documented in the README and public runtime API comments. The earlier review below is explicitly historical; its CLI compatibility and test counts do not describe registry-based configuration. Current configuration uses `CommandLine` for `--console` and `Options::new`/`config::load_registry` for settings; old service executable-path arguments must be removed as described in the README.
+
+### Validation and limits
+
+`cargo test --locked --offline` passed: 59 library tests, 2 service tests, 7 native UDP integration tests, and 1 compile-fail doctest (69 total); one namespace-dependent schema test was ignored. Strict Clippy, including `clippy::undocumented_unsafe_blocks`, passed. The closed-pipe probe reproduced the open finding above. After the documentation edits, `cargo fmt --check`, rustdoc with warnings denied, and `git diff --check` passed; release help matched the documented `--console`/help/version interface. All 310 local Markdown file links resolved. Comparing `src/runtime.rs` with its committed contents after removing API comments confirmed that production code was unchanged.
+
+No full Miri rerun, live SCM installation/start/stop, manifest installation/Event Viewer rendering, or actual BGP Start/Stop was performed in this review. Native ETW registration/writes do not prove delivery to a registered Operational channel. The earlier validation records retain their own dates and limits.
+
+## Historical review — 2026-10-05
+
+The following findings, compatibility notes, and checks describe the revision before ETW and registry configuration were added. They are retained as a record of that review.
 
 Reviewed all service source modules and tests, Cargo configuration, and operational documentation. Applied the relevant ownership, borrowing, memory layout, FFI, concurrency, error handling, and numeric rules from the local Rust skill. The earlier 265-rule assessment is preserved as a [historical guideline matrix](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md); this review concentrates on defects and their fixes. [The current validation guide](RUST_SKILLS_VALIDATION.md) describes the API guarantees and links to that snapshot.
 
-## Findings fixed
+### Findings fixed
 
 | Priority | Finding | Correction and evidence |
 |---|---|---|
@@ -16,7 +52,7 @@ Reviewed all service source modules and tests, Cargo configuration, and operatio
 
 Also corrected unsafe union-access comments, replaced the ancillary parser's invariant-based `unwrap` with an explanatory `expect`, and updated README statements about BGP queueing, shutdown failure, and implemented routing integration.
 
-## Protocol and FFI review
+### Protocol and FFI review
 
 - Authentication is verified before peer state, timers, sequence tracking, or Poll/Final processing changes. Invalid authentication causes silent discard as required by [RFC 5880 section 6.8.6](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.6).
 - BFD state transitions, detection expiry, passive transmission, remote Demand/zero receive-interval suppression, jitter, discriminator expiry, and keyed authentication sequence wrap/resynchronization were checked against RFC 5880. Local timer settings remain startup-only.
@@ -24,11 +60,11 @@ Also corrected unsafe union-access comments, replaced the ancillary parser's inv
 - Provider calls execute on one BGP worker and never under the mailbox mutex. Queue growth is bounded. Already issued MI calls finish before the next state action; a later Stop follows an in-flight Start. There is no claim that an in-flight provider mutation can be atomically canceled when a UDP packet arrives.
 - Ancillary data uses bounds-checked unaligned reads; real Winsock output lengths are checked before slicing. No new raw-pointer ownership or manual Send/Sync implementation was introduced.
 
-## Compatibility
+### Compatibility at that revision
 
-The command-line interface is unchanged. Library callers must now handle `Session::new(...) -> Result<Session, String>`, use `AuthConfig::kind()`, and use the session's state/diagnostic/discriminator/polling accessors instead of public fields. Supplied session authentication must match its options. These API changes intentionally prevent invalid safe-Rust configurations.
+The 2026-10-05 changes retained the command-line interface then in use. Library callers had to handle `Session::new(...) -> Result<Session, String>`, use `AuthConfig::kind()`, and use the session's state/diagnostic/discriminator/polling accessors instead of public fields. Supplied session authentication must match its options. These API guarantees remain; the subsequent registry configuration change removes the former command-line settings.
 
-## Validation
+### Validation at that revision
 
 | Check | Result |
 |---|---|

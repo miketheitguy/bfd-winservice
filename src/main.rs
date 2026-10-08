@@ -1,5 +1,14 @@
 use bfd_winservice::config::CommandLine;
 use clap::Parser;
+use std::process;
+
+#[cfg(windows)]
+use bfd_winservice::{
+    config::load_registry,
+    runtime::{Engine, Logger},
+};
+#[cfg(windows)]
+use std::{error::Error, io, sync::mpsc};
 
 #[cfg(windows)]
 mod service;
@@ -17,32 +26,32 @@ fn main() {
             if !command_line.console {
                 eprintln!("BFD failed: {error}");
             }
-            std::process::exit(1);
+            process::exit(1);
         }
     }
     #[cfg(not(windows))]
     {
         let _ = command_line;
         eprintln!("The BFD transport and service run only on Windows.");
-        std::process::exit(1);
+        process::exit(1);
     }
 }
 
 #[cfg(windows)]
-fn run_console() -> Result<(), Box<dyn std::error::Error>> {
-    let mut log = bfd_winservice::runtime::Logger::new(true);
-    let result = (|| -> std::io::Result<()> {
-        let mut options = bfd_winservice::config::load_registry(true)?;
+fn run_console() -> Result<(), Box<dyn Error>> {
+    let mut log = Logger::new(true);
+    let result = (|| -> io::Result<()> {
+        let mut options = load_registry(true)?;
         let auth = options
             .validate()
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         log.open_file(options.log_file.as_deref())?;
-        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
         ctrlc::set_handler(move || {
             let _ = stop_tx.send(());
         })
-        .map_err(std::io::Error::other)?;
-        let mut engine = bfd_winservice::runtime::Engine::open(options, auth, &mut log)?;
+        .map_err(io::Error::other)?;
+        let mut engine = Engine::open(options, auth, &mut log)?;
         log.service_started();
         engine.run(&stop_rx, &mut log)
     })();
@@ -50,5 +59,5 @@ fn run_console() -> Result<(), Box<dyn std::error::Error>> {
         log.service_failed(error);
     }
     log.service_stopped(u32::from(result.is_err()));
-    result.map_err(Into::into)
+    Ok(result?)
 }
