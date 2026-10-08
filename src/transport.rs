@@ -15,10 +15,15 @@ use crate::config::{Mode, Options};
 
 /// Received UDP bytes and ancillary metadata, before session validation.
 pub struct Datagram {
+    /// The received UDP payload, before BFD header or authentication checks.
     pub data: Vec<u8>,
+    /// The sender's IP address and UDP source port.
     pub source: SocketAddr,
+    /// The local destination address from packet metadata, or None if unavailable.
     pub destination: Option<IpAddr>,
+    /// The incoming Windows interface index, or None if metadata is unavailable.
     pub interface_index: Option<u32>,
+    /// The received IPv4 TTL or IPv6 hop limit, or None if unavailable.
     pub ttl: Option<u8>,
 }
 

@@ -35,8 +35,10 @@ pub struct CommandLine {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 /// Single-hop or multihop UDP transport profile.
 pub enum Mode {
+    /// Uses UDP port 3784 and requires a received TTL or hop limit of 255.
     #[default]
     SingleHop,
+    /// Uses UDP port 4784 with an optional minimum received TTL or hop limit.
     Multihop,
 }
 

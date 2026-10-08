@@ -11,9 +11,13 @@ const AUTH: u8 = 0x04;
 #[repr(u8)]
 /// BFD session states with their two-bit wire values.
 pub enum State {
+    /// The session is administratively disabled rather than awaiting a peer.
     AdminDown = 0,
+    /// Bidirectional communication has not been established or has failed.
     Down = 1,
+    /// A peer handshake is in progress after receiving a Down control packet.
     Init = 2,
+    /// Bidirectional communication has been established.
     Up = 3,
 }
 
@@ -21,9 +25,13 @@ pub enum State {
 #[repr(u8)]
 /// Local diagnostic codes emitted by this implementation.
 pub enum Diagnostic {
+    /// No local failure diagnostic is set.
     None = 0,
+    /// No valid control packet arrived within the detection interval.
     DetectionExpired = 1,
+    /// The peer reported Down or AdminDown during an active handshake/session.
     NeighborDown = 3,
+    /// The local session was administratively disabled.
     AdminDown = 7,
 }
 
@@ -31,11 +39,17 @@ pub enum Diagnostic {
 #[repr(u8)]
 /// Supported RFC 5880 authentication types; None omits the authentication section.
 pub enum AuthType {
+    /// Omits authentication; the configured key must be empty.
     None = 0,
+    /// Sends a cleartext password of 1–16 bytes without sequence protection.
     SimplePassword = 1,
+    /// Uses an MD5 digest and a sequence window; repeated sequences are allowed.
     KeyedMd5 = 2,
+    /// Uses an MD5 digest and rejects repeated sequences within the receive window.
     MeticulousMd5 = 3,
+    /// Uses a SHA-1 digest and a sequence window; repeated sequences are allowed.
     KeyedSha1 = 4,
+    /// Uses a SHA-1 digest and rejects repeated sequences within the receive window.
     MeticulousSha1 = 5,
 }
 
@@ -168,17 +182,31 @@ impl AuthConfig {
 /// Public fields may represent an invalid packet. Encode serializes them without
 /// validation; decode and AuthConfig::verify perform the receive-side checks.
 pub struct ControlPacket {
+    /// The sender's five-bit diagnostic code, 0–31; encoding masks higher bits.
     pub diagnostic: u8,
+    /// The sender's advertised BFD state.
     pub state: State,
+    /// If true, requests a Final reply as part of a Poll sequence.
     pub poll: bool,
+    /// If true, acknowledges a received Poll; false for ordinary control packets.
     pub final_bit: bool,
+    /// True if the sender advertises BFD independence from its control plane.
     pub control_plane_independent: bool,
+    /// True if the sender requests Demand mode; false for asynchronous operation.
     pub demand: bool,
+    /// The advertised detection multiplier, 1–255; decoding rejects zero.
     pub detect_mult: u8,
+    /// The sender's nonzero session identifier; decoding rejects zero.
     pub my_discriminator: u32,
+    /// The learned peer identifier; zero is allowed only in Down or AdminDown.
     pub your_discriminator: u32,
+    /// The desired transmit interval in microseconds; decoding rejects zero.
     pub desired_min_tx_us: u32,
+    /// The required control receive interval in microseconds; zero suppresses
+    /// the peer's periodic control transmission.
     pub required_min_rx_us: u32,
+    /// The required Echo receive interval in microseconds; this implementation
+    /// advertises zero because it does not implement Echo.
     pub required_min_echo_rx_us: u32,
 }
 

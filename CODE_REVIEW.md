@@ -1,5 +1,7 @@
 # Correctness reviews
 
+This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
+
 ## rust-check remediation — 2026-10-07
 
 Applied the explicitly requested [rust-check skill](.codex/skills/rust-check/SKILL.md) to the service code, using its minimal-change guidance. **The P2 console-output finding below is resolved.** `Logger` now uses fallible `Write` calls, reports console failure once per logger on a best-effort basis, and suppresses subsequent STDOUT writes while preserving console mode, file logging, and engine/BGP execution. Failed STDERR diagnostics cannot panic in the logger. The closed-pipe regression first failed on the old implementation with OS error 232, then passed after the fix, reaching AdminDown and recording subsequent lifecycle messages in the file log. No BGP provider mutation is needed for this regression.
@@ -16,7 +18,7 @@ Reviewed all service Rust modules, unit/integration tests, `build.rs`, Cargo con
 
 ### Finding subsequently resolved
 
-**P2 — Handle failed console writes without bypassing shutdown.** [Logger::log](src/runtime.rs) uses `print!` for STDOUT. Rust's [print documentation](https://doc.rust-lang.org/std/macro.print.html#panics) confirms that write failures panic. A standalone Windows probe connected STDOUT to an anonymous pipe, closed its reader, and called `Logger::new(true).service_started()`: `catch_unwind` observed a panic with OS error 232 (“The pipe is being closed”). The probe used no service configuration or BGP provider calls.
+**P2 — Handle failed console writes without bypassing shutdown.** At that revision, [Logger::log](src/runtime.rs) used `print!` for STDOUT. Rust's [print documentation](https://doc.rust-lang.org/std/macro.print.html#panics) confirms that write failures panic. A standalone Windows probe connected STDOUT to an anonymous pipe, closed its reader, and called `Logger::new(true).service_started()`: `catch_unwind` observed a panic with OS error 232 (“The pipe is being closed”). The probe used no service configuration or BGP provider calls.
 
 In that revision, a downstream reader closing the console pipe could unwind out of `run_session` before `Engine::run` reached AdminDown and its shutdown packet. A panic in the state-change log could also occur before the BGP Stop was queued. `Controller::drop` joined the worker and preserved already queued Stops but did not create a new Stop, so a previously started BGP peer could be left running. A log failure in the BGP worker could terminate that worker and prevent subsequent queued actions. The recommendation was to replace the panicking write with fallible `Write` handling and add a closed-pipe regression. This finding was open at the end of the documentation-only review and was subsequently resolved as described above.
 
@@ -24,7 +26,7 @@ No P0/P1 ownership, borrowing, or memory-safety defect was identified. Authentic
 
 ### Documentation corrections
 
-The README now distinguishes permitted relative `LogFile` paths from the recommendation to use absolute paths under SCM, describes numeric lifecycle Mode `0` and its `Windows service` rendering, and states the actual verbose gating and rate limits for generic discards/send errors. Console output failure and its cleanup implications are documented in the README and public runtime API comments. The earlier review below is explicitly historical; its CLI compatibility and test counts do not describe registry-based configuration. Current configuration uses `CommandLine` for `--console` and `Options::new`/`config::load_registry` for settings; old service executable-path arguments must be removed as described in the README.
+At the 2026-10-07 revision, the README distinguished permitted relative `LogFile` paths from the recommendation to use absolute paths under SCM. It also described numeric lifecycle Mode `0` and its `Windows service` rendering, and documented verbose gating and rate limits for generic discards/send errors. Documentation covered console output failure and its cleanup implications in the README and public runtime API comments. The 2026-10-05 review's CLI compatibility and test counts applied to its own revision. The registry configuration at the 2026-10-07 revision used `CommandLine` for `--console` and `Options::new`/`config::load_registry` for settings.
 
 ### Validation and limits
 

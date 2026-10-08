@@ -2,6 +2,12 @@
 
 Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
 
+## Technical documentation improvements — 2026-10-08
+
+Applied the technical-documentation skill's audit recommendations. The README now introduces the service and links to focused setup, registry, logging, BGP, protocol, and development guides. Fresh-installation procedures distinguish startup, Windows service status, BFD readiness, and optional shutdown. Examples use explained placeholders, fit within 80 columns, and describe expected results. The registry reference covers all 22 supported settings; the logging reference covers all nine manifest events. Historical review statements are dated rather than presented as current configuration instructions.
+
+Added descriptions for 33 public enum variants and fields. Rust source comparison after removing API comments confirmed unchanged executable code. Validation passed: 77 tests (66 library, 2 service, 7 Windows UDP integration, and 2 doctests), with one opt-in CIM schema test ignored; formatting; strict Clippy including undocumented unsafe blocks; and Rust documentation with warnings and missing public descriptions denied. Local Markdown links and anchors resolved, all 28 PowerShell samples parsed, and sample lines fit within 80 columns. The examples were parsed without executing installation, registry provisioning, or removal commands. Live service deployment, Event Viewer delivery, and BGP provider mutations were not exercised.
+
 ## Resolved public API findings
 
 - **F1:** Authentication kind and key are private. `AuthConfig::kind()` exposes the type without mutation; changing authentication requires constructing a new validated configuration. A compile-fail doctest checks that the kind cannot be assigned directly.
@@ -40,8 +46,9 @@ On Windows with the MSVC toolchain and Windows SDK installed:
 ```powershell
 cargo fmt --check
 cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings -D clippy::undocumented_unsafe_blocks
-$env:RUSTDOCFLAGS = '-D warnings'
+cargo clippy --locked --all-targets -- `
+    -D warnings -D clippy::undocumented_unsafe_blocks
+$env:RUSTDOCFLAGS = '-D warnings -D missing-docs'
 cargo doc --locked --no-deps
 ```
 
@@ -51,7 +58,7 @@ The native schema test is opt-in because it requires CIM namespace access:
 cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
 ```
 
-Follow the [README](README.md) for Miri and deployment instructions. Recorded test totals in the correctness review apply to that review's checks, not automatically to future revisions. Actual BGP Start/Stop and SCM lifecycle behavior need validation on a provisioned Windows Server; local fixtures do not establish provider behavior.
+Follow the [development guide](docs/development.md) for Miri checks and [Set up a BFD session](docs/setup.md) for deployment. Recorded test totals in the correctness review apply to that review's checks, not automatically to future revisions. Actual BGP Start/Stop and SCM lifecycle behavior need validation on a provisioned Windows Server; local fixtures do not establish provider behavior.
 
 Registry configuration checks on 2026-10-07 passed: 69 tests including the doctest, with one opt-in native schema test ignored; formatting; strict Clippy including undocumented unsafe blocks; documentation with warnings denied; and the release build. Seven configuration tests passed under Miri with strict provenance, and the final string decoder was checked again after the parity-check lint correction. Release smoke checks confirmed that help exposes only `--console` plus help/version, removed configuration arguments are rejected, and a missing Parameters key produces exit code 1 with lifecycle/failure messages on STDOUT and empty STDERR. No installed service configuration was modified.
 
