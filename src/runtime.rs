@@ -9,12 +9,12 @@ use crate::{
 };
 use std::{
     fmt::Display,
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
-    path::Path,
     sync::mpsc::{Receiver, TryRecvError},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetSystemTime};
 
 /// Operational ETW events in service mode, STDOUT in console mode, and an
 /// optional append-only file log in either mode.
@@ -54,21 +54,39 @@ impl Logger {
     /// Open/create the append log and select Operational ETW or console STDOUT.
     ///
     /// # Errors
-    /// Returns an error if the configured file cannot be opened.
+    /// Returns an error if enabled file logging cannot create its parent
+    /// directories or open the configured file.
     pub fn open(options: &Options) -> io::Result<Self> {
         let mut log = Self::new(options.console);
-        log.open_file(options.log_file.as_deref())?;
+        log.open_file(options)?;
         Ok(log)
     }
 
-    /// Configure the optional append log after loading registry settings.
+    /// Configure the append log after loading registry settings. Disabled file
+    /// logging never opens, creates, or writes the configured path. When enabled,
+    /// missing parent directories are created before opening the file.
     ///
     /// # Errors
-    /// Returns an error if the configured file cannot be opened.
-    pub fn open_file(&mut self, path: Option<&Path>) -> io::Result<()> {
-        self.file = path
-            .map(|path| OpenOptions::new().create(true).append(true).open(path))
-            .transpose()?;
+    /// Returns an error if enabled file logging cannot create its parent
+    /// directories or open the configured file.
+    pub fn open_file(&mut self, options: &Options) -> io::Result<()> {
+        self.file = if options.log_to_file {
+            if let Some(parent) = options
+                .log_file_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            Some(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&options.log_file_path)?,
+            )
+        } else {
+            None
+        };
         Ok(())
     }
 
@@ -118,7 +136,10 @@ impl Logger {
             provider.session_event(event, options, session, previous, remote_discriminator)
         });
     }
-    /// Write a Unix-millisecond timestamp and message. Output errors are
+    /// Write a timestamped message. Every file line starts with an ISO-8601 UTC
+    /// timestamp with milliseconds and a trailing Z; STDOUT uses Unix milliseconds.
+    /// Multiline file entries share the timestamp sampled immediately before writing.
+    /// Output errors are
     /// reported to stderr on a best-effort basis rather than returned or panicked.
     /// A failed STDOUT write disables further console writes for this logger;
     /// file logging, ETW mode selection, and engine execution continue.
@@ -131,12 +152,13 @@ impl Logger {
     /// log.log("BFD initialization started");
     /// ```
     pub fn log(&mut self, message: impl Display) {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let line = format!("{timestamp} {message}\n");
+        let message = message.to_string();
         if self.console && !self.stdout_failed {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let line = format!("{timestamp} {message}\n");
             if let Err(error) = io::stdout().lock().write_all(line.as_bytes()) {
                 self.stdout_failed = true;
                 // Diagnostics must not panic if STDERR is also unavailable.
@@ -147,11 +169,32 @@ impl Logger {
             }
         }
         if let Some(file) = &mut self.file {
+            let timestamp = utc_timestamp();
+            let message = message.replace('\n', &format!("\n{timestamp} "));
+            let line = format!("{timestamp} {message}\n");
             if let Err(error) = file.write_all(line.as_bytes()) {
                 let _ = writeln!(io::stderr().lock(), "unable to write BFD file log: {error}");
             }
         }
     }
+}
+
+/// Read the Windows UTC clock without applying the local timezone.
+fn utc_timestamp() -> String {
+    let mut time = SYSTEMTIME::default();
+    // SAFETY: time is a valid, writable SYSTEMTIME that remains alive throughout
+    // the synchronous call. GetSystemTime initializes its fields with UTC values.
+    unsafe { GetSystemTime(&mut time) };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        time.wYear,
+        time.wMonth,
+        time.wDay,
+        time.wHour,
+        time.wMinute,
+        time.wSecond,
+        time.wMilliseconds,
+    )
 }
 
 /// One validated session, its UDP sockets, and any configured BGP worker.
@@ -421,6 +464,112 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
+    fn file_logging_creates_missing_parent_directories_and_appends() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join("missing")
+            .join("nested")
+            .join("trace.log");
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.console = true;
+        options.log_file_path = path.clone();
+        options.log_to_file = true;
+
+        for message in ["first message", "second message"] {
+            let mut log = Logger::open(&options).unwrap();
+            log.log(message);
+        }
+
+        let contents = std::fs::read_to_string(path).unwrap();
+        let messages: Vec<_> = contents
+            .lines()
+            .map(|line| line.split_once(' ').unwrap().1)
+            .collect();
+        assert_eq!(messages, ["first message", "second message"]);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn every_file_log_line_has_an_iso8601_utc_timestamp() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.log");
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.console = true;
+        options.log_to_file = true;
+        options.log_file_path = path.clone();
+        let mut log = Logger::open(&options).unwrap();
+        log.log("first line\n\nthird line\r\nfourth line");
+        log.log("");
+        drop(log);
+
+        let contents = fs::read_to_string(path).unwrap();
+        let mut messages = Vec::new();
+        for line in contents.lines() {
+            let (timestamp, message) = line.split_once(' ').unwrap();
+            assert_eq!(timestamp.len(), 24, "{timestamp}");
+            for (index, byte) in timestamp.bytes().enumerate() {
+                match index {
+                    4 | 7 => assert_eq!(byte, b'-'),
+                    10 => assert_eq!(byte, b'T'),
+                    13 | 16 => assert_eq!(byte, b':'),
+                    19 => assert_eq!(byte, b'.'),
+                    23 => assert_eq!(byte, b'Z'),
+                    _ => assert!(byte.is_ascii_digit(), "{timestamp}"),
+                }
+            }
+            messages.push(message);
+        }
+        assert_eq!(
+            messages,
+            ["first line", "", "third line", "fourth line", ""]
+        );
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn disabled_file_logging_leaves_paths_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let existing = directory.path().join("existing.log");
+        fs::write(&existing, b"existing contents").unwrap();
+        let missing_parent = directory.path().join("missing");
+        let missing = missing_parent.join("trace.log");
+        // A file in place of a parent directory would fail if opened or created.
+        let blocked = existing.join("trace.log");
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.console = true;
+        assert!(!options.log_to_file);
+
+        for path in [&existing, &missing, &blocked] {
+            options.log_file_path = path.clone();
+            let mut log = Logger::open(&options).unwrap();
+            log.service_started();
+            log.service_failed("file output is disabled");
+            log.service_stopped(0);
+        }
+
+        assert_eq!(fs::read(existing).unwrap(), b"existing contents");
+        assert!(!missing_parent.exists());
+        assert!(!blocked.exists());
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn enabled_file_logging_reports_parent_directory_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocked = directory.path().join("file");
+        fs::write(&blocked, b"existing contents").unwrap();
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.console = true;
+        options.log_to_file = true;
+        options.log_file_path = blocked.join("trace.log");
+
+        assert!(Logger::open(&options).is_err());
+        assert_eq!(fs::read(blocked).unwrap(), b"existing contents");
+    }
+
+    #[cfg(not(miri))]
+    #[test]
     fn closed_stdout_does_not_interrupt_engine_shutdown_or_file_logging() {
         use std::{
             io::{BufRead, BufReader, Read},
@@ -435,7 +584,8 @@ mod tests {
                 Options::new("127.0.0.70".parse().unwrap(), "127.0.0.71".parse().unwrap());
             options.multihop = true;
             options.console = true;
-            options.log_file = Some(std::env::var_os(LOG_PATH).unwrap().into());
+            options.log_file_path = std::env::var_os(LOG_PATH).unwrap().into();
+            options.log_to_file = true;
             let auth = options.validate().unwrap();
             let mut log = Logger::open(&options).unwrap();
             let mut engine = Engine::open(options, auth, &mut log).unwrap();

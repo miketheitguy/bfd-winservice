@@ -68,7 +68,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
         let auth = options
             .validate()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-        log.open_file(options.log_file.as_deref())?;
+        log.open_file(&options)?;
         let mut engine = Engine::open(options, auth, &mut log)?;
         let started = {
             let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());

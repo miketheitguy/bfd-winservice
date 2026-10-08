@@ -1,225 +1,417 @@
 # BFD Windows service
 
-A provisioned, asynchronous BFD session over IPv4 or IPv6, running under the Windows Service Control Manager (SCM) or in a console.
+Monitor a remote peer with Bidirectional Forwarding Detection (BFD) over IPv4 or IPv6. Run one configured session as a Windows service or in a console. Optionally use BFD state changes to stop and start a local Windows BGP peer.
 
-The implementation is based on [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html), with [RFC 5881 single-hop UDP encapsulation](https://www.rfc-editor.org/rfc/rfc5881.html) and [RFC 5883 multihop encapsulation](https://www.rfc-editor.org/rfc/rfc5883.html). Implemented features and limits are described below.
+| Name | Value |
+| --- | --- |
+| Windows service | `BfdWinService` |
+| Event provider | `BFD-Service` |
+| Event Log channel | `BFD-Service/Operational` |
 
-## Build and check
+Both execution modes read configuration from the registry. `--console` runs in the foreground and writes events to STDOUT; `--help` and `--version` are also available.
 
-Install Rust for Windows and the Visual Studio **Desktop development with C++** workload, including the MSVC toolchain and Windows SDK. Use the `windows-msvc` Rust target. The build compiles the ETW manifest with the SDK's `mc.exe` and `rc.exe` and embeds its metadata and English messages in `bfd-winservice.exe`. The build finds these tools on `PATH` or in the installed Windows 10/11 SDK; use Developer PowerShell if the MSVC linker is not on `PATH`. For custom SDK locations, set `BFD_MC_PATH` and `BFD_RC_PATH` to the absolute tool paths. Use Windows 10 or later (or a corresponding Windows Server release); IPv4 receive TTL metadata requires `IP_RECVTTL` support.
+- [Build](#build)
+- [Run in a console](#run-in-a-console)
+- [Install and run as a service](#install-and-run-as-a-service)
+- [Configuration reference](#configuration-reference)
+- [Logs and events](#logs-and-events)
+- [Optional BGP control](#optional-bgp-control)
+- [Network and protocol behavior](#network-and-protocol-behavior)
+- [Development and testing](#development-and-testing)
+
+## Build
+
+You need:
+
+- Windows 10 or later, or a corresponding Windows Server release.
+- Rust with a `windows-msvc` target.
+- Visual Studio's **Desktop development with C++** workload, including the MSVC toolchain and Windows SDK.
+
+From the repository root:
 
 ```powershell
 cargo build --release
-cargo test
-cargo clippy --all-targets -- -D warnings
 .\target\release\bfd-winservice.exe --help
 ```
 
-The protocol and configuration validation modules are portable; registry loading, the UDP transport, native MI client, and service integration are Windows-specific. BGP control uses Rust bindings to `mi.dll`; no PowerShell process or C++ helper is required. See the [validation guide](RUST_SKILLS_VALIDATION.md) and [correctness review](CODE_REVIEW.md) for recorded checks and their limits.
+The executable is `target\release\bfd-winservice.exe`. Its ETW metadata and English messages are embedded during the build using the SDK's `mc.exe` and `rc.exe`.
 
-With nightly Rust and the Miri component installed, check the library tests with strict pointer provenance:
-
-```powershell
-$env:MIRIFLAGS = '-Zmiri-strict-provenance'
-cargo +nightly miri test --locked --lib -- --test-threads=1
-```
-
-The library tests include synthetic IPv4/IPv6 ancillary-data records to exercise the unsafe parser without opening sockets. Miri cannot execute Winsock's `WSAStartup`, native MI calls, registry calls, ETW registration, or subprocesses; those native tests are excluded under Miri. Run the UDP integration and native tests with `cargo test`. Registry tests create and remove unique temporary HKCU keys; they do not change the installed service's HKLM settings. For an additional parser check, set `MIRIFLAGS` to `-Zmiri-strict-provenance -Zmiri-tree-borrows` and run `cargo +nightly miri test --locked --lib ancillary_metadata`.
-
-## Registry configuration
-
-Both SCM and console execution read settings at startup from:
-
-```text
-HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters
-```
-
-All former command-line settings are registry values. `--console` is the only application command-line option; `--help` and `--version` are also available. There are no command-line configuration overrides. The program reads this key without creating or modifying it. Missing optional values use the defaults below; missing required values, incorrect types, or invalid combinations fail startup and identify the affected setting. Strings must be `REG_SZ`; environment-variable expansion through `REG_EXPAND_SZ` is not supported. Numeric settings and Boolean flags use `REG_DWORD`, with flags restricted to `0` (off) or `1` (on). These types are enforced through the [Windows registry API](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
-
-Use Administrator PowerShell to provision a single-hop session. For SCM execution, create the service first as described below. Provision the remote peer separately with the reverse local/peer addresses; BFD has no peer discovery. Obtain the local interface index with `Get-NetIPInterface` and replace the example addresses/index:
-
-```powershell
-$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
-New-Item -Path $parameters -Force | Out-Null
-New-ItemProperty -Path $parameters -Name Local -PropertyType String -Value '192.0.2.10' -Force | Out-Null
-New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '192.0.2.20' -Force | Out-Null
-New-ItemProperty -Path $parameters -Name InterfaceIndex -PropertyType DWord -Value 12 -Force | Out-Null
-```
-
-| Registry value | Type | Default when absent | Purpose |
-| --- | --- | --- | --- |
-| `Local`, `Peer` | `REG_SZ` | Required | Specific unicast IP literals of the same family; IPv4 or IPv6 |
-| `Mode` | `REG_SZ` | `single-hop` | `single-hop` or `multihop` |
-| `Multihop` | `REG_DWORD` | `0` | `1` selects multihop; omit `Mode` when using this shortcut |
-| `PointToPoint` | `REG_DWORD` | `0` | Single-hop point-to-point link; accept any peer source address on the configured interface |
-| `InterfaceIndex` | `REG_DWORD` | Required for single-hop/link-local | Nonzero outgoing/incoming interface index |
-| `MinTxUs` | `REG_DWORD` | `300000` | Desired TX interval while Up, 1..4294967295 microseconds |
-| `MinRxUs` | `REG_DWORD` | `300000` | Required RX interval, 1..4294967295 microseconds |
-| `StartupTxUs` | `REG_DWORD` | `1000000` | Desired TX interval outside Up; at least one second; effective value is `max(StartupTxUs, MinTxUs)` |
-| `DetectMult` | `REG_DWORD` | `3` | Advertised multiplier, 1..255 |
-| `Discriminator` | `REG_DWORD` | Random | Nonzero local session identifier |
-| `SourcePort` | `REG_DWORD` | Random available port | Fixed session UDP source port, 49152..65535 |
-| `Passive` | `REG_DWORD` | `0` | Wait for a validated peer control packet; multihop only |
-| `MinTtl` | `REG_DWORD` | No multihop threshold | Reject multihop packets below this received TTL/hop limit, 1..255 |
-| `Auth` | `REG_SZ` | `none` | `none`, `simple-password`, `keyed-md5`, `meticulous-md5`, `keyed-sha1`, `meticulous-sha1` |
-| `AuthKeyId` | `REG_DWORD` | `0` | Authentication key ID, 0..255 |
-| `AuthKey` | `REG_SZ` | None | ASCII key; authentication requires this or `AuthKeyHex` |
-| `AuthKeyHex` | `REG_SZ` | None | Binary key encoded as hexadecimal text, instead of `AuthKey` |
-| `LogFile` | `REG_SZ` | None | Path to an append log; use an absolute path for SCM execution; timestamps are Unix milliseconds |
-| `BgpPeerName` | `REG_SZ` | None | Enable native MI Start/Stop control for this configured BGP peer name |
-| `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional routing domain; requires `BgpPeerName` |
-| `Verbose` | `REG_DWORD` | `0` | Log discarded packet reasons, at most one per second |
-
-For a point-to-point single-hop link, set `PointToPoint=1` and `InterfaceIndex`. The peer may send from any source address on that link, including changing its source during a session. Outgoing packets continue to use the configured `Peer` destination. For IPv6 use literal addresses such as `2001:db8::10`; link-local addresses require `InterfaceIndex` and must not have a `%scope` suffix.
-
-Multihop example, after provisioning `Local` and `Peer` (configure the same authentication type, key ID, and key at the peer):
-
-```powershell
-New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '198.51.100.20' -Force | Out-Null
-New-ItemProperty -Path $parameters -Name Mode -PropertyType String -Value 'multihop' -Force | Out-Null
-New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'meticulous-sha1' -Force | Out-Null
-New-ItemProperty -Path $parameters -Name AuthKeyId -PropertyType DWord -Value 1 -Force | Out-Null
-New-ItemProperty -Path $parameters -Name AuthKey -PropertyType String -Value 'replace-this-key' -Force | Out-Null
-```
-
-Password and MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. Only one authentication key is active at a time. Keyed modes verify digests and sequence windows, including wraparound and restart resynchronization. SHA1 is included for compatibility with RFC 5880; MD5 use is discouraged by that RFC. RFC 5883 recommends cryptographic authentication over multihop paths. Registry keys are not encrypted: restrict read access to the Parameters key to the administrators and accounts that need it, including the service account. Authentication keys are never included in logs or configuration errors.
-
-When authentication is configured, unauthenticated packets cannot establish a session or refresh its detection timer. They are discarded without a network reply, including any Poll/Final flags, as required by [RFC 5880 section 6.8.6](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.6). Authentication verification failures emit Operational Warning event 105 in service mode and a text message on console STDOUT or in the optional file log, at most once per second per process, regardless of `Verbose`. Every outgoing packet uses the configured authentication, including startup, Down, and Final packets. Passive sessions wait for a valid authenticated peer packet, and periodic transmission remains subject to the suppression rules below. If an established peer stops sending valid authenticated packets, the session times out to Down with the Control Detection Time Expired diagnostic.
-
-All intervals are **microseconds**, before jitter. The actual periodic transmit interval is negotiated as `max(local desired TX, peer required RX)`, then randomly reduced by 0–25% (10–25% when the local multiplier is 1). The local detection time is `peer multiplier * max(local required RX, peer desired TX)`. With matching 300000-microsecond intervals and multiplier 3, detection time is 900 ms. Windows scheduling adds latency; this is a user-space service and does not promise microsecond timing.
+Use Developer PowerShell if the MSVC linker is unavailable on `PATH`. The build finds the manifest tools on `PATH` or in the installed Windows 10/11 SDK. For a custom SDK location, set `BFD_MC_PATH` and `BFD_RC_PATH` to the absolute tool paths.
 
 ## Run in a console
 
-After provisioning the registry, start foreground execution:
+### 1. Configure the session
+
+Open **PowerShell as Administrator** to write the registry settings. Replace the example addresses and interface index with your own. Find the interface index with:
 
 ```powershell
-.\target\release\bfd-winservice.exe --console
+Get-NetIPInterface | Select-Object InterfaceAlias, InterfaceIndex, AddressFamily
 ```
 
-BFD log messages, including configuration failures, go directly to **STDOUT** in this mode. Console mode does not register or write the ETW provider. To capture STDOUT, use `> .\bfd-console.log`; `LogFile` can also be configured for an append log. Both execution modes read the same registry settings once at startup, so stop the process before editing settings and restart afterward.
-
-Ctrl+C sets AdminDown, attempts a shutdown packet when transmission is permitted, and waits for any BGP cleanup before exiting. Passive sessions with no learned remote discriminator do not send a shutdown packet; send failures are logged. Shutdown attempts one packet rather than continuing transmission for the detection period recommended by [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16).
-
-If a STDOUT write fails, for example when a downstream pipe reader closes, that logger disables further console writes and attempts one diagnostic on STDERR. BFD execution, shutdown cleanup, and any configured `LogFile` continue. A failed diagnostic write is ignored. Console mode continues to use no ETW provider after an output failure.
-
-## Control a Windows BGP peer with BFD
-
-Set `BgpPeerName` to the **configured BGP peer name**, which is separate from the BFD `Peer` IP address. Set `BgpRoutingDomain` for a peer in a named routing domain. Both values are strings. The BGP peer must already exist on the local Windows Server with Remote Access/BGP configured, and the console or service account must have permission to manage it. These settings apply equally to console and SCM execution.
+The default single-hop session needs `Local`, `Peer`, and `InterfaceIndex`. This example also sets the default log file path and disables file output:
 
 ```powershell
-New-ItemProperty -Path $parameters -Name BgpPeerName -PropertyType String -Value 'Site17' -Force | Out-Null
-.\target\release\bfd-winservice.exe --console
-```
-
-At service/console startup the worker reads the selected peer through [`PS_BgpPeer.Get`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/get-ps-bgppeer). It interprets `BgpPeerConfig.ConnectivityStatus` using the provider's enum metadata, requesting English labels. `Stopped` means the peer needs Start; `Connected`, `Connecting`, and `Disconnected` mean it has already been started. BFD begins its configured handshake independently of this read-only query.
-
-The client invokes the static methods of [`PS_BgpPeer`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/ps-bgppeer) in `root\Microsoft\Windows\RemoteAccess` using the [Windows MI client API](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_session_invoke):
-
-- Entering **Up**, including the first completed handshake and later recovery, queues a status check and calls `Start` only if the peer is stopped and the queued action is still current. A peer already running is left unchanged.
-- Until BFD first reaches **Up**, unsuccessful handshake attempts leave BGP unchanged, allowing a running BGP peer to continue while BFD establishes.
-- After BFD has reached **Up**, entering **Down** after a timeout or peer-reported Down/AdminDown queues `Stop`.
-- Once the engine is running, service shutdown, Ctrl+C, and fatal receive/wait errors set AdminDown and queue `Stop`, even if BFD never reached Up.
-
-The initial Down state and Down-to-Init transition cause no BGP mutation. A stopped BGP peer waits for BFD to establish before it is started. Failed or ambiguous status checks are logged; they never trigger a speculative Start. The worker retries a failed action unless a newer queued action or shutdown supersedes it. An Init transition does not cancel a Stop queued by an earlier Down. Each method receives a one-element string array `Name`; `RoutingDomain` is supplied when configured. `Stop` also receives `Force=true` for unattended execution, as defined by its [method signature](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/stop-ps-bgppeer).
-
-A dedicated worker serializes calls while BFD continues sending and receiving packets. Each MI operation requests a five-second timeout; this is not a fixed end-to-end or shutdown deadline ([MI timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)). Success requires both MI completion success and a zero CIM `ReturnValue`; errors are logged and retried after one second unless superseded. During sustained flapping behind a slow provider, at most a Stop/Start pair remains queued. A newer Down or AdminDown discards queued Starts, and Start checks for supersession again after its status query. These checks do not make provider calls atomic with BFD state changes: an already issued MI call finishes before the next action runs. Shutdown discards queued Starts, attempts pending Stops, and waits for the worker. A failed final Stop produces a nonzero console exit code or SCM service-specific exit status; shutdown calls are not retried indefinitely. Without `BgpPeerName`, no BGP worker or MI query is started.
-
-Native tests exercise parameter copying, Unicode, `Force`, embedded status results, CIM return codes, and an error response from a nonexistent class in `root/cimv2`. They do not change any BGP peers. The read-only class-schema test requires CIM namespace access and is opt-in: run `cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored` outside a restricted sandbox. Validate actual startup and Stop/Start behavior on the target server with both a stopped and a running BGP peer, then disconnect and restore BFD while watching the BFD log and BGP state.
-
-## Install and run as a service
-
-Open PowerShell as Administrator. Keep the executable at the installed path and use absolute log paths. The service name is `BfdWinService`. Its **BinaryPathName** contains only the quoted executable path; all settings belong in its Parameters registry key. Arguments passed via `Start-Service` are not used.
-
-```powershell
-$exe = (Resolve-Path .\target\release\bfd-winservice.exe).Path
-$log = Join-Path (Split-Path $exe) 'bfd.log'
-$binaryPath = '"' + $exe + '"'
-New-Service -Name BfdWinService -BinaryPathName $binaryPath -DisplayName 'BFD Windows Service' -StartupType Manual
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
 New-Item -Path $parameters -Force | Out-Null
 New-ItemProperty -Path $parameters -Name Local -PropertyType String -Value '192.0.2.10' -Force | Out-Null
 New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '192.0.2.20' -Force | Out-Null
 New-ItemProperty -Path $parameters -Name InterfaceIndex -PropertyType DWord -Value 12 -Force | Out-Null
-New-ItemProperty -Path $parameters -Name LogFile -PropertyType String -Value $log -Force | Out-Null
-# Register the ETW manifest as shown below before starting the service.
-Start-Service BfdWinService
-Get-Service BfdWinService
-Get-Content $log -Tail 20
-Stop-Service BfdWinService
+New-ItemProperty -Path $parameters -Name LogFilePath -PropertyType String -Value 'C:\ProgramData\BfdWinService\trace.log' -Force | Out-Null
+New-ItemProperty -Path $parameters -Name LogToFile -PropertyType DWord -Value 0 -Force | Out-Null
 ```
 
-For an existing installation, stop it, provision the registry values above (and any other settings formerly supplied on the command line), and remove old arguments from its executable path before restarting:
+Configure the remote peer separately with the local and peer addresses reversed. BFD has no peer discovery. Both addresses must be distinct unicast IP literals of the same address family.
+
+For SCM execution, use the [service setup](#install-and-run-as-a-service) below, which creates the service before provisioning its settings.
+
+### 2. Start and stop
 
 ```powershell
-Stop-Service BfdWinService
-# Provision or update the Parameters values while stopped.
-sc.exe config BfdWinService binPath= $binaryPath
-Start-Service BfdWinService
+.\target\release\bfd-winservice.exe --console
 ```
 
-To remove the stopped service:
+Messages, including configuration failures, go to **STDOUT**. Console mode does not register or write the ETW provider. To save the output:
 
 ```powershell
-sc.exe delete BfdWinService
+.\target\release\bfd-winservice.exe --console > .\bfd-console.log
 ```
 
-SCM Running means registry configuration was validated, engine initialization succeeded, sockets are open, and any configured BGP worker has started; it does not mean BFD is Up or the initial BGP status query succeeded. Session Up/Down and diagnostic reasons are recorded in the log. Registry, file-log, and socket/engine initialization failures report a nonzero SCM service-specific exit status. SCM Stop and Shutdown report StopPending immediately; the engine sets AdminDown and attempts a shutdown packet when the active/passive role permits transmission before finishing BGP cleanup. Shutdown checkpoints advance while cleanup is pending after a stop request. Register the Operational channel below for service and communication events, and set `LogFile` for additional diagnostics; SCM has no console.
+Press **Ctrl+C** to stop. The engine sets AdminDown, attempts one shutdown packet when transmission is permitted, and waits for any configured BGP cleanup.
 
-## Windows Event Log / ETW
+Settings are read once at startup. Stop the process, edit the registry, and restart to apply changes.
 
-The manifest-based provider is **BFD-Service**, GUID `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`, with one enabled channel: **BFD-Service/Operational**. Its source is [events/BFD-Service.man](events/BFD-Service.man), following Microsoft's [instrumentation manifest documentation](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). SCM execution emits these events; `--console` writes the corresponding messages directly to STDOUT. Lifecycle events use numeric Mode `0`, rendered as `Windows service` by the manifest, for SCM execution. The console text startup message uses `mode=console`.
+## Install and run as a service
 
-After building, register the manifest **once on each target machine**, from Administrator PowerShell, before starting the service. Use the final installed executable path because Event Viewer loads the embedded resources from it. Deploy the `.man` file alongside the executable, or resolve its source path as shown here:
+Use **PowerShell as Administrator**. Keep the executable at a permanent installation path. The commands below use the build output and the default log file path; adjust `$exe` and `$manifest` if you deploy the files elsewhere.
+
+### 1. Create the service and configure it
+
+Replace the example addresses and interface index before running these commands:
 
 ```powershell
 $exe = (Resolve-Path .\target\release\bfd-winservice.exe).Path
 $manifest = (Resolve-Path .\events\BFD-Service.man).Path
+$binaryPath = '"' + $exe + '"'
+$log = 'C:\ProgramData\BfdWinService\trace.log'
+
+New-Service -Name BfdWinService -BinaryPathName $binaryPath -DisplayName 'BFD Windows Service' -StartupType Manual
+
+$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
+New-Item -Path $parameters -Force | Out-Null
+New-ItemProperty -Path $parameters -Name Local -PropertyType String -Value '192.0.2.10' -Force | Out-Null
+New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '192.0.2.20' -Force | Out-Null
+New-ItemProperty -Path $parameters -Name InterfaceIndex -PropertyType DWord -Value 12 -Force | Out-Null
+New-ItemProperty -Path $parameters -Name LogFilePath -PropertyType String -Value $log -Force | Out-Null
+New-ItemProperty -Path $parameters -Name LogToFile -PropertyType DWord -Value 0 -Force | Out-Null
+```
+
+The service's executable path contains only the quoted path to the binary. Configure all session settings through the Parameters registry values.
+
+File output is disabled in this example. To enable it, see [file logging](#file-logging).
+
+### 2. Register the Operational log
+
+Register the manifest once on each target machine, before starting the service:
+
+```powershell
 wevtutil.exe im $manifest "/rf:$exe" "/mf:$exe"
 if ($LASTEXITCODE -ne 0) { throw 'BFD-Service manifest registration failed' }
 Get-WinEvent -ListProvider 'BFD-Service'
 Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
-View events in Event Viewer under **Applications and Services Logs → BFD-Service → Operational**, or query recent events:
+Use the **final installed executable path**: Event Viewer loads messages and metadata from it. The manifest can come from the repository or a deployed copy. Building or running the binary does not install the manifest.
+
+### 3. Start, inspect, and stop
 
 ```powershell
+Start-Service BfdWinService
+Get-Service BfdWinService
 Get-WinEvent -FilterHashtable @{ LogName = 'BFD-Service/Operational' } -MaxEvents 20 |
     Select-Object TimeCreated, Id, LevelDisplayName, Message
+Stop-Service BfdWinService
 ```
 
-| Event ID | Level | Meaning |
-| --- | --- | --- |
-| 1 | Information | Engine initialization completed and SCM Running was reported |
-| 2 | Information | Execution ended after shutdown/cleanup; ExitCode is 0 for success or 1 for failure |
-| 3 | Error | Registry configuration, log/engine initialization, or execution failed |
-| 100 | Information | First valid control packet arrived, including after a communication timeout |
-| 101 | Warning | No valid control packet arrived within the detection interval; includes the last known remote discriminator |
-| 102 | Information | Session entered Up, including recovery |
-| 103 | Warning | Session entered Down due to detection expiry or peer-reported Down/AdminDown |
-| 104 | Information | Session entered Init or local AdminDown |
-| 105 | Warning | Authentication verification failed; includes packet source, configured authentication type/key ID, and reason |
+SCM **Running** means configuration is valid, sockets are open, and any configured BGP worker has started. BFD reaches **Up** separately; the initial BGP status query may also still be pending.
 
-Events 100–104 record the local/peer addresses, local/remote discriminators, previous/current BFD states, diagnostic, transmit interval, and detection time in microseconds. Events 100/101 track reception independently of session establishment: a peer can keep sending Down or AdminDown packets without being Up. Invalid transport metadata, authentication, or session identifiers never count as communication. Repeated valid packets and repeated timeout checks do not emit duplicate communication events. Other packet discard reasons are logged only with `Verbose=1`, at most once per second. Ordinary send errors are also limited to once per second. These messages go to console STDOUT or `LogFile` when configured; they do not produce Operational events.
+Configuration, file-log, and engine failures report a nonzero SCM service-specific exit status. Stop and Shutdown immediately report StopPending, with advancing checkpoints while cleanup runs. Shutdown attempts one AdminDown packet when the session's active/passive role permits, then waits for BGP cleanup.
 
-Authentication Warning event 105 records the local/peer addresses, actual packet source address/port, local discriminator, configured authentication type/key ID, and a static rejection reason. Reasons cover missing/unexpected authentication, type/key ID/length mismatches, password/digest failures, and invalid sequence windows. No password, key bytes, digest, or packet payload is logged. Warnings are limited to one per second per process independently of the verbose discard limit, and are enabled regardless of `Verbose`. Generic malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate event 105.
+### Remove the service and manifest
 
-ETW registration failures are reported to stderr before the optional file log is available; ETW write failures are reported in the optional text log. Neither stops BFD. A successful ETW write does not guarantee Event Log delivery: install the manifest and keep the channel enabled. The service registers its ETW provider before reading registry settings or opening `LogFile`, so failures in those steps can emit event 3. Dispatcher/control-handler failures, failed ETW registration, and abrupt process termination can occur before lifecycle events are written.
-
-When changing the executable location or manifest, stop the service, uninstall the old manifest, and register the new one with the new absolute resource paths. To uninstall after stopping the service:
+After stopping the service, resolve the installed manifest path and remove its registration:
 
 ```powershell
+$manifest = (Resolve-Path .\events\BFD-Service.man).Path
 wevtutil.exe um $manifest
 if ($LASTEXITCODE -ne 0) { throw 'BFD-Service manifest removal failed' }
+sc.exe delete BfdWinService
 ```
 
-Provider registration/removal uses Microsoft's [wevtutil manifest commands](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil). Building and running the binary do not install the manifest automatically.
+Manifest registration and removal use Microsoft's [wevtutil commands](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil).
 
-## Network behavior and scope
+## Configuration reference
 
-- Single-hop listens/sends to UDP **3784**; multihop listens/sends to UDP **4784**. Transmissions use a separate socket with a stable source port in **49152–65535**, never the control destination port. Configure firewalls for peer-to-local UDP 3784 or 4784 from that source range and the reverse direction. This program does not change firewall rules.
-- All outgoing packets have TTL/hop limit **255**. Single-hop validates received TTL/hop limit 255, even when authenticated. Multihop accepts routed packets, optionally enforcing `MinTtl`. Received address and interface metadata is checked with `WSARecvMsg`; missing required metadata is discarded.
-- `PointToPoint=1` uses the configured single-hop interface to identify initial packets and the receiver discriminator afterward, as required by RFC 5881 section 6. TTL, destination, source port, discriminator, and configured authentication checks still apply. Other profiles require the configured peer source address.
-- Outside Up, the desired TX interval is the greater of `StartupTxUs` and `MinTxUs`. Entering Up starts a Poll sequence if the desired TX interval changes. Peer timer changes are honored, malformed/wrong-session/unauthenticated packets do not refresh detection, and timeouts move Init/Up to Down. Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Passive transmission stops again when the learned discriminator expires.
-- There is one session per process, with one local/peer pair (RFC 5883 section 4.1). The receive address/port is exclusively bound. Another process can use a different local address or the other transport profile. Multiple peers sharing the same local address and control port and out-of-band discriminator signaling are not implemented.
-- The implementation originates **asynchronous mode** only. Periodic transmission is suppressed when the peer advertises a zero required RX interval, or when both ends are Up, the peer sets Demand, and no local Poll is pending. A timeout retains the peer's last timer parameters, including a zero required RX interval. Accepted Poll packets receive immediate Final replies unless the local state is AdminDown, without postponing scheduled periodic transmissions. Local Demand initiation and Echo are not implemented; the outgoing Demand bit and required Echo RX interval are zero. Echo must not be used over multihop.
-- Tunables are registry startup settings; stop execution, edit them, and restart. Optional native MI integration controls the configured BGP peer. No live management API or other external state notifications are provided beyond the logs.
+Both console and SCM execution read:
+
+```text
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters
+```
+
+The program reads this key without creating or modifying it. Missing optional values use defaults. Missing required values, incorrect types, or invalid combinations fail startup and identify the affected setting.
+
+- **Strings:** `REG_SZ`. `REG_EXPAND_SZ` and environment-variable expansion are unsupported.
+- **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
+- **Apply changes:** stop execution, edit the registry, and restart to reload settings.
+
+Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
+
+### Addresses and transport
+
+Use `Multihop` to select the transport. If you omit this value or set it to `0`,
+the service uses single-hop. Set it to `1` for multihop. The following values
+configure the addresses and transport:
+
+| Value | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `Local`, `Peer` | `REG_SZ` | Required | Distinct unicast IPv4 or IPv6 literals of the same family |
+| `Multihop` | `REG_DWORD` | `0` | `0` = single-hop; `1` = multihop |
+| `InterfaceIndex` | `REG_DWORD` | Required for single-hop or link-local IPv6 | Nonzero incoming/outgoing interface index |
+| `PointToPoint` | `REG_DWORD` | `0` | Single-hop only: accept peer source-address changes on the configured interface |
+| `SourcePort` | `REG_DWORD` | Random available port | Stable session UDP source port, 49152–65535 |
+| `Discriminator` | `REG_DWORD` | Random nonzero value | Local session identifier |
+| `Passive` | `REG_DWORD` | `0` | Multihop only: wait for a valid peer packet before sending |
+| `MinTtl` | `REG_DWORD` | No multihop threshold | Multihop only: minimum received TTL/hop limit, 1–255 |
+
+`Multihop` must be a `REG_DWORD` with value `0` or `1`. Any other value or
+registry type fails startup.
+
+IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`; do not add a `%scope` suffix.
+
+With `PointToPoint=1`, outgoing packets still go to the configured `Peer`. Incoming packets must pass the destination, interface, TTL, source-port, discriminator, and authentication checks.
+
+### Timing
+
+| Value | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `MinTxUs` | `REG_DWORD` | `300000` | Desired transmit interval while Up, 1–4294967295 microseconds |
+| `MinRxUs` | `REG_DWORD` | `300000` | Required receive interval, 1–4294967295 microseconds |
+| `StartupTxUs` | `REG_DWORD` | `1000000` | Desired transmit interval outside Up; at least one second, clamped to `MinTxUs` |
+| `DetectMult` | `REG_DWORD` | `3` | Advertised detection multiplier, 1–255 |
+
+Intervals are **microseconds** before jitter:
+
+```text
+Transmit interval = max(local desired TX, peer required RX)
+Detection time    = peer multiplier × max(local required RX, peer desired TX)
+```
+
+Periodic transmit intervals are randomly reduced by 0–25%, or 10–25% when the local multiplier is 1. With matching 300000-microsecond intervals and multiplier 3, detection time is 900 ms. Windows scheduling adds latency; the service does not guarantee microsecond timing.
+
+### Authentication
+
+| Value | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `Auth` | `REG_SZ` | `none` | `none`, `simple-password`, `keyed-md5`, `meticulous-md5`, `keyed-sha1`, or `meticulous-sha1` |
+| `AuthKeyId` | `REG_DWORD` | `0` | Key ID, 0–255 |
+| `AuthKey` | `REG_SZ` | None | ASCII key |
+| `AuthKeyHex` | `REG_SZ` | None | Hexadecimal encoding of a binary key |
+
+Configure the same authentication type, key ID, and key at both ends. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is enabled. Password/MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. One key is active at a time.
+
+For example, after setting `Local` and `Peer`, configure an authenticated multihop session:
+
+```powershell
+$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
+New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '198.51.100.20' -Force | Out-Null
+New-ItemProperty -Path $parameters -Name Multihop `
+    -PropertyType DWord -Value 1 -Force | Out-Null
+New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'meticulous-sha1' -Force | Out-Null
+New-ItemProperty -Path $parameters -Name AuthKeyId -PropertyType DWord -Value 1 -Force | Out-Null
+New-ItemProperty -Path $parameters -Name AuthKey -PropertyType String -Value 'replace-this-key' -Force | Out-Null
+```
+
+Unauthenticated packets cannot establish an authenticated session, refresh its detection timer, or trigger a reply. All outgoing packets use the configured authentication. Keyed modes check digests and sequence windows, including wraparound and restart resynchronization. Authentication failures are logged regardless of `Verbose`; see [event 105](#operational-events).
+
+These algorithms support RFC 5880 interoperability. The RFC discourages MD5, and RFC 5883 recommends cryptographic authentication for multihop. Registry key contents are unencrypted: restrict Parameters access to administrators and accounts that need it, including the service account. Authentication keys never appear in logs or configuration errors.
+
+### Logging and BGP
+
+| Value | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `LogFilePath` | `REG_SZ` | `C:\ProgramData\BfdWinService\trace.log` | Append log path; use an absolute path under SCM |
+| `LogToFile` | `REG_DWORD` | `0` | `0` = disable file output; `1` = enable file output |
+| `Verbose` | `REG_DWORD` | `0` | Log generic packet discard reasons, at most once per second |
+| `BgpPeerName` | `REG_SZ` | None | Enable control of this configured Windows BGP peer |
+| `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional domain; requires `BgpPeerName` |
+
+## Logs and events
+
+| Destination | When used | Content |
+| --- | --- | --- |
+| `BFD-Service/Operational` | SCM mode, with manifest installed and channel enabled | Lifecycle, peer communication, BFD state, and authentication failures |
+| STDOUT | `--console` | BFD log messages; no ETW registration |
+| `LogFilePath` | Either mode, with `LogToFile=1` | Append log with ISO-8601 UTC timestamps, including additional diagnostics |
+
+Ordinary send errors are logged at most once per second. Generic discard reasons require `Verbose=1` and have a separate one-second limit. These messages go to STDOUT or the configured file; they do not produce Operational events.
+
+If a STDOUT write fails, the affected logger disables further console writes and attempts one STDERR diagnostic. File logging and BFD/BGP execution continue. A failed diagnostic write is ignored.
+
+### File logging
+
+The [logging setup script](scripts/Initialize-Logging.ps1) provisions the default registry values and creates `C:\ProgramData\BfdWinService` without creating or writing `trace.log`. After creating the service or console Parameters key, run it from the repository root in **PowerShell as Administrator**:
+
+```powershell
+.\scripts\Initialize-Logging.ps1
+```
+
+The script sets `LogFilePath` to `C:\ProgramData\BfdWinService\trace.log` and `LogToFile` to DWORD `0`.
+
+At startup, the process reads `LogFilePath` and `LogToFile` from the Parameters key. If `LogFilePath` is absent, it uses `C:\ProgramData\BfdWinService\trace.log`.
+
+If `LogToFile` is absent or `0`, file output is disabled: the logger does not open, create, or write the configured file, or create its parent folders. Operational events and console output continue as described above.
+
+With `LogToFile=1`, the logger creates missing parent folders, including `C:\ProgramData\BfdWinService` for the default path, and appends to the file. Existing contents are preserved. The execution account needs permission to create the folders and write the file. Failure to create a folder or open the file fails startup.
+
+Each file line starts with the current UTC time in `YYYY-MM-DDTHH:mm:ss.sssZ` format. The trailing `Z` identifies UTC, and the fractional seconds provide millisecond precision. Multiline messages include the same entry timestamp on every line. For example:
+
+```text
+2026-10-08T12:34:56.789Z service started mode=service
+```
+
+To enable file output, run these commands in **PowerShell as Administrator** after creating the Parameters key:
+
+```powershell
+$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
+New-ItemProperty -Path $parameters -Name LogFilePath -PropertyType String -Value 'C:\ProgramData\BfdWinService\trace.log' -Force | Out-Null
+New-ItemProperty -Path $parameters -Name LogToFile -PropertyType DWord -Value 1 -Force | Out-Null
+```
+
+Start execution after setting the values, or restart it if already running. To inspect the default file output after startup:
+
+```powershell
+Get-Content 'C:\ProgramData\BfdWinService\trace.log' -Tail 20
+```
+
+### Operational events
+
+In Event Viewer, open **Applications and Services Logs → BFD-Service → Operational**.
+
+| ID | Level | Meaning |
+| --- | --- | --- |
+| 1 | Information | Engine initialized and SCM Running reported |
+| 2 | Information | Execution and cleanup ended; ExitCode 0 means success, 1 means failure |
+| 3 | Error | Configuration, initialization, or execution failed |
+| 100 | Information | Valid peer communication started or resumed |
+| 101 | Warning | No valid peer packet arrived within the detection interval |
+| 102 | Information | BFD entered Up |
+| 103 | Warning | BFD entered Down after a timeout or peer-reported Down/AdminDown |
+| 104 | Information | BFD entered Init or local AdminDown |
+| 105 | Warning | Authentication verification failed |
+
+Events 100–104 include endpoint addresses, discriminators, previous/current states, diagnostic, and transmit/detection intervals in microseconds. Event 101 retains the last known remote discriminator. Events 100/101 track valid reception separately from Up: a peer sending Down or AdminDown packets is still communicating. Repeated packets or timeout checks do not duplicate these events.
+
+Event 105 includes the packet source address/port, configured authentication type/key ID, local discriminator, and rejection reason. It is limited to once per second per process, independently of verbose logging. Keys, passwords, digests, and packet payloads are omitted. Malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate this event.
+
+The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](events/BFD-Service.man) follows Microsoft's [instrumentation manifest format](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). Lifecycle Mode `0` renders as `Windows service`; console startup text uses `mode=console`.
+
+### Logging failures
+
+ETW registration failures are reported to STDERR before the optional file log is open. ETW write failures go to the optional text log. Neither stops BFD.
+
+The provider registers before configuration is read, allowing registry and file-log startup failures to emit event 3. Dispatcher/control-handler failures, registration failures, or abrupt process termination can prevent lifecycle events. A successful ETW write does not guarantee Event Log delivery; install the manifest and keep the channel enabled.
+
+## Optional BGP control
+
+Set `BgpPeerName` to the **configured BGP peer name**, such as `Site17`. This is separate from the BFD peer IP address. Set `BgpRoutingDomain` for a named domain.
+
+The peer must already exist on a Windows Server with Remote Access/BGP configured. The execution account needs permission to manage it. Without `BgpPeerName`, no BGP worker or query is started.
+
+```powershell
+$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
+New-ItemProperty -Path $parameters -Name BgpPeerName -PropertyType String -Value 'Site17' -Force | Out-Null
+```
+
+Restart execution to apply the setting. Control works in both console and SCM modes.
+
+### State changes and actions
+
+| BFD condition | BGP action |
+| --- | --- |
+| Startup and handshake before the first Up | Read status; leave BGP unchanged |
+| Enter Up, including recovery | Check status; Start if the peer is stopped and the action is still current |
+| Enter Down after BFD has been Up | Stop |
+| Engine shutdown, Ctrl+C, or fatal receive/wait error | Set AdminDown and queue Stop, even if BFD never reached Up |
+
+A running BGP peer continues during the initial BFD handshake. A stopped peer waits for BFD to reach Up. Failed or ambiguous status checks never trigger a speculative Start. Init does not cancel a previously queued Stop.
+
+A dedicated worker handles provider calls while BFD continues running. Failed actions retry after one second unless replaced by a newer action or shutdown. At most a Stop/Start pair remains queued; Down/AdminDown discard queued Starts. An already issued call finishes before the next action runs.
+
+Each MI operation requests a five-second timeout, which is **not a hard shutdown deadline** ([timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)). Shutdown discards queued Starts, attempts pending Stops, and waits for the worker. A failed final Stop produces a nonzero exit status; final shutdown calls are not retried indefinitely.
+
+<details>
+<summary>Native provider details</summary>
+
+The client calls [`PS_BgpPeer`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/ps-bgppeer) in `root\Microsoft\Windows\RemoteAccess` through Rust bindings to `mi.dll` and the [MI client API](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_session_invoke).
+
+At startup, [`PS_BgpPeer.Get`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/get-ps-bgppeer) reads the selected peer. English enum metadata maps `Stopped` to stopped and `Connected`/`Connecting`/`Disconnected` to started. The BFD handshake runs independently.
+
+Each method receives a one-element `Name` string array and, when configured, `RoutingDomain`. [`Stop`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/stop-ps-bgppeer) also receives `Force=true`. Success requires MI completion success and CIM `ReturnValue=0`. Start checks for supersession before and after its status query; provider calls are not atomic with BFD state changes.
+
+</details>
+
+## Network and protocol behavior
+
+The implementation follows [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html), [RFC 5881](https://www.rfc-editor.org/rfc/rfc5881.html) for single-hop UDP, and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) for multihop.
+
+| Mode | Control destination port | Received TTL/hop limit |
+| --- | --- | --- |
+| Single-hop | UDP 3784 | Must be 255, including authenticated traffic |
+| Multihop | UDP 4784 | Must meet `MinTtl` when configured |
+
+All outgoing packets use TTL/hop limit 255 and a stable source port in 49152–65535. Allow traffic from that source range to the control destination port in both directions. Firewall rules must be configured separately.
+
+### Session behavior
+
+- One process runs one local/peer session. The receive address/port is exclusively bound; multiple peers sharing it are unsupported. Another process can use a different local address or transport profile.
+- Incoming packets must pass peer/path metadata, discriminator, and authentication checks before affecting the session. Point-to-point mode permits source-address changes on the configured single-hop interface. Missing required receive metadata is discarded.
+- Outside Up, desired TX is `max(StartupTxUs, MinTxUs)`. Entering Up starts a Poll sequence when this interval changes. Valid peer timer changes are honored; timeouts move Init/Up to Down.
+- Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Passive transmission stops when the learned discriminator expires.
+
+### Supported modes and limits
+
+The service originates **asynchronous BFD mode**. Local Demand initiation, Echo, out-of-band discriminator signaling, and live configuration APIs are unsupported.
+
+Periodic transmission stops when the peer advertises a zero required RX interval, or when both ends are Up, the peer sets Demand, and no local Poll is pending. A timeout retains the peer's last timer parameters. Accepted Polls receive immediate Final replies unless local state is AdminDown; replies do not postpone periodic transmissions.
+
+Shutdown attempts one packet when transmission is permitted. Passive sessions with no learned remote discriminator send none. This differs from the recommendation to transmit for a detection period in [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16).
+
+## Development and testing
+
+```powershell
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings -D clippy::undocumented_unsafe_blocks
+cargo fmt --check
+$env:RUSTDOCFLAGS = '-D warnings'
+cargo doc --locked --no-deps
+```
+
+Configuration validation and protocol modules are portable. Registry loading, UDP transport, ETW, native MI, and SCM integration require Windows. IPv4 TTL metadata requires `IP_RECVTTL` support.
+
+Native tests use temporary HKCU registry keys, local MI fixtures, and loopback UDP sockets. They do not change installed service settings or BGP peers. The read-only CIM schema test requires namespace access and is opt-in:
+
+```powershell
+cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
+```
+
+With nightly Rust and Miri installed:
+
+```powershell
+$env:MIRIFLAGS = '-Zmiri-strict-provenance'
+cargo +nightly miri test --locked --lib -- --test-threads=1
+```
+
+Miri checks the portable logic and synthetic ancillary-data parser. Native Winsock, MI, registry, ETW, and subprocess tests are excluded. For a focused parser check, set `MIRIFLAGS` to `-Zmiri-strict-provenance -Zmiri-tree-borrows` and run `cargo +nightly miri test --locked --lib ancillary_metadata`.
+
+Validate SCM lifecycle, Event Viewer delivery, and actual BGP Start/Stop on the target server. For BGP testing, cover initially stopped and running peers, then disconnect and restore BFD while watching the logs and BGP state.
+
+See the [validation guide](RUST_SKILLS_VALIDATION.md) and [code review](CODE_REVIEW.md) for recorded results and test limits.

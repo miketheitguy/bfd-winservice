@@ -45,7 +45,7 @@ fn run_console() -> Result<(), Box<dyn Error>> {
         let auth = options
             .validate()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-        log.open_file(options.log_file.as_deref())?;
+        log.open_file(&options)?;
         let (stop_tx, stop_rx) = mpsc::channel();
         ctrlc::set_handler(move || {
             let _ = stop_tx.send(());

@@ -125,7 +125,8 @@ fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
     options.auth = AuthType::MeticulousSha1;
     options.auth_key_id = 9;
     options.auth_key = Some("secret".to_owned());
-    options.log_file = Some(log.path().to_path_buf());
+    options.log_file_path = log.path().to_path_buf();
+    options.log_to_file = true;
     assert!(!options.verbose);
     let auth = options.validate().unwrap();
     let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
@@ -203,7 +204,8 @@ fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once()
     let log = test_log("communication");
     let mut options = options("127.0.0.60", "127.0.0.61", "multihop");
     options.passive = true;
-    options.log_file = Some(log.path().to_path_buf());
+    options.log_file_path = log.path().to_path_buf();
+    options.log_to_file = true;
     let peer = UdpSocket::bind("127.0.0.61:4784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let sender = bfd_sender("127.0.0.61");

@@ -17,6 +17,8 @@ pub use registry::load_registry;
 pub const SERVICE_NAME: &str = "BfdWinService";
 /// Configuration key relative to HKEY_LOCAL_MACHINE.
 pub const PARAMETERS_KEY: &str = r"SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters";
+/// Default append-log path; used only when LogToFile is enabled.
+pub const DEFAULT_LOG_FILE_PATH: &str = r"C:\ProgramData\BfdWinService\trace.log";
 
 /// Execution mode is the only application command-line option.
 #[derive(Parser)]
@@ -59,7 +61,7 @@ pub struct Options {
     pub peer: IpAddr,
     /// Transport profile: UDP 3784 or UDP 4784
     pub mode: Mode,
-    /// Shortcut for Mode multihop
+    /// Select multihop during validation; loaded from the Multihop registry flag
     pub multihop: bool,
     /// Point-to-point single-hop link; accept any peer source address on its interface
     pub point_to_point: bool,
@@ -89,8 +91,10 @@ pub struct Options {
     pub auth_key: Option<String>,
     /// Authentication key as hexadecimal bytes
     pub auth_key_hex: Option<String>,
-    /// Append timestamped state changes and errors to this file (use an absolute path for SCM)
-    pub log_file: Option<PathBuf>,
+    /// Append-log path read from LogFilePath; use an absolute path for SCM
+    pub log_file_path: PathBuf,
+    /// Enable append logging; false leaves the configured path untouched
+    pub log_to_file: bool,
     /// Enable native MI BGP control for this configured peer name
     pub bgp_peer_name: Option<String>,
     /// Routing domain of the BGP peer; omitted selects the default domain
@@ -123,7 +127,8 @@ impl Options {
             auth_key_id: 0,
             auth_key: None,
             auth_key_hex: None,
-            log_file: None,
+            log_file_path: DEFAULT_LOG_FILE_PATH.into(),
+            log_to_file: false,
             bgp_peer_name: None,
             bgp_routing_domain: None,
             verbose: false,

@@ -12,6 +12,7 @@ use windows_sys::Win32::{
 
 /// Read settings from the service's HKLM Parameters key. Only the execution
 /// mode comes from the command line; optional values retain their defaults.
+/// Multihop selects the transport: absent/0 is single-hop, 1 is multihop.
 /// Call Options::validate before opening the engine.
 ///
 /// # Errors
@@ -39,18 +40,12 @@ impl Registry {
     fn load(&self, console: bool) -> io::Result<Options> {
         let mut options = Options::new(self.address("Local")?, self.address("Peer")?);
         options.console = console;
-        let mode = self.string("Mode")?;
-        if let Some(mode) = &mode {
-            options.mode = Mode::from_str(mode, false)
-                .map_err(|_| invalid("Mode", "must be single-hop or multihop"))?;
-        }
         options.multihop = self.boolean("Multihop")?;
-        if options.multihop && mode.is_some() {
-            return Err(invalid(
-                "Multihop",
-                "cannot be combined with Mode; use one transport selector",
-            ));
-        }
+        options.mode = if options.multihop {
+            Mode::Multihop
+        } else {
+            Mode::SingleHop
+        };
         options.point_to_point = self.boolean("PointToPoint")?;
         options.min_tx_us = self.dword("MinTxUs")?.unwrap_or(options.min_tx_us);
         options.min_rx_us = self.dword("MinRxUs")?.unwrap_or(options.min_rx_us);
@@ -68,7 +63,10 @@ impl Registry {
         options.auth_key_id = self.narrow("AuthKeyId")?.unwrap_or(options.auth_key_id);
         options.auth_key = self.string("AuthKey")?;
         options.auth_key_hex = self.string("AuthKeyHex")?;
-        options.log_file = self.string("LogFile")?.map(Into::into);
+        if let Some(path) = self.string("LogFilePath")? {
+            options.log_file_path = path.into();
+        }
+        options.log_to_file = self.boolean("LogToFile")?;
         options.bgp_peer_name = self.string("BgpPeerName")?;
         options.bgp_routing_domain = self.string("BgpRoutingDomain")?;
         options.verbose = self.boolean("Verbose")?;
@@ -231,7 +229,7 @@ mod tests {
     #[cfg(not(miri))]
     mod native {
         use super::*;
-        use crate::packet::AuthConfig;
+        use crate::{config::DEFAULT_LOG_FILE_PATH, packet::AuthConfig};
         use windows_sys::Win32::System::Registry::{
             RegCloseKey, RegCreateKeyW, RegDeleteKeyW, RegDeleteValueW, RegSetValueExW,
             HKEY_CURRENT_USER, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
@@ -343,8 +341,67 @@ mod tests {
             assert_eq!((options.detect_mult, options.auth_key_id), (3, 0));
             assert_eq!(options.interface_index, Some(12));
             assert!(options.discriminator.is_none() && options.source_port.is_none());
-            assert!(options.log_file.is_none() && options.bgp_peer_name.is_none());
+            assert_eq!(options.log_file_path.to_str(), Some(DEFAULT_LOG_FILE_PATH));
+            assert!(!options.log_to_file && options.bgp_peer_name.is_none());
+            assert!(Registry::new(fixture.key, "")
+                .string("LogFilePath")
+                .unwrap()
+                .is_none());
+            assert!(Registry::new(fixture.key, "")
+                .dword("LogToFile")
+                .unwrap()
+                .is_none());
             assert!(options.validate().is_ok());
+        }
+
+        #[test]
+        fn native_registry_reads_log_path_independently_of_file_logging_flag() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.string("LogFilePath", r"C:\BFD\custom.log");
+            for enabled in [0, 1] {
+                fixture.dword("LogToFile", enabled);
+                let options = fixture.load(false).unwrap();
+                assert_eq!(options.log_to_file, enabled == 1);
+                assert_eq!(options.log_file_path.to_str(), Some(r"C:\BFD\custom.log"));
+            }
+            fixture.remove("LogFilePath");
+            let options = fixture.load(false).unwrap();
+            assert!(options.log_to_file);
+            assert_eq!(options.log_file_path.to_str(), Some(DEFAULT_LOG_FILE_PATH));
+        }
+
+        #[test]
+        fn native_registry_multihop_flag_selects_transport_and_ignores_legacy_mode() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.dword("InterfaceIndex", 12);
+
+            // An absent flag selects single-hop, even if an obsolete selector
+            // from an earlier installation is still present.
+            fixture.string("Mode", "multihop");
+            let options = fixture.load(false).unwrap();
+            assert!(!options.multihop);
+            assert_eq!(options.mode, Mode::SingleHop);
+            assert_eq!(options.mode.port(), 3784);
+
+            for legacy_mode in ["single-hop", "multihop", "invalid"] {
+                fixture.string("Mode", legacy_mode);
+                for (value, expected) in [(0, Mode::SingleHop), (1, Mode::Multihop)] {
+                    fixture.dword("Multihop", value);
+                    let mut options = fixture.load(false).unwrap();
+                    assert_eq!(options.multihop, value == 1);
+                    assert_eq!(options.mode, expected);
+                    options.validate().unwrap();
+                    assert_eq!(options.mode, expected);
+                    assert_eq!(options.mode.port(), if value == 0 { 3784 } else { 4784 });
+                }
+            }
+
+            // Removed values are not read or type-checked.
+            fixture.dword("Mode", 1);
+            fixture.dword("Multihop", 0);
+            assert_eq!(fixture.load(false).unwrap().mode, Mode::SingleHop);
         }
 
         #[test]
@@ -353,17 +410,16 @@ mod tests {
             for (name, value) in [
                 ("Local", "2001:db8::1"),
                 ("Peer", "2001:db8::2"),
-                ("Mode", "multihop"),
                 ("Auth", "meticulous-sha1"),
                 ("AuthKeyHex", "00fe12"),
                 ("BgpPeerName", "Péér 🦀"),
                 ("BgpRoutingDomain", "Domaine 🦀"),
-                ("LogFile", r"C:\BFD\résultats.log"),
+                ("LogFilePath", r"C:\BFD\résultats.log"),
             ] {
                 fixture.string(name, value);
             }
             for (name, value) in [
-                ("Multihop", 0),
+                ("Multihop", 1),
                 ("PointToPoint", 0),
                 ("MinTxUs", u32::MAX),
                 ("MinRxUs", 1),
@@ -376,11 +432,14 @@ mod tests {
                 ("MinTtl", 255),
                 ("AuthKeyId", 255),
                 ("Verbose", 1),
+                ("LogToFile", 1),
             ] {
                 fixture.dword(name, value);
             }
             let mut options = fixture.load(false).unwrap();
-            assert!(!options.console && options.passive && options.verbose);
+            assert!(!options.console && options.passive && options.verbose && options.log_to_file);
+            assert!(options.multihop);
+            assert_eq!(options.mode, Mode::Multihop);
             assert_eq!(
                 (options.min_tx_us, options.min_rx_us, options.startup_tx_us),
                 (u32::MAX, 1, 2000000)
@@ -393,10 +452,9 @@ mod tests {
             assert_eq!(options.bgp_peer_name.as_deref(), Some("Péér 🦀"));
             assert_eq!(options.bgp_routing_domain.as_deref(), Some("Domaine 🦀"));
             assert_eq!(
-                options.log_file.unwrap().to_str(),
+                options.log_file_path.to_str(),
                 Some(r"C:\BFD\résultats.log")
             );
-            options.log_file = None;
             assert!(
                 options.validate().unwrap()
                     == AuthConfig::new(AuthType::MeticulousSha1, 255, vec![0, 254, 18]).unwrap()
@@ -410,7 +468,13 @@ mod tests {
         fn native_registry_rejects_wrong_types_instead_of_using_defaults() {
             let fixture = Fixture::new();
             fixture.addresses();
-            for name in ["InterfaceIndex", "DetectMult", "Passive"] {
+            for name in [
+                "InterfaceIndex",
+                "DetectMult",
+                "Passive",
+                "Multihop",
+                "LogToFile",
+            ] {
                 fixture.string(name, "12");
                 let error = fixture.load(false).err().unwrap().to_string();
                 assert!(
@@ -419,13 +483,13 @@ mod tests {
                 );
                 fixture.remove(name);
             }
-            for name in ["Auth", "BgpPeerName", "LogFile", "AuthKey"] {
+            for name in ["Auth", "BgpPeerName", "LogFilePath", "AuthKey"] {
                 fixture.dword(name, 1);
                 let error = fixture.load(false).err().unwrap().to_string();
                 assert!(error.contains(name) && error.contains("REG_SZ"), "{error}");
                 fixture.remove(name);
             }
-            fixture.set("LogFile", REG_EXPAND_SZ, &[0, 0]);
+            fixture.set("LogFilePath", REG_EXPAND_SZ, &[0, 0]);
             assert!(fixture.load(false).is_err());
         }
 
@@ -452,7 +516,7 @@ mod tests {
         }
 
         #[test]
-        fn native_registry_rejects_overflow_invalid_booleans_and_conflicting_selectors() {
+        fn native_registry_rejects_overflow_invalid_booleans_and_auth_types() {
             let fixture = Fixture::new();
             fixture.addresses();
             for (name, value) in [
@@ -464,6 +528,7 @@ mod tests {
                 ("Passive", 2),
                 ("PointToPoint", 2),
                 ("Multihop", 2),
+                ("LogToFile", 2),
             ] {
                 fixture.dword(name, value);
                 assert!(fixture
@@ -474,12 +539,7 @@ mod tests {
                     .contains(name));
                 fixture.remove(name);
             }
-            fixture.string("Mode", "invalid");
-            assert!(fixture.load(false).is_err());
-            fixture.string("Mode", "single-hop");
             fixture.dword("Multihop", 1);
-            assert!(fixture.load(false).is_err());
-            fixture.remove("Mode");
             let mut options = fixture.load(false).unwrap();
             assert!(options.validate().is_ok());
             assert_eq!(options.mode, Mode::Multihop);

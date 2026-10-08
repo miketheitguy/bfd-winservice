@@ -1,6 +1,6 @@
 # Rust skills validation — current guide
 
-Updated 2026-10-07. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
+Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
 
 ## Resolved public API findings
 
@@ -10,6 +10,18 @@ Updated 2026-10-07. This guide describes the current API and validation workflow
 Options remain publicly mutable, so callers must validate again after changing them. `ControlPacket::encode` serializes public header fields without validating them; decoding and authentication verification provide receive-side checks.
 
 `CommandLine` parses only `--console` plus standard help/version flags. `Options::new` constructs defaults for explicit local/peer addresses; it does not validate them. On Windows, `config::load_registry` reads the service's HKLM Parameters key without creating or modifying it. Startup then calls `Options::validate` before opening sockets. The loader enforces `REG_SZ`/`REG_DWORD`, checks numeric narrowing, rejects invalid Booleans and malformed UTF-16, and excludes authentication contents from errors. Native loader tests use unique temporary HKCU keys rather than the installed service's configuration.
+
+`Multihop` is the only registry transport selector: absent or DWORD `0` selects single-hop; DWORD `1` selects multihop. Other values and types fail loading. The former `Mode` registry value is ignored. The loader sets the internal transport profile before returning options; library callers can still use the `Mode` enum directly.
+
+The 2026-10-08 selector change passed 72 default tests (61 library, 2 service, 7 UDP, and 2 doctests), with one opt-in CIM schema test ignored. The native regression verifies absent/0/1 selection and ignored legacy `Mode` entries; existing type/range tests reject malformed `Multihop` settings. Formatting, strict Clippy, rustdoc with warnings denied, and the release build passed. Tests used temporary HKCU keys; the installed service's configuration was not modified.
+
+`LogFilePath` is a `REG_SZ` path, defaulting to `C:\ProgramData\BfdWinService\trace.log`. `LogToFile` is a `REG_DWORD` flag, defaulting to `0`. Startup reads both values; disabled logging never opens, creates, or writes the path. With DWORD `1`, each logger creates missing parent directories and opens the file for append. This applies to the main logger and the BGP worker. Folder creation and file-open failures propagate as startup errors; runtime write failures remain best-effort diagnostics.
+
+The administrator-only [logging setup script](scripts/Initialize-Logging.ps1) provisions the default registry values and folder separately from the read-only runtime loader. It disables file output and does not create or write `trace.log`.
+
+The 2026-10-08 file-logging change passed 76 default tests (65 library, 2 service, 7 UDP, and 2 doctests), with the opt-in CIM schema test ignored. The missing-parent regression failed with Windows error 3 before implementation, then passed with directory creation and append behavior. Additional regressions verify that disabled logging leaves existing, missing, and blocked paths untouched; enabled parent-directory errors are returned; registry paths are read independently of the flag; and malformed flag values/types are rejected. Formatting, strict Clippy, rustdoc with warnings denied, and the release build passed. These tests use temporary directories and HKCU keys.
+
+File log entries use `YYYY-MM-DDTHH:mm:ss.sssZ` timestamps sampled immediately before writing. The Windows [GetSystemTime API](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemtime) supplies UTC fields without local timezone conversion. Each line of a multiline message receives the same entry timestamp, including blank lines and CRLF messages. The regression failed against Unix-millisecond output before implementation, then passed. The 2026-10-08 timestamp change passed 77 default tests (66 library, 2 service, 7 UDP, and 2 doctests), with the opt-in schema test ignored, plus formatting, strict Clippy, rustdoc with warnings denied, and the release build.
 
 ## Ownership and concurrency boundaries
 
