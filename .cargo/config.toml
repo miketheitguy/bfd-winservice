@@ -25,11 +25,17 @@ rustflags = [
 test-release = [
     "test", "--locked", "--release", "--config", 'profile.release.panic="unwind"',
 ]
+# ASan is for testing. These arrays merge with the target settings above;
+# build.rustflags would be ignored because target.rustflags takes precedence.
+# rustdocflags also instrument documentation tests.
 asan = [
     "test", "--locked", "--profile", "asan", "--target-dir", "target/asan",
     "--config", 'target.x86_64-pc-windows-msvc.rustflags=["-Z", "sanitizer=address"]',
+    "--config", 'target.x86_64-pc-windows-msvc.rustdocflags=["-Z", "sanitizer=address"]',
 ]
 
-# Instrument the standard library as well as this crate and its Rust dependencies.
+# Equivalent to Cargo's -Z build-std=std,panic_unwind on every invocation.
+# Rebuild the standard library with the target hardening flags and, during
+# cargo asan, sanitizer instrumentation. Requires nightly Cargo and rust-src.
 [unstable]
 build-std = ["std", "panic_unwind"]

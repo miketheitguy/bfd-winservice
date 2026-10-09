@@ -197,7 +197,23 @@ build in your symbol archive. Source checksums aren't a binary signature.
 AddressSanitizer (ASan) detects memory errors during testing. The repository's
 `cargo asan` alias enables `-Z sanitizer=address`, preserves the Windows
 hardening flags, rebuilds the standard library, and writes to `target/asan`.
+It also passes the sanitizer flag to `rustdoc` for documentation tests.
 Its dedicated profile uses unwinding for the test harness.
+
+The sanitizer is enabled only by this alias. Rust documents ASan for testing
+and fuzzing because its instrumentation adds runtime overhead. Cargo uses
+target `rustflags` before `[build].rustflags`, so placing the sanitizer in the
+build table would be ignored while the Windows target flags are configured.
+The alias's `--config` arrays append the sanitizer flags to the target settings.
+See [Cargo compiler flag precedence](https://doc.rust-lang.org/cargo/reference/config.html#buildrustflags).
+
+The `[unstable]` table already sets `build-std = ["std", "panic_unwind"]`.
+This enables Cargo's `-Z build-std=std,panic_unwind` for every invocation and
+rebuilds the standard library with ASan during sanitized tests. The repository
+also sets the explicit Windows target and installs `rust-src` through
+`rust-toolchain.toml`. Rebuilding the standard library extends ASan coverage to
+its Rust code; ASan can work with an uninstrumented standard library, but that
+reduces coverage. See [Cargo's build-std configuration](https://doc.rust-lang.org/cargo/reference/unstable.html#build-std).
 
 Use **x64 Developer PowerShell** with the MSVC AddressSanitizer component
 installed. Verify that the runtime DLL is beside the selected compiler:
