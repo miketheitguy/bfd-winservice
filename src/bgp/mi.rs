@@ -4,6 +4,8 @@
 //! below restores the SDK's exact MI_CALL (extern "system") signature. Handles
 //! remain on the calling thread and are released in dependency order.
 
+// Native MI function tables and handle ownership require the Windows FFI boundary.
+#![allow(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks, unsafe_op_in_unsafe_fn)]
 
 use super::Method;

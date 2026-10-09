@@ -1,11 +1,12 @@
 //! Windows BFD packet/timer loop, logging, and optional background BGP control.
 use crate::{
     bgp::Controller,
-    config::Options,
+    config::{load_sbfd_settings, Options, SessionType, Timing},
     event_log::{Provider, SessionEvent},
-    packet::{AuthConfig, State},
+    packet::{AuthConfig, Diagnostic, State},
+    seamless::Reflector,
     session::{ReceiveError, Session},
-    transport::Transport,
+    transport::{Datagram, Transport},
 };
 use std::{
     fmt::Display,
@@ -180,6 +181,7 @@ impl Logger {
 }
 
 /// Read the Windows UTC clock without applying the local timezone.
+#[allow(unsafe_code)] // GetSystemTime is the sole FFI operation in this module.
 fn utc_timestamp() -> String {
     let mut time = SYSTEMTIME::default();
     // SAFETY: time is a valid, writable SYSTEMTIME that remains alive throughout
@@ -203,6 +205,7 @@ pub struct Engine {
     session: Session,
     transport: Transport,
     bgp: Option<Controller>,
+    reflector: Option<Reflector>,
 }
 
 impl Engine {
@@ -216,6 +219,14 @@ impl Engine {
         options
             .validate()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let reflector = if options.session_type == SessionType::SbfdReflector {
+            Some(
+                Reflector::new(options.clone(), auth.clone())
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
+            )
+        } else {
+            None
+        };
         let session = Session::new(options.clone(), auth)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let transport = Transport::open(&options)?;
@@ -227,19 +238,20 @@ impl Engine {
             ));
         }
         log.log(format!(
-            "BFD {:?}: local={} peer={} control_port={} source_port={} discriminator={} state=Down",
-            options.mode,
+            "BFD {:?} {:?}: local={} peer={} control_port={} source_port={} discriminator={} state={:?}",
+            options.session_type, options.mode,
             options.local,
             options.peer,
-            options.mode.port(),
+            options.control_port(),
             transport.source_port,
-            session.local_discriminator
+            session.local_discriminator, session.state()
         ));
         Ok(Self {
             options,
             session,
             transport,
             bgp,
+            reflector,
         })
     }
     fn state_changed(&self, previous: State, log: &mut Logger) {
@@ -287,13 +299,161 @@ impl Engine {
             remote_discriminator,
         );
     }
-    fn transmit(&mut self, final_bit: bool, log: &mut Logger, last_error: &mut Option<Instant>) {
-        if let Err(error) = self.transport.send(&self.session.packet(final_bit)) {
+    fn transmit(&mut self, kind: Transmission, log: &mut Logger, last_error: &mut Option<Instant>) {
+        let packet = match kind {
+            Transmission::Periodic => self.session.packet(false),
+            Transmission::Final => self.session.packet(true),
+            Transmission::StateChange => self.session.state_change_packet(),
+        };
+        if let Err(error) = self.transport.send(&packet) {
             let now = Instant::now();
             if last_error.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1)) {
                 log.log(format!("send to {} failed: {error}", self.options.peer));
                 *last_error = Some(now);
             }
+        }
+    }
+
+    /// Applies live S-BFD timers without resetting protocol state.
+    ///
+    /// # Errors
+    /// Rejects classical sessions, which use startup-only local settings.
+    pub fn set_timing(&mut self, timing: Timing) -> io::Result<()> {
+        self.session
+            .set_timing(timing)
+            .map_err(|reason| io::Error::new(io::ErrorKind::InvalidInput, reason))?;
+        if let Some(reflector) = &mut self.reflector {
+            reflector.set_timing(timing);
+        }
+        self.options.min_tx_us = timing.min_tx_us;
+        self.options.min_rx_us = timing.min_rx_us;
+        self.options.detect_mult = timing.detect_mult;
+        Ok(())
+    }
+
+    fn reload_sbfd_settings(&mut self, log: &mut Logger) {
+        if !self.options.registry_backed || self.options.session_type == SessionType::Classical {
+            return;
+        }
+        let result = load_sbfd_settings(&self.options).and_then(|(timing, admin_down)| {
+            if self.options.timing().map_err(io::Error::other)? != timing {
+                self.set_timing(timing)?;
+                log.log("S-BFD timing settings reloaded");
+            }
+            if let Some(reflector) = &mut self.reflector {
+                if self.options.sbfd_admin_down != admin_down {
+                    reflector.set_admin_down(admin_down);
+                    self.options.sbfd_admin_down = admin_down;
+                    self.session.state = reflector.state();
+                    self.session.diagnostic = if admin_down {
+                        Diagnostic::AdminDown
+                    } else {
+                        Diagnostic::None
+                    };
+                    log.log(format_args!(
+                        "S-BFD reflector entity state={:?}",
+                        reflector.state()
+                    ));
+                }
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            log.log(format_args!("S-BFD settings reload rejected: {error}"));
+        }
+    }
+
+    fn log_rejection(
+        &self,
+        datagram: &Datagram,
+        error: ReceiveError,
+        log: &mut Logger,
+        last_discard: &mut Option<Instant>,
+        last_auth_failure: &mut Option<Instant>,
+    ) {
+        let now = Instant::now();
+        match error {
+            ReceiveError::Authentication(reason) if log_due(last_auth_failure, now) => {
+                log.log(format_args!(
+                    "authentication failed for packet from {}: {reason}",
+                    datagram.source
+                ));
+                log.event(|provider, _| {
+                    provider.authentication_failed(
+                        &self.options,
+                        &self.session,
+                        datagram.source,
+                        reason,
+                    )
+                });
+            }
+            ReceiveError::Packet(reason) if self.options.verbose && log_due(last_discard, now) => {
+                log.log(format_args!(
+                    "discarded packet from {}: {reason}",
+                    datagram.source
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    fn run_reflector(&mut self, stop: &Receiver<()>, log: &mut Logger) -> io::Result<()> {
+        let mut next_registry_read = Instant::now() + Duration::from_secs(1);
+        let mut last_error = None;
+        let mut last_discard = None;
+        let mut last_auth_failure = None;
+        loop {
+            match stop.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => return Ok(()),
+                Err(TryRecvError::Empty) => {}
+            }
+            let now = Instant::now();
+            if now >= next_registry_read {
+                self.reload_sbfd_settings(log);
+                next_registry_read = now + Duration::from_secs(1);
+            }
+            match self.transport.receive() {
+                Ok(datagram) => {
+                    let reply = datagram
+                        .validate(&self.options)
+                        .map_err(ReceiveError::Packet)
+                        .and_then(|()| {
+                            self.reflector
+                                .as_ref()
+                                .expect("reflector runtime selected")
+                                .respond_checked(&datagram.data)
+                        });
+                    match reply {
+                        Ok(reply) => {
+                            if let Err(error) =
+                                self.transport.send_reply(&reply, &datagram, &self.options)
+                            {
+                                if log_due(&mut last_error, now) {
+                                    log.log(format_args!(
+                                        "S-BFD reply to {} failed: {error}",
+                                        datagram.source
+                                    ));
+                                }
+                            }
+                        }
+                        Err(error) => self.log_rejection(
+                            &datagram,
+                            error,
+                            log,
+                            &mut last_discard,
+                            &mut last_auth_failure,
+                        ),
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    self.transport.wait_readable(Duration::from_millis(10))?;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::InvalidData
+                        || error.raw_os_error() == Some(10040) => {}
+                Err(error) => return Err(error),
+            }
+            // One request per pass keeps Stop and settings reload responsive under load.
         }
     }
     /// Run until a stop message/channel disconnect or fatal receive/wait error.
@@ -306,15 +466,21 @@ impl Engine {
     /// Returns fatal receive/wait errors or BGP cleanup failures. If both fail,
     /// the receive/wait error takes precedence.
     pub fn run(&mut self, stop: &Receiver<()>, log: &mut Logger) -> io::Result<()> {
-        let result = self.run_session(stop, log);
+        let result = if self.reflector.is_some() {
+            self.run_reflector(stop, log)
+        } else {
+            self.run_session(stop, log)
+        };
         let previous = self.session.state;
         self.session.admin_down();
-        self.state_changed(previous, log);
+        if self.reflector.is_none() {
+            self.state_changed(previous, log);
+        }
         // Queue BGP Stop also after fatal transport errors. Attempt one AdminDown
         // packet; unlike RFC 5880 section 6.8.16's recommendation, shutdown does
         // not continue BFD transmission for a full Detection Time.
         if self.session.can_transmit() {
-            self.transmit(false, log, &mut None);
+            self.transmit(Transmission::Periodic, log, &mut None);
         }
         // Wait for the pending Stop attempt and propagate failure before completion.
         let shutdown = self.bgp.take().map_or(Ok(()), Controller::shutdown);
@@ -327,6 +493,7 @@ impl Engine {
         let mut last_error = None;
         let mut last_discard = None;
         let mut last_auth_failure = None;
+        let mut next_registry_read = Instant::now() + Duration::from_secs(1);
         loop {
             match stop.try_recv() {
                 Ok(()) | Err(TryRecvError::Disconnected) => break,
@@ -335,20 +502,32 @@ impl Engine {
             let now = Instant::now();
             let previous = self.session.state;
             let remote_discriminator = self.session.remote_discriminator;
+            let communicating = self.session.communicating();
+            let old_interval = self.session.transmit_interval();
+            if now >= next_registry_read {
+                self.reload_sbfd_settings(log);
+                next_registry_read = now + Duration::from_secs(1);
+            }
             let state_changed = self.session.expire(now);
-            if remote_discriminator != 0 && self.session.remote_discriminator == 0 {
+            if communicating && !self.session.communicating() {
                 self.peer_communication_changed(false, previous, remote_discriminator, log);
             }
             if state_changed {
                 self.state_changed(previous, log);
-                if self.session.periodic_enabled() {
-                    self.transmit(false, log, &mut last_error);
+                if self.options.session_type == SessionType::Classical
+                    && self.session.can_transmit()
+                {
+                    self.transmit(Transmission::StateChange, log, &mut last_error);
                     last_periodic_tx = Some(now);
                     next_periodic_tx = now + self.session.jittered_interval();
                 }
             }
+            if old_interval != self.session.transmit_interval() {
+                next_periodic_tx =
+                    last_periodic_tx.unwrap_or(now) + self.session.jittered_interval();
+            }
             if self.session.periodic_enabled() && now >= next_periodic_tx {
-                self.transmit(false, log, &mut last_error);
+                self.transmit(Transmission::Periodic, log, &mut last_error);
                 last_periodic_tx = Some(now);
                 next_periodic_tx = now + self.session.jittered_interval();
             }
@@ -358,14 +537,14 @@ impl Engine {
                 Ok(datagram) => {
                     let received_at = Instant::now();
                     let previous = self.session.state;
-                    let remote_discriminator = self.session.remote_discriminator;
+                    let communicating = self.session.communicating();
                     let received = datagram
                         .validate(&self.options)
                         .map_err(ReceiveError::Packet)
                         .and_then(|()| self.session.receive_checked(&datagram.data, received_at));
                     match received {
                         Ok(result) => {
-                            if remote_discriminator == 0 {
+                            if !communicating && self.session.communicating() {
                                 self.peer_communication_changed(
                                     true,
                                     previous,
@@ -379,13 +558,16 @@ impl Engine {
                             if result.reply_final {
                                 // Final replies are independent of periodic traffic (RFC 5880
                                 // section 6.5); they must not postpone our own Poll sequence.
-                                self.transmit(true, log, &mut last_error);
+                                self.transmit(Transmission::Final, log, &mut last_error);
                             }
                             if !result.reply_final
                                 && result.state_changed
-                                && self.session.periodic_enabled()
+                                && self.options.session_type == SessionType::Classical
+                                && self.session.can_transmit()
                             {
-                                self.transmit(false, log, &mut last_error);
+                                // State notifications are independent of periodic suppression.
+                                // Keep Poll clear here (RFC 5880 sections 6.5 and 6.8.7).
+                                self.transmit(Transmission::StateChange, log, &mut last_error);
                                 last_periodic_tx = Some(received_at);
                                 next_periodic_tx = received_at + self.session.jittered_interval();
                             } else if !before_enabled && self.session.periodic_enabled() {
@@ -396,32 +578,22 @@ impl Engine {
                                 next_periodic_tx = last_periodic_tx.unwrap_or(received_at)
                                     + self.session.jittered_interval();
                             }
-                        }
-                        Err(ReceiveError::Authentication(reason)) => {
-                            if log_due(&mut last_auth_failure, received_at) {
-                                log.log(format_args!(
-                                    "authentication failed for packet from {}: {reason}",
-                                    datagram.source,
-                                ));
-                                log.event(|provider, _| {
-                                    provider.authentication_failed(
-                                        &self.options,
-                                        &self.session,
-                                        datagram.source,
-                                        reason,
-                                    )
-                                });
+                            // AdminDown must also lengthen an already scheduled
+                            // jittered retry when the negotiated interval is unchanged.
+                            if self.options.session_type == SessionType::SbfdInitiator {
+                                next_periodic_tx = next_periodic_tx.max(
+                                    last_periodic_tx.unwrap_or(received_at)
+                                        + self.session.minimum_transmit_interval(),
+                                );
                             }
                         }
-                        Err(ReceiveError::Packet(reason)) if self.options.verbose => {
-                            if log_due(&mut last_discard, received_at) {
-                                log.log(format!(
-                                    "discarded packet from {}: {reason}",
-                                    datagram.source
-                                ));
-                            }
-                        }
-                        Err(_) => {}
+                        Err(error) => self.log_rejection(
+                            &datagram,
+                            error,
+                            log,
+                            &mut last_discard,
+                            &mut last_auth_failure,
+                        ),
                     }
                     // One datagram per pass so floods cannot starve timers or Stop.
                     continue;
@@ -447,6 +619,13 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+enum Transmission {
+    Periodic,
+    Final,
+    StateChange,
 }
 
 fn log_due(last: &mut Option<Instant>, now: Instant) -> bool {

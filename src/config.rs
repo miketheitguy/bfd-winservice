@@ -1,4 +1,4 @@
-//! Registry-backed startup settings and validation for one provisioned session.
+//! Registry-backed configuration for classical BFD or an S-BFD protocol role.
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
@@ -12,6 +12,8 @@ use crate::packet::{AuthConfig, AuthType};
 mod registry;
 #[cfg(windows)]
 pub use registry::load_registry;
+#[cfg(windows)]
+pub(crate) use registry::load_sbfd_settings;
 
 /// Windows Service Control Manager service name.
 pub const SERVICE_NAME: &str = "BfdWinService";
@@ -19,6 +21,45 @@ pub const SERVICE_NAME: &str = "BfdWinService";
 pub const PARAMETERS_KEY: &str = r"SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters";
 /// Default append-log path; used only when LogToFile is enabled.
 pub const DEFAULT_LOG_FILE_PATH: &str = r"C:\ProgramData\BfdWinService\trace.log";
+/// UDP destination port for IP-routed S-BFD requests (RFC 7881).
+pub const SBFD_PORT: u16 = 7784;
+
+/// Protocol role, independent of the classical transport profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum SessionType {
+    /// Negotiates an asynchronous RFC 5880 session.
+    #[default]
+    Classical,
+    /// Probes a preconfigured RFC 7880 reflector.
+    SbfdInitiator,
+    /// Answers requests for a local discriminator without peer state.
+    SbfdReflector,
+}
+
+/// Validated live S-BFD timing settings, with intervals in microseconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timing {
+    pub(crate) min_tx_us: u32,
+    pub(crate) min_rx_us: u32,
+    pub(crate) detect_mult: u8,
+}
+
+impl Timing {
+    /// Creates nonzero transmit/receive intervals and a detection multiplier.
+    ///
+    /// # Errors
+    /// Rejects zero intervals or a zero multiplier.
+    pub fn new(min_tx_us: u32, min_rx_us: u32, detect_mult: u8) -> Result<Self, String> {
+        if min_tx_us == 0 || min_rx_us == 0 || detect_mult == 0 {
+            return Err("MinTxUs, MinRxUs, and DetectMult must be nonzero".into());
+        }
+        Ok(Self {
+            min_tx_us,
+            min_rx_us,
+            detect_mult,
+        })
+    }
+}
 
 /// Execution mode is the only application command-line option.
 #[derive(Parser)]
@@ -59,8 +100,18 @@ pub struct Options {
     pub console: bool,
     /// Local unicast IP address (binds receive and transmit sockets)
     pub local: IpAddr,
-    /// Peer unicast IP address, without a port
+    /// Peer unicast IP address, without a port; unused by a reflector.
     pub peer: IpAddr,
+    /// Classical BFD, S-BFD initiator, or S-BFD reflector; defaults to classical.
+    pub session_type: SessionType,
+    /// Preprovisioned target discriminator; required only by an S-BFD initiator.
+    pub remote_discriminator: Option<u32>,
+    /// Additional accepted S-BFD response sources, or reflector source allowlist.
+    /// An empty reflector list permits any routable unicast source.
+    pub allowed_peers: Vec<IpAddr>,
+    /// Advertise reflector maintenance without stopping its response listener.
+    pub sbfd_admin_down: bool,
+    pub(crate) registry_backed: bool,
     /// Transport profile: UDP 3784 or UDP 4784
     pub mode: Mode,
     /// Select multihop during validation; loaded from the Multihop registry flag
@@ -69,21 +120,23 @@ pub struct Options {
     pub point_to_point: bool,
     /// Desired minimum transmit interval while Up, in microseconds
     pub min_tx_us: u32,
-    /// Required minimum receive interval, in microseconds
+    /// Required minimum receive interval; S-BFD initiators use this as an RTT budget.
     pub min_rx_us: u32,
     /// Desired TX outside Up, in microseconds; at least one second, clamped to MinTxUs
     pub startup_tx_us: u32,
-    /// Detection multiplier advertised to the peer
+    /// Detection multiplier for classical BFD and S-BFD initiation;
+    /// reflectors copy each request's multiplier instead.
     pub detect_mult: u8,
-    /// Local discriminator; omitted means a random nonzero value
+    /// Local discriminator; omitted means a random nonzero value for classical
+    /// sessions and initiators. Reflectors require a provisioned discriminator.
     pub discriminator: Option<u32>,
     /// Stable UDP source port (49152..65535); omitted means automatically allocated
     pub source_port: Option<u16>,
     /// Wait for a validated peer control packet (multihop only)
     pub passive: bool,
-    /// Windows interface index; required for single-hop and IPv6 link-local addresses
+    /// Windows interface index; required for classical single-hop and IPv6 link-local addresses.
     pub interface_index: Option<u32>,
-    /// Minimum accepted TTL/hop limit in multihop (single-hop always requires 255)
+    /// Minimum accepted TTL/hop limit for multihop or S-BFD; classical single-hop requires 255.
     pub min_ttl: Option<u8>,
     /// Authentication mechanism (must match the peer)
     pub auth: AuthType,
@@ -113,6 +166,11 @@ impl Options {
             console: false,
             local,
             peer,
+            session_type: SessionType::Classical,
+            remote_discriminator: None,
+            allowed_peers: Vec::new(),
+            sbfd_admin_down: false,
+            registry_backed: false,
             mode: Mode::SingleHop,
             multihop: false,
             point_to_point: false,
@@ -171,10 +229,15 @@ impl Options {
         if self.multihop {
             self.mode = Mode::Multihop;
         }
-        if self.local.is_ipv4() != self.peer.is_ipv4() {
+        if self.session_type != SessionType::SbfdReflector
+            && self.local.is_ipv4() != self.peer.is_ipv4()
+        {
             return Err("Local and Peer must have the same address family".into());
         }
         for (name, ip) in [("Local", self.local), ("Peer", self.peer)] {
+            if name == "Peer" && self.session_type == SessionType::SbfdReflector {
+                continue;
+            }
             if ip.is_unspecified()
                 || ip.is_multicast()
                 || ip == IpAddr::V4(std::net::Ipv4Addr::BROADCAST)
@@ -182,13 +245,15 @@ impl Options {
                 return Err(format!("{name} must be a specific unicast address"));
             }
         }
-        if self.local == self.peer {
+        if self.local == self.peer && self.session_type == SessionType::Classical {
             return Err("Local and Peer must differ".into());
         }
-        if self.point_to_point && self.mode != Mode::SingleHop {
+        if self.point_to_point
+            && (self.mode != Mode::SingleHop || self.session_type != SessionType::Classical)
+        {
             return Err("PointToPoint applies only to single-hop sessions".into());
         }
-        if self.mode == Mode::SingleHop {
+        if self.session_type == SessionType::Classical && self.mode == Mode::SingleHop {
             if self.passive {
                 return Err(
                     "single-hop BFD requires the active role; Passive is multihop only".into(),
@@ -203,8 +268,51 @@ impl Options {
                 return Err("MinTtl applies only to multihop; single-hop requires TTL 255".into());
             }
         }
+        if self.session_type != SessionType::Classical && (self.passive || self.multihop) {
+            return Err("Passive and Multihop apply only to classical BFD".into());
+        }
+        match self.session_type {
+            SessionType::SbfdInitiator if self.remote_discriminator.is_none() => {
+                return Err("S-BFD initiators require RemoteDiscriminator".into());
+            }
+            SessionType::SbfdReflector => {
+                if self.discriminator.is_none() {
+                    return Err("S-BFD reflectors require a domain-unique Discriminator".into());
+                }
+                if self.bgp_peer_name.is_some()
+                    || self.source_port.is_some()
+                    || self.remote_discriminator.is_some()
+                {
+                    return Err("BgpPeerName, SourcePort, and RemoteDiscriminator do not apply to reflectors".into());
+                }
+            }
+            SessionType::Classical
+                if self.remote_discriminator.is_some()
+                    || !self.allowed_peers.is_empty()
+                    || self.sbfd_admin_down =>
+            {
+                return Err(
+                    "RemoteDiscriminator, AllowedPeers, and SbfdAdminDown require S-BFD".into(),
+                );
+            }
+            _ => {}
+        }
+        if self.sbfd_admin_down && self.session_type != SessionType::SbfdReflector {
+            return Err("SbfdAdminDown applies only to reflectors".into());
+        }
+        for ip in &self.allowed_peers {
+            if !is_unicast(*ip) || ip.is_ipv4() != self.local.is_ipv4() {
+                return Err("AllowedPeers must contain remote unicast addresses of the local address family".into());
+            }
+        }
         if [self.local, self.peer]
             .iter()
+            .take(if self.session_type == SessionType::SbfdReflector {
+                1
+            } else {
+                2
+            })
+            .chain(&self.allowed_peers)
             .any(|ip| matches!(ip, IpAddr::V6(ip) if ip.is_unicast_link_local()))
             && self.interface_index.is_none()
         {
@@ -245,6 +353,9 @@ impl Options {
         if self.discriminator == Some(0) {
             return Err("Discriminator must be nonzero".into());
         }
+        if self.remote_discriminator == Some(0) {
+            return Err("RemoteDiscriminator must be nonzero".into());
+        }
         if self.source_port.is_some_and(|port| port < 49152) {
             return Err("SourcePort must be within 49152..65535".into());
         }
@@ -252,6 +363,37 @@ impl Options {
             return Err("InterfaceIndex and MinTtl must be nonzero when specified".into());
         }
         Ok(())
+    }
+
+    /// Creates a reflector configuration without provisioning an initiating peer.
+    /// Call validate before using the local address and discriminator.
+    pub fn reflector(local: IpAddr, discriminator: u32) -> Self {
+        let unspecified = if local.is_ipv4() {
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        } else {
+            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+        };
+        let mut options = Self::new(local, unspecified);
+        options.session_type = SessionType::SbfdReflector;
+        options.discriminator = Some(discriminator);
+        options
+    }
+
+    /// Returns the destination/listen port for this protocol role.
+    pub fn control_port(&self) -> u16 {
+        if self.session_type == SessionType::Classical {
+            self.mode.port()
+        } else {
+            SBFD_PORT
+        }
+    }
+
+    /// Returns validated settings for a live S-BFD timing update.
+    ///
+    /// # Errors
+    /// Rejects zero intervals or a zero multiplier.
+    pub fn timing(&self) -> Result<Timing, String> {
+        Timing::new(self.min_tx_us, self.min_rx_us, self.detect_mult)
     }
 
     /// Build a socket address, adding the configured scope only for link-local IPv6.
@@ -272,6 +414,14 @@ impl Options {
             .into(),
         }
     }
+}
+
+pub(crate) fn is_unicast(ip: IpAddr) -> bool {
+    !ip.is_unspecified()
+        && !ip.is_multicast()
+        && ip != IpAddr::V4(std::net::Ipv4Addr::BROADCAST)
+        && !matches!(ip, IpAddr::V4(ip) if ip.octets()[0] == 0 || ip.octets()[0] >= 240)
+        && !matches!(ip, IpAddr::V6(ip) if ip.to_ipv4_mapped().is_some())
 }
 
 #[cfg(test)]

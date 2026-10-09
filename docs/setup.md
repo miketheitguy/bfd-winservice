@@ -1,15 +1,21 @@
 # Set up a BFD session
 
-This guide is for Windows network administrators provisioning a fresh
+This guide is for Windows systems administrators provisioning a fresh
 Bidirectional Forwarding Detection (BFD) Windows service installation or a
 foreground console session. The service monitors one configured local/peer pair.
+
+This procedure configures classical BFD. For initiation without a handshake or
+a stateless responder, use [Configure Seamless BFD](seamless.md).
 
 ## Before you begin
 
 Prepare the following:
 
-- Build the executable using [Build and validate the service](development.md).
-- Open **PowerShell as Administrator** at the repository root. Use the same
+- Obtain `bfd-winservice.exe`, `BFD-Service.man`, and
+  `Initialize-Logging.ps1` from the same version of the service.
+- Use 64-bit Windows 10 or later, or a corresponding Windows Server release,
+  on an x64 processor.
+- Open **PowerShell as Administrator**. Use the same
   window throughout the service procedure so its PowerShell variables remain set.
 - Choose distinct unicast `Local` and `Peer` IP literals of the same address
   family. Configure the remote peer with these addresses reversed.
@@ -26,26 +32,73 @@ Get-NetIPAddress |
 Find your local address in the output and use its nonzero interface index for
 the default single-hop session.
 
+## Prepare installation files
+
+Copy the supplied files to a permanent installation folder:
+
+```powershell
+$deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
+$installDirectory = 'C:\Program Files\BfdWinService'
+New-Item -ItemType Directory -Path $installDirectory -Force
+foreach ($file in @(
+    'bfd-winservice.exe', 'BFD-Service.man', 'Initialize-Logging.ps1'
+)) {
+    Copy-Item -LiteralPath (Join-Path $deploymentDirectory $file) `
+        -Destination $installDirectory
+}
+Get-ChildItem -LiteralPath $installDirectory | Select-Object Name
+```
+
+Replace `DEPLOYMENT_DIRECTORY` with the folder containing the supplied files,
+such as `C:\Temp\BfdWinService`. Adjust `$installDirectory` if your organization
+uses another location.
+
+PowerShell displays the destination folder and the three installed filenames.
+Keep the executable at this path: SCM starts it here, and Event Viewer loads
+event messages from it.
+
+## Enable SEHOP for the executable
+
+In **PowerShell as Administrator**, enable Structured Exception Handling
+Overwrite Protection (SEHOP) for the installed executable:
+
+```powershell
+Set-ProcessMitigation -Name bfd-winservice.exe -Enable SEHOP
+Get-ProcessMitigation -Name bfd-winservice.exe |
+    Select-Object -ExpandProperty SEHOP
+```
+
+Confirm that `Enable` is `ON`. This Windows Exploit Protection policy applies
+to subsequent service and console processes named `bfd-winservice.exe` on this
+machine. If a process is already running, restart it to apply the policy.
+
+SEHOP is a [Windows process mitigation](https://learn.microsoft.com/en-us/powershell/module/processmitigations/set-processmitigation?view=windowsserver2025-ps),
+not an executable build flag. The service is x64: its exception handlers use
+Windows unwind tables instead of the stack-based chain that SEHOP validates.
+The supplied binary also contains EH continuation metadata and is marked
+compatible with CET shadow stacks. Enforcement of those protections requires
+Windows and hardware support; see [Build security](../CONTRIBUTING.md#build-security).
+
 ## Install the Windows service
 
-Keep the executable at a permanent installation path. The examples use the
-repository's build output; adjust the executable and manifest paths if you
-deploy them elsewhere.
+Before creating or starting the service, complete
+[Enable SEHOP for the executable](#enable-sehop-for-the-executable).
 
 ### 1. Create the service
 
 Create a service with the quoted absolute executable path:
 
 ```powershell
-$exe = (Resolve-Path .\target\release\bfd-winservice.exe).Path
+$exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
 $binaryPath = '"' + $exe + '"'
 New-Service -Name BfdWinService -BinaryPathName $binaryPath `
-    -DisplayName 'BFD Windows Service' -StartupType Manual
+    -DisplayName 'BFD Windows Service' -StartupType Automatic
 ```
 
 PowerShell displays the new service with status `Stopped`. All session settings
 belong in its Parameters registry key; the executable path contains the binary
-path only.
+path only. `Automatic` starts the service when Windows starts; finish the
+configuration and manifest registration before starting the service.
 
 ### 2. Configure the session
 
@@ -57,14 +110,14 @@ $peerIp = 'PEER_IP'
 $interfaceIndex = [uint32]'INTERFACE_INDEX'
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
 
-New-Item -Path $parameters -Force | Out-Null
+New-Item -Path $parameters -Force
 New-ItemProperty -Path $parameters -Name Local `
-    -PropertyType String -Value $localIp -Force | Out-Null
+    -PropertyType String -Value $localIp -Force
 New-ItemProperty -Path $parameters -Name Peer `
-    -PropertyType String -Value $peerIp -Force | Out-Null
+    -PropertyType String -Value $peerIp -Force
 New-ItemProperty -Path $parameters -Name InterfaceIndex `
-    -PropertyType DWord -Value $interfaceIndex -Force | Out-Null
-.\scripts\Initialize-Logging.ps1
+    -PropertyType DWord -Value $interfaceIndex -Force
+& (Join-Path $installDirectory 'Initialize-Logging.ps1')
 ```
 
 Replace the following before running the commands:
@@ -73,7 +126,9 @@ Replace the following before running the commands:
 - `PEER_IP`: the remote peer's address, of the same address family.
 - `INTERFACE_INDEX`: the index from `Get-NetIPAddress`, such as `12`.
 
-The logging script creates `C:\ProgramData\BfdWinService` and reports:
+The registry commands display the keys and values they create. The logging
+script creates `C:\ProgramData\BfdWinService`, displays the folder and registry
+objects, and prints this settings summary:
 
 ```text
 LogFilePath (REG_SZ): C:\ProgramData\BfdWinService\trace.log
@@ -90,7 +145,7 @@ Register the Event Tracing for Windows (ETW) manifest on the target machine
 before starting the service:
 
 ```powershell
-$manifest = (Resolve-Path .\events\BFD-Service.man).Path
+$manifest = (Resolve-Path (Join-Path $installDirectory 'BFD-Service.man')).Path
 wevtutil.exe im $manifest "/rf:$exe" "/mf:$exe"
 if ($LASTEXITCODE -ne 0) {
     throw 'BFD-Service manifest registration failed'
@@ -101,8 +156,7 @@ Get-WinEvent -ListLog 'BFD-Service/Operational'
 
 The queries display the `BFD-Service` provider and its Operational channel.
 Use the final installed executable path: Event Viewer loads messages and
-metadata from it. The manifest can come from the repository or a deployed copy.
-Building or running the binary doesn't install the manifest.
+metadata from it. Starting the executable doesn't install the manifest.
 
 ### 4. Start the service
 
@@ -119,18 +173,19 @@ The command returns without output on success.
 Check the Windows Service Control Manager (SCM) status:
 
 ```powershell
-Get-Service BfdWinService | Select-Object Name, Status
+Get-Service BfdWinService | Select-Object Name, Status, StartType
 ```
 
 Successful startup reports:
 
 ```text
-Name          Status
-----          ------
-BfdWinService Running
+Name          Status  StartType
+----          ------  ---------
+BfdWinService Running Automatic
 ```
 
-SCM `Running` means configuration is valid, sockets are open, and any configured
+Confirm `StartType` is `Automatic`. SCM `Running` means configuration is valid,
+sockets are open, and any configured
 Border Gateway Protocol (BGP) worker has started. BFD reaches `Up` separately;
 the initial BGP status query can also still be pending.
 
@@ -189,10 +244,11 @@ the local/peer addresses, interface index, and default logging settings.
 
 ### 2. Start the foreground session
 
-From the repository root, start the console process:
+Start the installed executable in the foreground:
 
 ```powershell
-.\target\release\bfd-winservice.exe --console
+$exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
+& $exe --console
 ```
 
 Successful engine startup includes this standard output (STDOUT) message:
@@ -226,7 +282,7 @@ To save STDOUT instead of displaying it, start the console process with
 redirection:
 
 ```powershell
-.\target\release\bfd-winservice.exe --console > .\bfd-console.log
+& $exe --console > 'C:\ProgramData\BfdWinService\console.log'
 ```
 
 The output file contains console messages with Unix-millisecond timestamps.
@@ -251,7 +307,8 @@ Confirm `Get-Service BfdWinService` reports `Stopped` before continuing.
 Remove the provider's manifest registration:
 
 ```powershell
-$manifest = (Resolve-Path .\events\BFD-Service.man).Path
+$installDirectory = 'C:\Program Files\BfdWinService'
+$manifest = (Resolve-Path (Join-Path $installDirectory 'BFD-Service.man')).Path
 wevtutil.exe um $manifest
 if ($LASTEXITCODE -ne 0) {
     throw 'BFD-Service manifest removal failed'

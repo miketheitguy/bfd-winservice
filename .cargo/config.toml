@@ -1,0 +1,24 @@
+[build]
+target = "x86_64-pc-windows-msvc"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "control-flow-guard=yes",
+    "-C", "relocation-model=pic",
+    "-Z", "stack-protector=all",
+    "-Z", "ehcont-guard=yes",
+    "-Z", "src-hash-algorithm=sha256",
+]
+
+[alias]
+test-release = [
+    "test", "--locked", "--release", "--config", 'profile.release.panic="unwind"',
+]
+asan = [
+    "test", "--locked", "--profile", "asan", "--target-dir", "target/asan",
+    "--config", 'target.x86_64-pc-windows-msvc.rustflags=["-Z", "sanitizer=address"]',
+]
+
+# Instrument the standard library as well as this crate and its Rust dependencies.
+[unstable]
+build-std = ["std", "panic_unwind"]

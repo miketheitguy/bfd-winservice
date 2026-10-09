@@ -2,6 +2,184 @@
 
 Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
 
+## Expanded hardening review — 2026-10-08
+
+Mapped the requested MSVC and Rust settings to the Rust-only build in
+[Build security](CONTRIBUTING.md#build-security). Added explicit PIC, release
+overflow checks, release panic abortion, full release PDBs, SHA-256 Rust source
+checksums, denied warnings and unsafe operations, and denied production
+`unwrap()`. Packet, session, and reflection modules forbid unsafe code.
+Documented exceptions retain the Windows registry, ETW, Winsock, MI, and UTC
+clock FFI boundaries; no FFI operations were added.
+
+MSVC `/sdl` and `/analyze` apply to C/C++ source, which this project doesn't
+compile. Rust compiler checks, strict Clippy, Miri, and ASan provide the
+applicable checks. The correct MSVC source-checksum spelling is
+`/ZH:SHA_256`. Intentional wrapping, checked, and saturating arithmetic retain
+their protocol semantics.
+
+The installed nightly's target specification supports AddressSanitizer on
+`x86_64-pc-windows-msvc`. The `cargo asan` alias preserves the hardening flags,
+instruments the rebuilt standard library, and uses a separate target directory.
+All 106 tests passed under ASan without reports. An isolated, deliberately
+invalid stack access produced a stack-buffer-overflow report and exit code 1,
+confirming the detector was active. The MSVC ASan runtime DLL must be on PATH;
+the normal release image has no ASan runtime dependency.
+
+Debug and optimized tests passed all 106 checks, with one opt-in CIM schema
+test ignored. The optimized `test-release` alias explicitly uses unwinding
+for the test graph: rebuilding the standard library with the aborting release
+profile otherwise conflicts with the normal test harness. A separate production
+release build uses `panic = "abort"`. The executable regression passed against
+that actual image through `BFD_HARDENING_EXE`.
+
+Release LLVM IR contains PIC level 2, `cfguard=2`, `ehcontguard=1`, full
+debug information, SHA-256 source checksum metadata, checked-arithmetic
+intrinsics, and no Rust unwind `invoke` instructions. The release PDB contains
+the exact SHA-256 checksum of `src/main.rs`. The executable retains guard
+flags `0x00417500`, CET compatibility, and two EH continuation entries after
+panic abortion removed Rust landing pads. An empty enabled EH table is also
+valid. Build-script probes reject later static-relocation and MD5-checksum
+overrides.
+
+Strict Clippy, formatting, Rust documentation checks, release help, and three
+strict-provenance Miri ancillary-parser tests passed. ASan doesn't instrument
+Windows system DLLs or the prebuilt MSVC runtime. No installed service,
+machine mitigation policy, or BGP provider state was changed.
+
+## Exception handling hardening — 2026-10-08
+
+Enabled `-Z ehcont-guard=yes`, `/GUARD:EHCONT`, and `/CETCOMPAT` for the x64
+Windows build. The standard library and Rust dependencies are rebuilt with the
+EH continuation compiler setting. The build rejects missing or disabled
+metadata generation, including a later overriding option.
+
+The executable regression reproduced missing EH continuation metadata before
+the change. Debug and release checks now verify the EH guard flag, a populated
+continuation table, sorted unique RVAs mapped to the image, and the CET
+compatibility marker. Release `dumpbin` inspection found guard flags
+`0x00417500`, 13 EH continuation entries, and CET compatibility. Generated
+release LLVM IR contains `ehcontguard=1`; Rust assembly contains a
+`.gehcont$y` section.
+
+SEHOP is a Windows process policy, not a linker option. The administrator
+[setup procedure](docs/setup.md#enable-sehop-for-the-executable) explicitly
+enables it for `bfd-winservice.exe` and queries the saved policy. The x64
+executable uses table-based exception handling instead of the stack-based
+handler chain that SEHOP validates. No installed service or machine mitigation
+policy was changed during development.
+
+All 106 default tests passed in debug and release, with one opt-in CIM schema
+test ignored. Formatting, strict Clippy, Rust documentation checks, and release
+help passed. Runtime CET enforcement depends on Windows, hardware, and policy;
+exploit-triggered termination wasn't exercised.
+
+## Control packets and state signaling — 2026-10-08
+
+Reviewed the mandatory header and authentication formats against RFC 5880
+section 4, and state/flag handling against sections 6.5 and 6.8. The 24-byte
+layout, field widths, network byte order, authentication lengths, and flag
+positions matched. The [protocol reference](docs/protocol.md#control-packet-format)
+now describes flags, states, and the local diagnostics the service emits.
+
+Regressions reproduced acceptance of simultaneous Poll/Final flags, missing
+state notifications when the peer's zero receive interval suppressed periodic
+traffic, and replacement of an S-BFD failure diagnostic by a maintenance reply
+that left the state unchanged. The shared decoder now rejects conflicting
+flags before session mutation. Classical state notifications use a signed
+packet with Poll clear, even when periodic traffic is suppressed; passive
+sessions still require a known peer discriminator. Pending Polls remain on the
+periodic schedule, and Final replies remain independent. S-BFD retains the last
+failure diagnostic until its state changes.
+
+All 16 classical local/peer state combinations check the reported transition,
+diagnostic, and emitted wire state. Byte fixtures cover every state and five-bit
+diagnostic value, flag positions, and all six authentication configurations.
+Native UDP checks verify authentication and wire diagnostics `0`, `3`, `1`,
+and `7` through establishment, peer maintenance, recovery, timeout, and shutdown
+with periodic traffic suppressed. Text logs report each actual transition once.
+S-BFD retains its RFC 7880 Demand-bit and reflection behavior.
+
+The debug and release suites passed 106 tests, with one opt-in CIM schema test
+ignored. Strict-provenance Miri passed 35 tests: nine packet, 14 session, and
+12 portable S-BFD tests. Formatting, strict Clippy, Rust documentation with
+warnings and missing public descriptions denied, release build/help, and
+documentation links passed. Native protocol checks use loopback sockets;
+external router interoperability and live SCM/Event Viewer deployment weren't
+exercised.
+
+## Windows build hardening — 2026-10-08
+
+The default target is `x86_64-pc-windows-msvc`. Windows builds reject other
+targets, and the build script requires full CFG checks and the
+`stack-protector=all` compiler strategy. Explicit linker settings enable ASLR,
+high-entropy ASLR, large address awareness, NX/DEP, and CFG. The repository
+selects nightly Rust and rebuilds the standard library with the same compiler
+protections as the service and its Rust dependencies. See the
+[build security instructions](CONTRIBUTING.md#build-security).
+
+Validation used Rust `1.101.0-nightly (21b707e3f 2026-09-30)`. All 99 default
+tests passed, with one opt-in CIM schema test ignored. The new
+[executable regression](tests/windows_hardening.rs) passed for debug and release
+builds, checking PE32+ x64 headers, mitigation bits, relocations, CFG pointers and
+function-table metadata, and the security cookie. It reproduced a missing-CFG
+failure against the earlier executable. Independent `dumpbin` inspection
+confirmed the release image flags and a populated CFG function table.
+
+Generated release LLVM IR contained the full CFG module flag and
+`sspreq` attributes on all 214 function definitions. Generated Rust assembly
+contained actual security-cookie loads and checks and CFG indirect-call
+dispatches. Direct build-script probes rejected 32-bit x86 and ARM64 Windows
+targets, missing CFG instrumentation, and later options disabling stack
+protection or selecting metadata-only CFG.
+
+Formatting, strict Clippy, Rust documentation with warnings and missing public
+descriptions denied, and release help/version checks passed. Miri passed all
+11 portable S-BFD tests with strict provenance and all three ancillary parser
+tests with strict provenance and tree borrows. These checks don't rebuild
+Windows system DLLs or exercise exploit-triggered CFG/stack-cookie termination.
+
+## IP-routed Seamless BFD — 2026-10-08
+
+Added RFC 7880 initiator and stateless reflector roles using RFC 7881 IPv4/IPv6
+UDP transport. The [S-BFD guide](docs/seamless.md) maps RFC 7882 use cases to
+implemented behavior and identifies the external forwarding-plane requirements.
+Classical single-hop remains the default. Registry configuration adds
+`SessionType` and `AllowedPeers` strings, plus `RemoteDiscriminator` and
+`SbfdAdminDown` DWORD values. Reflectors don't require or read `Peer`.
+
+Initiators send to UDP 7784 and receive replies on their bound source socket.
+Reflectors reply from their listener after validating source policy, the
+destination, protocol role, discriminator, and authentication. A Windows
+`GetBestRoute2` lookup verifies a return route. Typed sockaddr copies and native
+output buffers have documented bounds and lifetimes. Reflection retains no peer
+state, copies keyed request sequences, and computes new response digests.
+Initiators consume outstanding keyed sequences once; their tracking queue is
+bounded to 1,024 entries.
+
+S-BFD timing values and reflector maintenance reload once per second without
+resetting state. Invalid updates retain the preceding values. Detection includes
+a configured round-trip allowance; missing responses double the transmission
+interval to reduce traffic. An AdminDown response preserves communication and
+enforces at least one second between retries after jitter and rescheduling.
+A native regression reproduced a 758 ms retry before that scheduling correction.
+
+Validation passed 98 default tests: 70 library, 2 service, 11 portable S-BFD,
+6 Windows S-BFD, 7 classical Windows UDP, and 2 doctests. One opt-in CIM schema
+test was ignored. Strict-provenance Miri passed all 11 portable S-BFD tests and
+the library sequence-wraparound regression. Formatting, strict Clippy, Rust
+documentation with warnings and missing public descriptions denied, and the
+release build passed. Native tests cover IPv4/IPv6 replies, multiple concurrent
+initiators including one address pair, anycast source changes, filtering,
+authentication, timeout events, and maintenance retry timing.
+
+Registry fixtures use temporary HKCU keys; service configuration wasn't changed.
+Live registry reading is checked through the same loader against those fixtures.
+Real router interoperability, SCM deployment, Event Viewer delivery, and BGP
+provider mutations weren't exercised. MPLS label stacks, segment-routing
+encapsulation, forwarding-plane TTL-expiry delivery, and S-BFD Echo aren't
+implemented.
+
 ## Technical documentation improvements — 2026-10-08
 
 Applied the technical-documentation skill's audit recommendations. The README now introduces the service and links to focused setup, registry, logging, BGP, protocol, and development guides. Fresh-installation procedures distinguish startup, Windows service status, BFD readiness, and optional shutdown. Examples use explained placeholders, fit within 80 columns, and describe expected results. The registry reference covers all 22 supported settings; the logging reference covers all nine manifest events. Historical review statements are dated rather than presented as current configuration instructions.
@@ -41,7 +219,8 @@ The unsafe ancillary parser checks buffer bounds before unaligned reads. Its syn
 
 ## Check the current checkout
 
-On Windows with the MSVC toolchain and Windows SDK installed:
+On x64 Windows with the MSVC toolchain and Windows SDK installed, use the
+repository's nightly toolchain and build configuration:
 
 ```powershell
 cargo fmt --check
@@ -58,7 +237,7 @@ The native schema test is opt-in because it requires CIM namespace access:
 cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
 ```
 
-Follow the [development guide](docs/development.md) for Miri checks and [Set up a BFD session](docs/setup.md) for deployment. Recorded test totals in the correctness review apply to that review's checks, not automatically to future revisions. Actual BGP Start/Stop and SCM lifecycle behavior need validation on a provisioned Windows Server; local fixtures do not establish provider behavior.
+Follow the [contributor guide](CONTRIBUTING.md) for Miri checks and [Set up a BFD session](docs/setup.md) for deployment. Recorded test totals in the correctness review apply to that review's checks, not automatically to future revisions. Actual BGP Start/Stop and SCM lifecycle behavior need validation on a provisioned Windows Server; local fixtures do not establish provider behavior.
 
 Registry configuration checks on 2026-10-07 passed: 69 tests including the doctest, with one opt-in native schema test ignored; formatting; strict Clippy including undocumented unsafe blocks; documentation with warnings denied; and the release build. Seven configuration tests passed under Miri with strict provenance, and the final string decoder was checked again after the parity-check lint correction. Release smoke checks confirmed that help exposes only `--console` plus help/version, removed configuration arguments are rejected, and a missing Parameters key produces exit code 1 with lifecycle/failure messages on STDOUT and empty STDERR. No installed service configuration was modified.
 

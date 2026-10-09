@@ -1,4 +1,6 @@
 #![cfg(windows)]
+#![forbid(unsafe_code)]
+#![allow(clippy::unwrap_used)] // Test fixtures fail immediately on invalid setup.
 
 use bfd_winservice::{
     config::{Mode, Options},
@@ -369,8 +371,18 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
     let (length, _) = peer.recv_from(&mut buffer).unwrap();
     let up = ControlPacket::decode(&buffer[..length]).unwrap();
     assert_eq!(up.state, State::Up);
-    assert!(up.poll);
+    assert!(
+        !up.poll && !up.final_bit,
+        "state notification is separate from Poll"
+    );
     assert_eq!(up.required_min_echo_rx_us, 0);
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let poll = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(poll.state, State::Up);
+    assert!(
+        poll.poll && !poll.final_bit,
+        "Poll uses the periodic schedule"
+    );
     packet.state = State::Up;
     packet.final_bit = true;
     packet.poll = false;
@@ -406,6 +418,101 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
             assert_eq!(packet.diagnostic, 7);
             break;
         }
+    }
+}
+
+#[test]
+fn state_notifications_are_authenticated_without_periodic_traffic_or_extra_polls() {
+    let mut options = options("127.0.0.36", "127.0.0.37", "multihop");
+    options.source_port = Some(55016);
+    options.auth = AuthType::MeticulousSha1;
+    options.auth_key = Some("secret".into());
+    let log = test_log("state-notification");
+    options.log_to_file = true;
+    options.log_file_path = log.path().to_path_buf();
+    let auth = options.validate().unwrap();
+    let peer = UdpSocket::bind("127.0.0.37:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let sender = bfd_sender("127.0.0.37");
+    let mut engine = RunningEngine::start(options);
+    let mut buffer = [0; 512];
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    assert_eq!(
+        ControlPacket::decode(&buffer[..length]).unwrap().state,
+        State::Down
+    );
+    let sequence = auth.verify(&buffer[..length], None).unwrap();
+    let mut packet = peer_packet(State::Init);
+    packet.required_min_rx_us = 0;
+    sender
+        .send_to(&packet.encode(&auth, 1), "127.0.0.36:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let up = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(up.state, State::Up);
+    assert_eq!(up.diagnostic, 0);
+    assert_eq!(buffer[1], 0xc4, "Up and Authentication only");
+    let sequence = auth.verify(&buffer[..length], sequence).unwrap();
+
+    packet.state = State::AdminDown;
+    sender
+        .send_to(&packet.encode(&auth, 2), "127.0.0.36:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let down = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(down.state, State::Down);
+    assert_eq!(down.diagnostic, 3);
+    assert_eq!(buffer[1], 0x44, "Down and Authentication only");
+    let sequence = auth.verify(&buffer[..length], sequence).unwrap();
+
+    sender
+        .send_to(&packet.encode(&auth, 3), "127.0.0.36:4784")
+        .unwrap();
+    peer.set_read_timeout(Some(Duration::from_millis(150)))
+        .unwrap();
+    let error = peer.recv_from(&mut buffer).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    ));
+
+    // Reestablish, then expire while periodic traffic is still suppressed.
+    packet.state = State::Init;
+    packet.detect_mult = 3;
+    packet.desired_min_tx_us = 100_000;
+    sender
+        .send_to(&packet.encode(&auth, 4), "127.0.0.36:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let recovered = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(recovered.state, State::Up);
+    assert_eq!(recovered.diagnostic, 0);
+    assert_eq!(buffer[1], 0xc4);
+    let sequence = auth.verify(&buffer[..length], sequence).unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let expired = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(expired.state, State::Down);
+    assert_eq!(expired.diagnostic, 1);
+    assert_eq!(expired.your_discriminator, 0);
+    assert_eq!(buffer[1], 0x44);
+    let sequence = auth.verify(&buffer[..length], sequence).unwrap();
+    engine.stop();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let stopped = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(stopped.state, State::AdminDown);
+    assert_eq!(stopped.diagnostic, 7);
+    assert_eq!(buffer[1], 0x04, "AdminDown and Authentication only");
+    assert!(auth.verify(&buffer[..length], sequence).is_ok());
+    let contents = std::fs::read_to_string(log.path()).unwrap();
+    for (change, count) in [
+        ("state=Up diagnostic=None", 2),
+        ("state=Down diagnostic=NeighborDown", 1),
+        ("state=Down diagnostic=DetectionExpired", 1),
+        ("state=AdminDown diagnostic=AdminDown", 1),
+    ] {
+        assert_eq!(contents.matches(change).count(), count, "{contents}");
     }
 }
 
@@ -524,7 +631,12 @@ fn point_to_point_bootstrap_and_source_changes_keep_the_configured_destination()
     received_sequence = auth.verify(&buffer[..length], received_sequence).unwrap();
     let up = ControlPacket::decode(&buffer[..length]).unwrap();
     assert_eq!(up.state, State::Up);
-    assert!(up.poll);
+    assert!(!up.poll && !up.final_bit);
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    received_sequence = auth.verify(&buffer[..length], received_sequence).unwrap();
+    let poll = ControlPacket::decode(&buffer[..length]).unwrap();
+    assert_eq!(poll.state, State::Up);
+    assert!(poll.poll && !poll.final_bit);
 
     // A later Poll from the changed source must also get its Final at Peer.
     packet.state = State::Up;

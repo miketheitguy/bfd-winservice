@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use bfd_winservice::config::CommandLine;
 use clap::Parser;
 use std::process;

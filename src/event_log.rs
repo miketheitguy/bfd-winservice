@@ -4,6 +4,8 @@
 //! The provider owns its registration; each EventWrite borrows a payload only
 //! for the synchronous call. No callback, raw-pointer owner, or global handle
 //! is needed. Logging failures are reported by Logger and never stop BFD.
+// ETW registration and writes require the Windows FFI boundary.
+#![allow(unsafe_code)]
 use crate::{config::Options, packet::State, session::Session};
 use std::{io, net::SocketAddr, ptr};
 use windows_sys::{

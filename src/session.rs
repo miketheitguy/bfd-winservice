@@ -1,16 +1,20 @@
-//! Asynchronous BFD state, timers, and authentication tracking based on RFC 5880.
+//! Classical RFC 5880 BFD and stateful RFC 7880 S-BFD initiation.
 //!
 //! The caller supplies monotonic receive/expiry times and handles transport I/O.
 //! Discriminators, initial authentication sequences, and transmit jitter use randomness.
 use rand::Rng;
-use std::time::{Duration, Instant};
-
-use crate::{
-    config::Options,
-    packet::{AuthConfig, ControlPacket, Diagnostic, State},
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
 };
 
-/// One validated BFD session; callers drive packet reception and expiry.
+use crate::{
+    config::{Options, SessionType, Timing},
+    packet::{AuthConfig, AuthType, ControlPacket, Diagnostic, State},
+};
+
+/// One validated classical or S-BFD initiator session, driven by its caller.
+/// Reflector options provide logging context; use Reflector for stateless replies.
 pub struct Session {
     pub(crate) state: State,
     pub(crate) diagnostic: Diagnostic,
@@ -27,6 +31,11 @@ pub struct Session {
     last_received: Option<Instant>,
     received_auth_seq: Option<u32>,
     transmit_auth_seq: u32,
+    sent_auth_sequences: VecDeque<(u32, Instant)>,
+    first_transmitted: Option<Instant>,
+    communicating: bool,
+    congestion_backoff: u8,
+    pending_final: bool,
 }
 
 /// Effects of accepting a control packet; no response has been transmitted yet.
@@ -69,10 +78,24 @@ impl Session {
             .discriminator
             .unwrap_or_else(|| rand::thread_rng().gen_range(1..=u32::MAX));
         Ok(Self {
-            state: State::Down,
-            diagnostic: Diagnostic::None,
+            state: if options.session_type == SessionType::SbfdReflector {
+                if options.sbfd_admin_down {
+                    State::AdminDown
+                } else {
+                    State::Up
+                }
+            } else {
+                State::Down
+            },
+            diagnostic: if options.session_type == SessionType::SbfdReflector
+                && options.sbfd_admin_down
+            {
+                Diagnostic::AdminDown
+            } else {
+                Diagnostic::None
+            },
             local_discriminator,
-            remote_discriminator: 0,
+            remote_discriminator: options.remote_discriminator.unwrap_or(0),
             polling: false,
             options,
             auth,
@@ -84,6 +107,11 @@ impl Session {
             last_received: None,
             received_auth_seq: None,
             transmit_auth_seq: rand::random(),
+            sent_auth_sequences: VecDeque::new(),
+            first_transmitted: None,
+            communicating: false,
+            congestion_backoff: 0,
+            pending_final: false,
         })
     }
 
@@ -92,7 +120,7 @@ impl Session {
         self.state
     }
 
-    /// Return the reason for the most recent state change.
+    /// Returns the local failure or shutdown reason; reestablishment clears it.
     pub fn diagnostic(&self) -> Diagnostic {
         self.diagnostic
     }
@@ -102,7 +130,8 @@ impl Session {
         self.local_discriminator
     }
 
-    /// Return the learned peer identifier, or zero if unknown or expired.
+    /// Returns the learned classical peer identifier, or zero if unknown/expired.
+    /// An S-BFD initiator retains its provisioned reflector identifier across expiry.
     pub fn remote_discriminator(&self) -> u32 {
         self.remote_discriminator
     }
@@ -112,13 +141,51 @@ impl Session {
         self.polling
     }
 
-    /// Advertised desired TX interval: configured Up rate, otherwise the greater
-    /// of the configured startup and Up rates (including AdminDown).
+    /// Returns whether a valid response has arrived within the detection window.
+    /// Configured S-BFD discriminators remain known even when this is false.
+    pub fn communicating(&self) -> bool {
+        self.communicating
+    }
+
+    /// Applies S-BFD timing settings while retaining state and discriminators.
+    /// A changed transmit interval starts a Poll sequence when the initiator is Up.
+    ///
+    /// # Errors
+    /// Rejects classical sessions; their negotiated timer updates are unsupported.
+    pub fn set_timing(&mut self, timing: Timing) -> Result<(), &'static str> {
+        if self.options.session_type == SessionType::Classical {
+            return Err("live timing updates require S-BFD");
+        }
+        let old_tx = self.desired_min_tx_us();
+        self.options.min_tx_us = timing.min_tx_us;
+        self.options.min_rx_us = timing.min_rx_us;
+        self.options.detect_mult = timing.detect_mult;
+        if self.state == State::Up
+            && self.options.session_type == SessionType::SbfdInitiator
+            && old_tx != self.desired_min_tx_us()
+        {
+            self.polling = true;
+        }
+        Ok(())
+    }
+
+    /// Returns the Up rate, or the greater of the startup and Up rates otherwise.
+    /// S-BFD timeout backoff multiplies this interval with saturating arithmetic.
     pub fn desired_min_tx_us(&self) -> u32 {
-        if self.state == State::Up {
+        let interval = if self.state == State::Up {
             self.options.min_tx_us
         } else {
             self.options.startup_tx_us.max(self.options.min_tx_us)
+        };
+        if self.options.session_type == SessionType::SbfdInitiator {
+            let base = if self.congestion_backoff == 0 {
+                interval
+            } else {
+                interval.max(self.remote_min_rx_us)
+            };
+            base.saturating_mul(1u32 << self.congestion_backoff.min(31))
+        } else {
+            interval
         }
     }
 
@@ -129,16 +196,30 @@ impl Session {
         ))
     }
 
-    /// Peer multiplier times the greater of local required RX and peer desired TX.
+    /// Returns the classical peer multiplier times max(local RX, peer TX).
+    /// S-BFD uses local multiplier times transmit interval, plus the RTT budget.
     pub fn detection_time(&self) -> Duration {
+        if self.options.session_type == SessionType::SbfdInitiator {
+            // MinRxUs is the round-trip budget even though the wire RX field is zero.
+            return self.transmit_interval() * u32::from(self.options.detect_mult)
+                + Duration::from_micros(u64::from(self.options.min_rx_us));
+        }
         Duration::from_micros(
             u64::from(self.options.min_rx_us.max(self.remote_min_tx_us))
                 * u64::from(self.remote_detect_mult),
         )
     }
 
-    /// Next receive-expiry deadline while a remote discriminator is known.
+    /// Returns the receive-expiry deadline, if monitoring has begun.
+    /// S-BFD starts detection after its first generated probe; classical BFD
+    /// requires a validated peer packet first.
     pub fn detection_deadline(&self) -> Option<Instant> {
+        if self.options.session_type == SessionType::SbfdInitiator {
+            return self
+                .last_received
+                .or(self.first_transmitted)
+                .map(|last| last + self.detection_time());
+        }
         // Also wake in Down to forget the remote discriminator after one Detection Time.
         self.last_received
             .filter(|_| self.remote_discriminator != 0)
@@ -147,17 +228,33 @@ impl Session {
 
     /// Active/passive role gate; does not apply periodic Demand/zero-RX suppression.
     pub fn can_transmit(&self) -> bool {
-        !self.options.passive || self.remote_discriminator != 0
+        self.options.session_type != SessionType::SbfdReflector
+            && (!self.options.passive || self.remote_discriminator != 0)
     }
 
-    /// Whether the role and peer Demand/required RX settings allow periodic traffic.
+    /// Returns whether periodic probes are enabled for this role.
+    /// Classical peers can suppress periodic traffic through Demand or zero RX;
+    /// S-BFD initiators continue probing and reflectors never probe periodically.
     pub fn periodic_enabled(&self) -> bool {
+        if self.options.session_type == SessionType::SbfdInitiator {
+            return true;
+        }
         self.can_transmit()
             && !(self.remote_min_rx_us == 0
                 || self.remote_demand
                     && self.state == State::Up
                     && self.remote_state == State::Up
                     && !self.polling)
+    }
+
+    pub(crate) fn minimum_transmit_interval(&self) -> Duration {
+        if self.options.session_type == SessionType::SbfdInitiator
+            && self.remote_state == State::AdminDown
+        {
+            Duration::from_secs(1)
+        } else {
+            Duration::ZERO
+        }
     }
 
     /// Sample 75-100% of the negotiated interval (75-90% for multiplier 1).
@@ -169,7 +266,9 @@ impl Session {
             10000
         };
         let factor = rand::thread_rng().gen_range(7500..=upper);
-        Duration::from_nanos((self.transmit_interval().as_nanos() * factor / 10000) as u64)
+        let interval =
+            Duration::from_nanos((self.transmit_interval().as_nanos() * factor / 10000) as u64);
+        interval.max(self.minimum_transmit_interval())
     }
 
     /// Validate and apply a control packet using the supplied monotonic receipt time.
@@ -194,6 +293,14 @@ impl Session {
         data: &[u8],
         now: Instant,
     ) -> Result<Received, ReceiveError> {
+        if self.options.session_type == SessionType::SbfdInitiator {
+            return self.receive_seamless(data, now);
+        }
+        if self.options.session_type == SessionType::SbfdReflector {
+            return Err(ReceiveError::Packet(
+                "use Reflector::respond for stateless requests",
+            ));
+        }
         let packet = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
         if packet.your_discriminator != 0 && packet.your_discriminator != self.local_discriminator {
             return Err(ReceiveError::Packet(
@@ -259,6 +366,7 @@ impl Session {
             self.polling = true;
         }
         self.last_received = Some(now);
+        self.communicating = true;
         Ok(Received {
             reply_final: packet.poll,
             state_changed: previous_state != self.state,
@@ -267,10 +375,31 @@ impl Session {
 
     /// Apply receive expiry and return whether the local state changed.
     ///
-    /// Clears the remote discriminator after one detection time and authentication
-    /// sequence tracking after two. Returns false if only that tracking changed.
-    /// Peer timer parameters are retained; Init/Up transition to Down.
+    /// Classical BFD clears the remote discriminator after one detection time and
+    /// authentication tracking after two. S-BFD retains its configured target,
+    /// clears outstanding sequences, and doubles its probing backoff on timeout.
+    /// Returns false if the local state did not change.
     pub fn expire(&mut self, now: Instant) -> bool {
+        if self.options.session_type == SessionType::SbfdInitiator {
+            let Some(deadline) = self.detection_deadline() else {
+                return false;
+            };
+            if now < deadline {
+                return false;
+            }
+            self.communicating = false;
+            self.last_received = None;
+            self.first_transmitted = Some(now);
+            self.sent_auth_sequences.clear();
+            self.congestion_backoff = self.congestion_backoff.saturating_add(1).min(31);
+            let changed = self.state == State::Up;
+            if self.state != State::AdminDown {
+                self.state = State::Down;
+                self.diagnostic = Diagnostic::DetectionExpired;
+                self.polling = false;
+            }
+            return changed;
+        }
         let Some(last) = self.last_received else {
             return false;
         };
@@ -282,6 +411,7 @@ impl Session {
             return false;
         }
         self.remote_discriminator = 0;
+        self.communicating = false;
         if matches!(self.state, State::Init | State::Up) {
             let old_tx = self.desired_min_tx_us();
             self.state = State::Down;
@@ -305,26 +435,139 @@ impl Session {
     ///
     /// A Final packet clears the wire Poll bit without completing the local Poll
     /// sequence. This method performs no I/O or transmission-permission check.
+    /// Use Reflector::respond instead for the S-BFD reflector role.
     pub fn packet(&mut self, final_bit: bool) -> Vec<u8> {
+        self.packet_at(final_bit, Instant::now())
+    }
+
+    /// Encodes a control packet using a monotonic generation time for S-BFD tracking.
+    /// Keyed responses must match an unconsumed generated sequence before its expiry.
+    /// Generating a packet reserves its sequence even if a later socket send fails.
+    pub fn packet_at(&mut self, final_bit: bool, now: Instant) -> Vec<u8> {
+        self.encode_packet_at(final_bit, true, now)
+    }
+
+    /// Announces a classical state change without adding an unscheduled Poll.
+    /// The pending Poll sequence remains active for periodic transmissions.
+    pub(crate) fn state_change_packet(&mut self) -> Vec<u8> {
+        self.encode_packet_at(false, false, Instant::now())
+    }
+
+    fn encode_packet_at(&mut self, final_bit: bool, include_poll: bool, now: Instant) -> Vec<u8> {
+        let seamless = self.options.session_type == SessionType::SbfdInitiator;
+        let final_bit = final_bit || seamless && self.pending_final;
+        if final_bit {
+            self.pending_final = false;
+        }
         let packet = ControlPacket {
             diagnostic: self.diagnostic as u8,
             state: self.state,
-            poll: self.polling && !final_bit,
+            poll: self.polling && include_poll && !final_bit,
             final_bit,
             control_plane_independent: false,
-            demand: false,
+            demand: seamless,
             detect_mult: self.options.detect_mult,
             my_discriminator: self.local_discriminator,
             your_discriminator: self.remote_discriminator,
             desired_min_tx_us: self.desired_min_tx_us(),
-            required_min_rx_us: self.options.min_rx_us,
+            required_min_rx_us: if seamless { 0 } else { self.options.min_rx_us },
             required_min_echo_rx_us: 0,
         };
         let data = packet.encode(&self.auth, self.transmit_auth_seq);
+        if seamless {
+            self.first_transmitted.get_or_insert(now);
+            if matches!(
+                self.auth.kind(),
+                AuthType::KeyedMd5
+                    | AuthType::MeticulousMd5
+                    | AuthType::KeyedSha1
+                    | AuthType::MeticulousSha1
+            ) {
+                // Bound memory even if callers generate packets faster than the runtime.
+                if self.sent_auth_sequences.len() == 1024 {
+                    self.sent_auth_sequences.pop_front();
+                }
+                self.sent_auth_sequences
+                    .push_back((self.transmit_auth_seq, now));
+            }
+        }
         // Reserve the next sequence for each generated packet, even if sending fails.
         // Incrementing per transmitted packet is also legal for non-meticulous auth.
         self.transmit_auth_seq = self.transmit_auth_seq.wrapping_add(1);
         data
+    }
+
+    fn receive_seamless(&mut self, data: &[u8], now: Instant) -> Result<Received, ReceiveError> {
+        let packet = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
+        if packet.your_discriminator != self.local_discriminator
+            || packet.my_discriminator != self.remote_discriminator
+        {
+            return Err(ReceiveError::Packet(
+                "S-BFD response discriminator mismatch",
+            ));
+        }
+        if packet.demand || !matches!(packet.state, State::Up | State::AdminDown) {
+            return Err(ReceiveError::Packet(
+                "invalid S-BFD reflector state or Demand flag",
+            ));
+        }
+        let sequence = self
+            .auth
+            .verify(data, None)
+            .map_err(ReceiveError::Authentication)?;
+        let sequence_index = if let Some(sequence) = sequence {
+            Some(
+                self.sent_auth_sequences
+                    .iter()
+                    .position(|(sent, time)| {
+                        *sent == sequence
+                            && now.saturating_duration_since(*time) < self.detection_time()
+                    })
+                    .ok_or(ReceiveError::Authentication(
+                        "S-BFD response sequence was not outstanding",
+                    ))?,
+            )
+        } else {
+            None
+        };
+        if let Some(index) = sequence_index {
+            self.sent_auth_sequences.remove(index);
+        }
+        let previous = self.state;
+        let old_tx = self.desired_min_tx_us();
+        self.remote_state = packet.state;
+        self.remote_min_rx_us = packet.required_min_rx_us;
+        self.remote_min_tx_us = packet.desired_min_tx_us;
+        self.remote_detect_mult = packet.detect_mult;
+        self.congestion_backoff = 0;
+        if packet.final_bit {
+            self.polling = false;
+        }
+        if self.state != State::AdminDown {
+            self.state = if packet.state == State::Up {
+                State::Up
+            } else {
+                State::Down
+            };
+            // Maintenance replies prove reachability; they are not a detection failure.
+            if self.state != previous {
+                self.diagnostic = if packet.state == State::Up {
+                    Diagnostic::None
+                } else {
+                    Diagnostic::NeighborDown
+                };
+            }
+            self.last_received = Some(now);
+            self.communicating = true;
+            self.pending_final |= packet.poll;
+            if self.state == State::Up && old_tx != self.desired_min_tx_us() {
+                self.polling = true;
+            }
+        }
+        Ok(Received {
+            reply_final: false,
+            state_changed: self.state != previous,
+        })
     }
 }
 
@@ -332,6 +575,34 @@ impl Session {
 mod tests {
     use super::*;
     use crate::packet::{test_packet, AuthType};
+
+    #[test]
+    fn seamless_authentication_correlates_wrapped_sequences_and_consumes_each_once() {
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.session_type = SessionType::SbfdInitiator;
+        options.discriminator = Some(7);
+        options.remote_discriminator = Some(99);
+        options.auth = AuthType::MeticulousSha1;
+        options.auth_key = Some("secret".into());
+        let auth = options.validate().unwrap();
+        let mut reflector_options = Options::reflector(options.peer, 99);
+        reflector_options.auth = options.auth;
+        reflector_options.auth_key = options.auth_key.clone();
+        let reflector = crate::seamless::Reflector::new(reflector_options, auth.clone()).unwrap();
+        let mut session = Session::new(options, auth.clone()).unwrap();
+        session.transmit_auth_seq = u32::MAX;
+        let now = Instant::now();
+        let first = session.packet_at(false, now);
+        let second = session.packet_at(false, now);
+        assert_eq!(auth.verify(&first, None).unwrap(), Some(u32::MAX));
+        assert_eq!(auth.verify(&second, None).unwrap(), Some(0));
+        for request in [&second, &first] {
+            let reply = reflector.respond(request).unwrap();
+            session.receive(&reply, now).unwrap();
+            assert!(session.receive(&reply, now).is_err());
+        }
+        assert_eq!(session.state(), State::Up);
+    }
 
     fn session() -> Session {
         let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
@@ -370,13 +641,109 @@ mod tests {
         for (i, local) in states.iter().enumerate() {
             for (j, remote) in states.iter().enumerate() {
                 let mut session = session();
-                session.state = *local;
-                session
-                    .receive(&wire(&test_packet(*remote)), Instant::now())
-                    .unwrap();
+                if *local == State::AdminDown {
+                    session.admin_down();
+                } else {
+                    session.state = *local;
+                }
+                let mut peer = test_packet(*remote);
+                peer.diagnostic = 8; // A peer's diagnostic does not become our local reason.
+                let received = session.receive(&wire(&peer), Instant::now()).unwrap();
                 assert_eq!(session.state, expected[i][j], "{local:?} / {remote:?}");
+                assert_eq!(received.state_changed, *local != expected[i][j]);
+                let diagnostic = if *local == State::AdminDown {
+                    Diagnostic::AdminDown
+                } else if expected[i][j] == State::Down && *local != State::Down {
+                    Diagnostic::NeighborDown
+                } else {
+                    Diagnostic::None
+                };
+                assert_eq!(session.diagnostic(), diagnostic, "{local:?} / {remote:?}");
+                let data = session.packet(false);
+                assert_eq!(data[0], 0x20 | diagnostic as u8);
+                assert_eq!(data[1] >> 6, expected[i][j] as u8);
+                assert_eq!(
+                    data[1] & 0x0f,
+                    0,
+                    "C/A/D/M stay clear without authentication"
+                );
+                assert_eq!(data[3], 24);
+                assert_eq!(&data[20..24], &[0; 4], "Echo is unsupported");
             }
         }
+    }
+
+    #[test]
+    fn invalid_poll_final_does_not_complete_a_poll_or_refresh_state() {
+        let now = Instant::now();
+        let mut session = session();
+        session
+            .receive(&wire(&test_packet(State::Init)), now)
+            .unwrap();
+        let before = (
+            session.state,
+            session.diagnostic,
+            session.polling,
+            session.remote_discriminator,
+            session.remote_min_rx_us,
+            session.remote_min_tx_us,
+            session.last_received,
+        );
+        let mut invalid = test_packet(State::Down);
+        invalid.poll = true;
+        invalid.final_bit = true;
+        invalid.required_min_rx_us = 0;
+        invalid.desired_min_tx_us = 9_000_000;
+        assert_eq!(
+            session.receive_checked(&wire(&invalid), now + Duration::from_millis(1)),
+            Err(ReceiveError::Packet("Poll and Final cannot both be set"))
+        );
+        assert_eq!(
+            before,
+            (
+                session.state,
+                session.diagnostic,
+                session.polling,
+                session.remote_discriminator,
+                session.remote_min_rx_us,
+                session.remote_min_tx_us,
+                session.last_received,
+            )
+        );
+    }
+
+    #[test]
+    fn diagnostics_report_failure_and_clear_on_reestablishment() {
+        let now = Instant::now();
+        let mut session = session();
+        session
+            .receive(&wire(&test_packet(State::Init)), now)
+            .unwrap();
+        let deadline = session.detection_deadline().unwrap();
+        assert!(session.expire(deadline));
+        assert_eq!(session.packet(false)[0], 0x21);
+        session
+            .receive(&wire(&test_packet(State::AdminDown)), deadline)
+            .unwrap();
+        assert_eq!(session.diagnostic(), Diagnostic::DetectionExpired);
+        session
+            .receive(&wire(&test_packet(State::Down)), deadline)
+            .unwrap();
+        assert_eq!(session.state(), State::Init);
+        assert_eq!(session.diagnostic(), Diagnostic::DetectionExpired);
+        session
+            .receive(&wire(&test_packet(State::Up)), deadline)
+            .unwrap();
+        assert_eq!(session.packet(false)[0], 0x20);
+        session
+            .receive(&wire(&test_packet(State::Down)), deadline)
+            .unwrap();
+        assert_eq!(session.packet(false)[0], 0x23);
+        session.admin_down();
+        let stopped = ControlPacket::decode(&session.packet(false)).unwrap();
+        assert_eq!(stopped.state, State::AdminDown);
+        assert_eq!(stopped.diagnostic, 7);
+        assert!(!stopped.poll && !stopped.final_bit);
     }
     #[test]
     fn handshake_negotiates_timers_and_timeout_preserves_parameters() {

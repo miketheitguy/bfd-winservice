@@ -1,4 +1,6 @@
 //! Windows UDP transport. WSARecvMsg is required to validate the received TTL and interface.
+// Winsock ancillary data and route lookup require the Windows FFI boundary.
+#![allow(unsafe_code)]
 use rand::Rng;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::{
@@ -9,9 +11,10 @@ use std::{
     ptr,
     time::Duration,
 };
+use windows_sys::Win32::NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2};
 use windows_sys::Win32::Networking::WinSock::*;
 
-use crate::config::{Mode, Options};
+use crate::config::{is_unicast, Mode, Options, SessionType, SBFD_PORT};
 
 /// Received UDP bytes and ancillary metadata, before session validation.
 pub struct Datagram {
@@ -38,12 +41,44 @@ impl Datagram {
     pub fn validate(&self, options: &Options) -> Result<(), &'static str> {
         // RFC 5881 section 6 identifies a point-to-point neighbor by its link,
         // then its discriminator, even if its source address changes.
-        let point_to_point = options.mode == Mode::SingleHop && options.point_to_point;
-        if !point_to_point && self.source.ip() != options.peer {
-            return Err("unexpected peer address");
-        }
-        if self.source.port() < 49152 {
-            return Err("peer source port is outside 49152..65535");
+        if options.session_type == SessionType::Classical {
+            let point_to_point = options.mode == Mode::SingleHop && options.point_to_point;
+            if !point_to_point && self.source.ip() != options.peer {
+                return Err("unexpected peer address");
+            }
+            if self.source.port() < 49152 {
+                return Err("peer source port is outside 49152..65535");
+            }
+        } else {
+            let source = self.source.ip();
+            if !is_unicast(source)
+                || source.is_ipv4() != options.local.is_ipv4()
+                || source.is_loopback() != options.local.is_loopback()
+            {
+                return Err("invalid S-BFD source address");
+            }
+            match options.session_type {
+                SessionType::SbfdInitiator => {
+                    if self.source.port() != SBFD_PORT {
+                        return Err("S-BFD response source port must be 7784");
+                    }
+                    if source != options.peer && !options.allowed_peers.contains(&source) {
+                        return Err("S-BFD response source is not allowed");
+                    }
+                }
+                SessionType::SbfdReflector => {
+                    if self.source.port() == 0 || self.source.port() == SBFD_PORT {
+                        return Err(
+                            "S-BFD request source port must be nonzero and different from 7784",
+                        );
+                    }
+                    if !options.allowed_peers.is_empty() && !options.allowed_peers.contains(&source)
+                    {
+                        return Err("S-BFD request source is not allowed");
+                    }
+                }
+                SessionType::Classical => unreachable!("classical packets validated separately"),
+            }
         }
         if self.destination != Some(options.local) {
             return Err("destination address is not the configured local address");
@@ -52,21 +87,24 @@ impl Datagram {
             return Err("packet arrived on another interface");
         }
         let ttl = self.ttl.ok_or("missing received TTL/hop limit")?;
-        if options.mode == Mode::SingleHop && ttl != 255 {
+        if options.session_type == SessionType::Classical
+            && options.mode == Mode::SingleHop
+            && ttl != 255
+        {
             return Err("single-hop TTL/hop limit must be 255");
         }
-        if options.mode == Mode::Multihop && options.min_ttl.is_some_and(|minimum| ttl < minimum) {
-            return Err("multihop TTL/hop limit below MinTtl");
+        if options.min_ttl.is_some_and(|minimum| ttl < minimum) {
+            return Err("TTL/hop limit below MinTtl");
         }
         Ok(())
     }
 }
 
-/// Nonblocking receive/transmit sockets for one configured peer destination.
+/// Nonblocking sockets for one classical session or S-BFD protocol role.
 pub struct Transport {
     receiver: Socket,
-    sender: Socket,
-    peer: SockAddr,
+    sender: Option<Socket>,
+    peer: Option<SockAddr>,
     recv_msg: LPFN_WSARECVMSG,
     /// Bound transmit port reported at construction; changing this field does
     /// not rebind the socket.
@@ -148,17 +186,32 @@ impl Transport {
             .validate_ranges()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let receiver = new_socket(options)?;
-        let sender = new_socket(options)?;
-        receiver.bind(&options.address(options.local, options.mode.port()).into())?;
-        let source_port = if let Some(port) = options.source_port {
-            sender.bind(&options.address(options.local, port).into())?;
+        let sender = if options.session_type == SessionType::Classical {
+            receiver.bind(
+                &options
+                    .address(options.local, options.control_port())
+                    .into(),
+            )?;
+            Some(new_socket(options)?)
+        } else {
+            None
+        };
+        // S-BFD responses return to the request's source port, so an initiator
+        // sends and receives on the same socket. A reflector also replies from
+        // its listener, preserving the mandatory source port 7784.
+        let sending_socket = sender.as_ref().unwrap_or(&receiver);
+        let source_port = if options.session_type == SessionType::SbfdReflector {
+            receiver.bind(&options.address(options.local, SBFD_PORT).into())?;
+            SBFD_PORT
+        } else if let Some(port) = options.source_port {
+            sending_socket.bind(&options.address(options.local, port).into())?;
             port
         } else {
             let start: u32 = rand::thread_rng().gen_range(0..16384);
             let mut bound = None;
             for offset in 0..16384 {
                 let port = (49152 + (start + offset) % 16384) as u16;
-                match sender.bind(&options.address(options.local, port).into()) {
+                match sending_socket.bind(&options.address(options.local, port).into()) {
                     Ok(()) => {
                         bound = Some(port);
                         break;
@@ -185,16 +238,16 @@ impl Transport {
         if options.local.is_ipv4() {
             set_option(&receiver, IPPROTO_IP, IP_RECVTTL, 1)?;
             set_option(&receiver, IPPROTO_IP, IP_PKTINFO, 1)?;
-            set_option(&sender, IPPROTO_IP, IP_TTL, 255)?;
+            set_option(sending_socket, IPPROTO_IP, IP_TTL, 255)?;
             if let Some(index) = options.interface_index {
-                set_option(&sender, IPPROTO_IP, IP_UNICAST_IF, index.to_be())?;
+                set_option(sending_socket, IPPROTO_IP, IP_UNICAST_IF, index.to_be())?;
             }
         } else {
             set_option(&receiver, IPPROTO_IPV6, IPV6_HOPLIMIT, 1)?;
             set_option(&receiver, IPPROTO_IPV6, IPV6_PKTINFO, 1)?;
-            set_option(&sender, IPPROTO_IPV6, IPV6_UNICAST_HOPS, 255)?;
+            set_option(sending_socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, 255)?;
             if let Some(index) = options.interface_index {
-                set_option(&sender, IPPROTO_IPV6, IPV6_UNICAST_IF, index)?;
+                set_option(sending_socket, IPPROTO_IPV6, IPV6_UNICAST_IF, index)?;
             }
         }
         let mut recv_msg: LPFN_WSARECVMSG = None;
@@ -223,11 +276,12 @@ impl Transport {
             ));
         }
         receiver.set_nonblocking(true)?;
-        sender.set_nonblocking(true)?;
+        sending_socket.set_nonblocking(true)?;
         Ok(Self {
             receiver,
             sender,
-            peer: options.address(options.peer, options.mode.port()).into(),
+            peer: (options.session_type != SessionType::SbfdReflector)
+                .then(|| options.address(options.peer, options.control_port()).into()),
             recv_msg,
             source_port,
         })
@@ -238,11 +292,76 @@ impl Transport {
     /// # Errors
     /// Returns socket errors or an incomplete datagram write.
     pub fn send(&self, packet: &[u8]) -> io::Result<()> {
-        let sent = self.sender.send_to(packet, &self.peer)?;
+        let peer = self.peer.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "reflectors only send replies")
+        })?;
+        let sent = self
+            .sender
+            .as_ref()
+            .unwrap_or(&self.receiver)
+            .send_to(packet, peer)?;
         if sent != packet.len() {
             return Err(io::Error::new(
                 io::ErrorKind::WriteZero,
                 "incomplete BFD datagram",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Replies from an S-BFD listener to a validated request source.
+    /// Checks the Windows return route before sending from UDP port 7784.
+    ///
+    /// # Errors
+    /// Rejects another protocol role, invalid source addresses/ports, missing
+    /// return routes, socket errors, or an incomplete datagram write.
+    pub fn send_reply(
+        &self,
+        packet: &[u8],
+        request: &Datagram,
+        options: &Options,
+    ) -> io::Result<()> {
+        if self.peer.is_some()
+            || self.source_port != SBFD_PORT
+            || options.session_type != SessionType::SbfdReflector
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "S-BFD replies require a reflector transport",
+            ));
+        }
+        request
+            .validate(options)
+            .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
+        let destination = inet_address(request.source);
+        let mut route = MIB_IPFORWARD_ROW2::default();
+        let mut best_source = SOCKADDR_INET::default();
+        // SAFETY: fully initialized IPv4/IPv6 unions and correctly sized writable
+        // output structures remain live for the synchronous call. No pointers
+        // are retained. Null LUID/source let the index (zero = any) and routing
+        // table select a return route, including valid loopback aliases. The
+        // bound socket still supplies the request's local destination as source.
+        let result = unsafe {
+            GetBestRoute2(
+                ptr::null(),
+                options.interface_index.unwrap_or(0),
+                ptr::null(),
+                &destination,
+                0,
+                &mut route,
+                &mut best_source,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::from_raw_os_error(i32::from_ne_bytes(
+                result.to_ne_bytes(),
+            )));
+        }
+        let sent = self.receiver.send_to(packet, &request.source.into())?;
+        if sent != packet.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "incomplete S-BFD reply",
             ));
         }
         Ok(())
@@ -342,6 +461,21 @@ impl Transport {
             unsafe { std::slice::from_raw_parts(control.as_ptr().cast::<u8>(), control_len) };
         read_control(bytes, &mut packet)?;
         Ok(packet)
+    }
+}
+
+fn inet_address(address: SocketAddr) -> SOCKADDR_INET {
+    let socket_address = SockAddr::from(address);
+    if address.is_ipv4() {
+        // SAFETY: socket2 constructed a complete initialized SOCKADDR_IN for
+        // this IPv4 address; read_unaligned does not require pointer alignment.
+        let ipv4 = unsafe { ptr::read_unaligned(socket_address.as_ptr().cast()) };
+        SOCKADDR_INET { Ipv4: ipv4 }
+    } else {
+        // SAFETY: socket2 constructed a complete initialized SOCKADDR_IN6 for
+        // this IPv6 address; the copied value owns no borrowed memory.
+        let ipv6 = unsafe { ptr::read_unaligned(socket_address.as_ptr().cast()) };
+        SOCKADDR_INET { Ipv6: ipv6 }
     }
 }
 

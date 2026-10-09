@@ -15,8 +15,31 @@ thiserror = "2"
 ctrlc = "3.5"
 socket2 = { version = "0.6", features = ["all"] }
 windows-service = "0.8.1"
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_System_Diagnostics_Etw", "Win32_System_IO", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Wmi"] }
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_System_Diagnostics_Etw", "Win32_System_IO", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Wmi"] }
 
 [dev-dependencies]
 assert_cmd = "2"
 tempfile = "3"
+
+[profile.dev]
+debug = 2
+overflow-checks = true
+
+[profile.release]
+debug = 2
+strip = "none"
+overflow-checks = true
+panic = "abort"
+
+[profile.asan]
+inherits = "dev"
+panic = "unwind"
+
+[lints.rust]
+warnings = { level = "deny", priority = -1 }
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+undocumented_unsafe_blocks = "deny"

@@ -1,9 +1,12 @@
 # BFD Windows service
 
 For Windows network administrators, this service monitors one IPv4 or IPv6
-peer with Bidirectional Forwarding Detection (BFD). Follow this guide to build
-and configure a fresh installation. Optional Border Gateway Protocol (BGP)
+peer with Bidirectional Forwarding Detection (BFD). Follow this guide to install
+and configure the service. Optional Border Gateway Protocol (BGP)
 control starts and stops a configured Windows BGP peer as BFD state changes.
+
+For probes that establish without a discriminator handshake, configure an
+IPv4/IPv6 [Seamless BFD initiator or reflector](docs/seamless.md).
 
 The service uses these Windows names:
 
@@ -17,28 +20,23 @@ The service uses these Windows names:
 
 You need:
 
-- Windows 10 or later, or a corresponding Windows Server release.
-- Rust with a `windows-msvc` target.
-- Visual Studio's **Desktop development with C++** workload, including the
-  Microsoft Visual C++ (MSVC) toolchain and Windows Software Development Kit (SDK).
+- 64-bit Windows 10 or later, or a corresponding Windows Server release, on an
+  x64 processor.
+- Matching `bfd-winservice.exe`, `BFD-Service.man`, and
+  `Initialize-Logging.ps1` files supplied by your service maintainer.
 - Administrator PowerShell access to create the service and its registry settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
   configure. See [network requirements](docs/protocol.md).
 
 ## Quick start
 
-Run the commands from the repository root.
+Use **PowerShell as Administrator** for installation and configuration.
 
-### 1. Build the executable
+### 1. Copy the installation files
 
-Build the service in PowerShell:
-
-```powershell
-cargo build --release
-```
-
-The build produces `target\release\bfd-winservice.exe`. For SDK tool discovery
-and build troubleshooting, see [Build and validate the service](docs/development.md).
+Follow [Prepare installation files](docs/setup.md#prepare-installation-files)
+to copy the supplied files to `C:\Program Files\BfdWinService` or your chosen
+installation folder.
 
 ### 2. Configure a fresh installation
 
@@ -92,10 +90,11 @@ Use these guides for the next task:
 | --- | --- |
 | Install, configure, verify, or stop a session | [Set up a BFD session](docs/setup.md) |
 | Look up registry values, defaults, and authentication | [Registry configuration reference](docs/configuration.md) |
+| Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](docs/seamless.md) |
 | Enable file output or interpret Operational events | [Logs and events](docs/logging.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
 | Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
-| Build, run tests, or generate Rust API documentation | [Build and validate the service](docs/development.md) |
+| Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |
 
 For recorded checks and their limits, see the
 [validation guide](RUST_SKILLS_VALIDATION.md) and

@@ -6,6 +6,9 @@ This guide is for Windows Server network administrators connecting Bidirectional
 
 The peer must already exist on a Windows Server with Remote Access/BGP configured. The execution account needs permission to manage it. Without `BgpPeerName`, no BGP worker or query is started.
 
+BGP control works with classical BFD and S-BFD initiators. Reflectors don't
+monitor peer state and reject `BgpPeerName`.
+
 ## Configure the peer
 
 Set `BgpPeerName` to the **configured BGP peer name**, such as `Site17`. This is separate from the BFD peer IP address. Set `BgpRoutingDomain` for a named domain.
@@ -15,10 +18,13 @@ In PowerShell as Administrator, configure the peer name:
 ```powershell
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
 New-ItemProperty -Path $parameters -Name BgpPeerName `
-    -PropertyType String -Value 'BGP_PEER_NAME' -Force | Out-Null
+    -PropertyType String -Value 'BGP_PEER_NAME' -Force
 ```
 
-Replace `BGP_PEER_NAME` with the existing peer's name before running the command. A successful command produces no output. Restart execution to apply the setting. Control works in both console mode and Windows Service Control Manager (SCM) mode.
+Replace `BGP_PEER_NAME` with the existing peer's name before running the command.
+PowerShell displays the `BgpPeerName` value. Restart execution to apply the
+setting. Control works in both console mode and Windows Service Control Manager
+(SCM) mode.
 
 ## Verify state changes and actions
 

@@ -1,5 +1,7 @@
 //! Read service settings without creating or modifying registry keys.
-use super::{Mode, Options, PARAMETERS_KEY};
+// Registry calls and handle ownership require the Windows FFI boundary.
+#![allow(unsafe_code)]
+use super::{Mode, Options, SessionType, Timing, PARAMETERS_KEY};
 use crate::packet::AuthType;
 use clap::ValueEnum;
 use std::{io, net::IpAddr, ptr};
@@ -13,6 +15,7 @@ use windows_sys::Win32::{
 /// Read settings from the service's HKLM Parameters key. Only the execution
 /// mode comes from the command line; optional values retain their defaults.
 /// Multihop selects the transport: absent/0 is single-hop, 1 is multihop.
+/// SessionType selects classical BFD or an S-BFD role; reflectors omit Peer.
 /// Call Options::validate before opening the engine.
 ///
 /// # Errors
@@ -21,6 +24,10 @@ use windows_sys::Win32::{
 /// Error messages identify value names and never include authentication keys.
 pub fn load_registry(console: bool) -> io::Result<Options> {
     Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY).load(console)
+}
+
+pub(crate) fn load_sbfd_settings(options: &Options) -> io::Result<(Timing, bool)> {
+    Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY).sbfd_settings(options)
 }
 
 struct Registry {
@@ -38,7 +45,37 @@ impl Registry {
     }
 
     fn load(&self, console: bool) -> io::Result<Options> {
-        let mut options = Options::new(self.address("Local")?, self.address("Peer")?);
+        let session_type = self
+            .string("SessionType")?
+            .map(|value| {
+                SessionType::from_str(&value, false)
+                    .map_err(|_| invalid("SessionType", "has an unsupported protocol role"))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let local = self.address("Local")?;
+        let mut options = if session_type == SessionType::SbfdReflector {
+            let discriminator = self
+                .dword("Discriminator")?
+                .ok_or_else(|| invalid("Discriminator", "is required for a reflector"))?;
+            Options::reflector(local, discriminator)
+        } else {
+            Options::new(local, self.address("Peer")?)
+        };
+        options.session_type = session_type;
+        options.registry_backed = true;
+        options.remote_discriminator = self.dword("RemoteDiscriminator")?;
+        options.sbfd_admin_down = self.boolean("SbfdAdminDown")?;
+        if let Some(peers) = self.string("AllowedPeers")? {
+            options.allowed_peers = peers
+                .split(',')
+                .map(|peer| {
+                    peer.trim().parse().map_err(|_| {
+                        invalid("AllowedPeers", "must contain comma-separated IP literals")
+                    })
+                })
+                .collect::<io::Result<_>>()?;
+        }
         options.console = console;
         options.multihop = self.boolean("Multihop")?;
         options.mode = if options.multihop {
@@ -71,6 +108,21 @@ impl Registry {
         options.bgp_routing_domain = self.string("BgpRoutingDomain")?;
         options.verbose = self.boolean("Verbose")?;
         Ok(options)
+    }
+
+    fn sbfd_settings(&self, options: &Options) -> io::Result<(Timing, bool)> {
+        let defaults = Options::new(options.local, options.peer);
+        let timing = Timing::new(
+            self.dword("MinTxUs")?.unwrap_or(defaults.min_tx_us),
+            self.dword("MinRxUs")?.unwrap_or(defaults.min_rx_us),
+            self.narrow("DetectMult")?.unwrap_or(defaults.detect_mult),
+        )
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let admin_down = self.boolean("SbfdAdminDown")?;
+        if admin_down && options.session_type != SessionType::SbfdReflector {
+            return Err(invalid("SbfdAdminDown", "applies only to reflectors"));
+        }
+        Ok((timing, admin_down))
     }
 
     fn address(&self, name: &str) -> io::Result<IpAddr> {
@@ -311,6 +363,78 @@ mod tests {
                     eprintln!("registry fixture cleanup failed: close={closed}, delete={deleted}");
                 }
             }
+        }
+
+        #[test]
+        fn native_registry_loads_both_seamless_roles_and_source_filters() {
+            let fixture = Fixture::new();
+            fixture.string("Local", "192.0.2.2");
+            fixture.string("SessionType", "sbfd-reflector");
+            fixture.dword("Discriminator", 99);
+            fixture.string("AllowedPeers", "192.0.2.1, 192.0.2.3");
+            let mut options = fixture.load(true).unwrap();
+            assert_eq!(options.session_type, SessionType::SbfdReflector);
+            assert_eq!(options.control_port(), 7784);
+            assert_eq!(options.allowed_peers.len(), 2);
+            assert!(options.peer.is_unspecified());
+            options.validate().unwrap();
+            fixture.string("SessionType", "sbfd-initiator");
+            fixture.string("Peer", "192.0.2.1");
+            fixture.dword("RemoteDiscriminator", 7);
+            let mut options = fixture.load(true).unwrap();
+            assert_eq!(options.remote_discriminator, Some(7));
+            options.validate().unwrap();
+        }
+
+        #[test]
+        fn native_registry_rejects_invalid_seamless_values_and_types() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.string("SessionType", "unknown");
+            assert!(fixture.load(true).is_err());
+            fixture.dword("SessionType", 1);
+            assert!(fixture.load(true).is_err());
+            fixture.string("SessionType", "sbfd-initiator");
+            fixture.string("RemoteDiscriminator", "99");
+            assert!(fixture.load(true).is_err());
+            fixture.dword("RemoteDiscriminator", 0);
+            assert!(fixture.load(true).unwrap().validate().is_err());
+            fixture.dword("RemoteDiscriminator", 99);
+            fixture.string("AllowedPeers", "192.0.2.3,invalid");
+            assert!(fixture.load(true).is_err());
+            fixture.dword("AllowedPeers", 1);
+            assert!(fixture.load(true).is_err());
+            fixture.remove("AllowedPeers");
+            fixture.dword("SbfdAdminDown", 2);
+            assert!(fixture.load(true).is_err());
+            fixture.string("SessionType", "sbfd-reflector");
+            fixture.remove("RemoteDiscriminator");
+            fixture.remove("SbfdAdminDown");
+            assert!(fixture.load(true).is_err());
+        }
+
+        #[test]
+        fn native_registry_live_settings_are_validated_without_reloading_identity() {
+            let fixture = Fixture::new();
+            fixture.string("Local", "192.0.2.2");
+            fixture.string("SessionType", "sbfd-reflector");
+            fixture.dword("Discriminator", 99);
+            let options = fixture.load(true).unwrap();
+            let registry = Registry::new(fixture.key, "");
+            fixture.dword("MinTxUs", 250_000);
+            fixture.dword("MinRxUs", 500_000);
+            fixture.dword("DetectMult", 5);
+            fixture.dword("SbfdAdminDown", 1);
+            fixture.string("Local", "not-a-live-setting");
+            assert_eq!(
+                registry.sbfd_settings(&options).unwrap(),
+                (Timing::new(250_000, 500_000, 5).unwrap(), true)
+            );
+            fixture.dword("DetectMult", 256);
+            assert!(registry.sbfd_settings(&options).is_err());
+            fixture.dword("DetectMult", 5);
+            fixture.dword("MinRxUs", 0);
+            assert!(registry.sbfd_settings(&options).is_err());
         }
 
         #[test]

@@ -29,7 +29,7 @@ pub enum Diagnostic {
     None = 0,
     /// No valid control packet arrived within the detection interval.
     DetectionExpired = 1,
-    /// The peer reported Down or AdminDown during an active handshake/session.
+    /// The peer signaled Down while Up, or AdminDown while Init/Up.
     NeighborDown = 3,
     /// The local session was administratively disabled.
     AdminDown = 7,
@@ -38,6 +38,8 @@ pub enum Diagnostic {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[repr(u8)]
 /// Supported RFC 5880 authentication types; None omits the authentication section.
+/// Sequence-window descriptions apply to classical BFD. S-BFD reflects request
+/// sequences and correlates replies with outstanding initiator probes.
 pub enum AuthType {
     /// Omits authentication; the configured key must be empty.
     None = 0,
@@ -192,18 +194,21 @@ pub struct ControlPacket {
     pub final_bit: bool,
     /// True if the sender advertises BFD independence from its control plane.
     pub control_plane_independent: bool,
-    /// True if the sender requests Demand mode; false for asynchronous operation.
+    /// True if a classical sender requests Demand mode or the sender is an S-BFD
+    /// initiator; false for classical asynchronous operation and S-BFD reflectors.
     pub demand: bool,
     /// The advertised detection multiplier, 1–255; decoding rejects zero.
     pub detect_mult: u8,
     /// The sender's nonzero session identifier; decoding rejects zero.
     pub my_discriminator: u32,
-    /// The learned peer identifier; zero is allowed only in Down or AdminDown.
+    /// The learned classical peer identifier or provisioned S-BFD target;
+    /// zero is allowed only in Down or AdminDown.
     pub your_discriminator: u32,
     /// The desired transmit interval in microseconds; decoding rejects zero.
     pub desired_min_tx_us: u32,
     /// The required control receive interval in microseconds; zero suppresses
-    /// the peer's periodic control transmission.
+    /// a classical peer's periodic control transmission. S-BFD reflectors still
+    /// answer each valid request even when an initiator advertises zero.
     pub required_min_rx_us: u32,
     /// The required Echo receive interval in microseconds; this implementation
     /// advertises zero because it does not implement Echo.
@@ -225,8 +230,9 @@ impl ControlPacket {
     /// not verify authentication, the expected discriminator, or transport metadata.
     ///
     /// # Errors
-    /// Rejects truncated/invalid lengths, unsupported version/multipoint, and
-    /// reserved zero multiplier, sender discriminator, or desired TX interval;
+    /// Rejects truncated/invalid lengths, unsupported version/multipoint,
+    /// simultaneous Poll/Final, and reserved zero multiplier, sender
+    /// discriminator, or desired TX interval;
     /// Init/Up also require a nonzero receiver discriminator.
     pub fn decode(data: &[u8]) -> Result<Self, &'static str> {
         if data.len() < HEADER_LEN {
@@ -248,6 +254,9 @@ impl ControlPacket {
         }
         if data[1] & 1 != 0 {
             return Err("multipoint is unsupported");
+        }
+        if data[1] & 0x30 == 0x30 {
+            return Err("Poll and Final cannot both be set");
         }
         if word(data, 4) == 0 {
             return Err("zero sender discriminator");
@@ -359,6 +368,89 @@ mod tests {
         ];
         assert_eq!(packet.encode(&auth, 0), fixture);
         assert_eq!(ControlPacket::decode(&fixture).unwrap(), packet);
+    }
+
+    #[test]
+    fn state_diagnostic_and_flag_bits_match_rfc_5880() {
+        let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+        for (state, state_bits) in [
+            (State::AdminDown, 0x00),
+            (State::Down, 0x40),
+            (State::Init, 0x80),
+            (State::Up, 0xc0),
+        ] {
+            for diagnostic in 0..=31 {
+                let mut packet = test_packet(state);
+                packet.diagnostic = diagnostic;
+                let data = packet.encode(&auth, 0);
+                assert_eq!(data[0], 0x20 | diagnostic);
+                assert_eq!(data[1], state_bits);
+                assert_eq!(ControlPacket::decode(&data).unwrap(), packet);
+            }
+        }
+        for (poll, final_bit, independent, demand, flags) in [
+            (true, false, false, false, 0x20),
+            (false, true, false, false, 0x10),
+            (false, false, true, false, 0x08),
+            (false, false, false, true, 0x02),
+            (true, false, true, true, 0x2a),
+            (false, true, true, true, 0x1a),
+        ] {
+            let mut packet = test_packet(State::Up);
+            packet.poll = poll;
+            packet.final_bit = final_bit;
+            packet.control_plane_independent = independent;
+            packet.demand = demand;
+            let data = packet.encode(&auth, 0);
+            assert_eq!(data[1], 0xc0 | flags);
+            assert_eq!(ControlPacket::decode(&data).unwrap(), packet);
+        }
+    }
+
+    #[test]
+    fn authentication_presence_lengths_and_fields_match_rfc_5880() {
+        for (kind, auth_len) in [
+            (AuthType::None, 0),
+            (AuthType::SimplePassword, 9),
+            (AuthType::KeyedMd5, 24),
+            (AuthType::MeticulousMd5, 24),
+            (AuthType::KeyedSha1, 28),
+            (AuthType::MeticulousSha1, 28),
+        ] {
+            let key = if kind == AuthType::None {
+                vec![]
+            } else {
+                b"secret".to_vec()
+            };
+            let auth = AuthConfig::new(kind, 9, key).unwrap();
+            let data = test_packet(State::Up).encode(&auth, 0x10203040);
+            assert_eq!(data[1], if kind == AuthType::None { 0xc0 } else { 0xc4 });
+            assert_eq!(usize::from(data[3]), HEADER_LEN + auth_len);
+            assert_eq!(data.len(), HEADER_LEN + auth_len);
+            if auth_len != 0 {
+                assert_eq!(data[24], kind as u8);
+                assert_eq!(usize::from(data[25]), auth_len);
+                assert_eq!(data[26], 9);
+                if kind == AuthType::SimplePassword {
+                    assert_eq!(&data[27..], b"secret");
+                } else {
+                    assert_eq!(data[27], 0, "reserved authentication byte");
+                    assert_eq!(&data[28..32], &[0x10, 0x20, 0x30, 0x40]);
+                }
+            }
+            assert!(auth.verify(&data, None).is_ok());
+        }
+    }
+
+    #[test]
+    fn simultaneous_poll_and_final_are_rejected() {
+        let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+        let mut data = test_packet(State::Up).encode(&auth, 0);
+        data[1] |= 0x30;
+        assert_eq!(
+            ControlPacket::decode(&data),
+            Err("Poll and Final cannot both be set")
+        );
     }
     #[test]
     fn rejects_malformed_packets_without_panicking() {

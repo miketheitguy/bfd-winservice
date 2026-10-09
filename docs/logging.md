@@ -18,17 +18,21 @@ If a STDOUT write fails, the affected logger disables further console writes and
 
 ## Configure file logging
 
-Run the commands from the repository root in **PowerShell as Administrator**. Provision the session using [Set up a BFD session](setup.md) first.
+Run the commands in **PowerShell as Administrator**. Provision the session and
+copy the logging script using [Set up a BFD session](setup.md) first.
 
 ### 1. Provision the defaults
 
 The [logging setup script](../scripts/Initialize-Logging.ps1) sets the default registry values and creates `C:\ProgramData\BfdWinService` without creating or writing `trace.log`. Run the script:
 
 ```powershell
-.\scripts\Initialize-Logging.ps1
+$installDirectory = 'C:\Program Files\BfdWinService'
+& (Join-Path $installDirectory 'Initialize-Logging.ps1')
 ```
 
-The script disables file output and prints the values it sets:
+Adjust `$installDirectory` if you installed the service elsewhere. The script
+displays the folder and registry objects, disables file output, and prints this
+settings summary:
 
 ```text
 LogFilePath (REG_SZ): C:\ProgramData\BfdWinService\trace.log
@@ -55,12 +59,13 @@ Set the output path and enable file logging:
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
 New-ItemProperty -Path $parameters -Name LogFilePath `
     -PropertyType String `
-    -Value 'C:\ProgramData\BfdWinService\trace.log' -Force | Out-Null
+    -Value 'C:\ProgramData\BfdWinService\trace.log' -Force
 New-ItemProperty -Path $parameters -Name LogToFile `
-    -PropertyType DWord -Value 1 -Force | Out-Null
+    -PropertyType DWord -Value 1 -Force
 ```
 
-Successful commands produce no output. To use a different location, replace the path with an absolute file path.
+PowerShell displays the `LogFilePath` and `LogToFile` values. To use a different
+location, replace the path with an absolute file path.
 
 ### 3. Verify file output
 
@@ -91,6 +96,17 @@ In Event Viewer, open **Applications and Services Logs → BFD-Service → Opera
 | 105 | Warning | Authentication verification failed |
 
 Events 100–104 include endpoint addresses, discriminators, previous/current states, diagnostic, and transmit/detection intervals in microseconds. Event 101 retains the last known remote discriminator. Events 100/101 track valid reception separately from Up: a peer sending Down or AdminDown packets is still communicating. Repeated packets or timeout checks do not duplicate these events.
+
+The diagnostic is the local reason: `0` for startup or establishment,
+`1` for detection expiry, `3` for peer-signaled Down/AdminDown, and `7`
+for local shutdown. See [States and diagnostics](protocol.md#states-and-diagnostics)
+for the transition rules.
+
+S-BFD initiators use these events for valid responses, Up, and detection expiry.
+An AdminDown response keeps communication active while the target entity is in
+maintenance. Reflectors emit lifecycle and authentication events without
+maintaining per-peer state. Live-setting reload errors appear in text logs and
+leave the preceding settings active.
 
 Event 105 includes the packet source address/port, configured authentication type/key ID, local discriminator, and rejection reason. It is limited to once per second per process, independently of verbose logging. Keys, passwords, digests, and packet payloads are omitted. Malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate this event.
 
