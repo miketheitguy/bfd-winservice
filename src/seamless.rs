@@ -72,11 +72,15 @@ impl Reflector {
     /// Rejects malformed packets, wrong discriminators, cleared Demand, invalid
     /// initiator states/receive intervals, or authentication failures without responding.
     pub fn respond(&self, data: &[u8]) -> Result<Vec<u8>, ReceiveError> {
-        self.respond_checked(data)
+        self.respond_checked(data).map(|response| response.to_vec())
     }
 
-    pub(crate) fn respond_checked(&self, data: &[u8]) -> Result<Vec<u8>, ReceiveError> {
-        let request = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
+    pub(crate) fn respond_checked(
+        &self,
+        data: &[u8],
+    ) -> Result<crate::packet::PacketBuffer, ReceiveError> {
+        let decoded = crate::packet::DecodedPacket::decode(data).map_err(ReceiveError::Packet)?;
+        let request = &decoded.control;
         if request.your_discriminator != self.discriminator {
             return Err(ReceiveError::Packet(PacketError::UnknownReflector));
         }
@@ -91,7 +95,7 @@ impl Reflector {
         }
         let sequence = self
             .auth
-            .verify(data, None)
+            .verify_decoded(&decoded, None)
             .map_err(ReceiveError::Authentication)?;
         let response = ControlPacket {
             diagnostic: if self.admin_down {
@@ -111,6 +115,6 @@ impl Reflector {
             required_min_rx_us: self.min_rx_us,
             required_min_echo_rx_us: 0,
         };
-        Ok(response.encode(&self.auth, sequence.unwrap_or(0)))
+        Ok(response.encode_buffer(&self.auth, sequence.unwrap_or(0)))
     }
 }

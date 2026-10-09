@@ -1,6 +1,6 @@
 use bfd_winservice::{
     config::{load_registry, SERVICE_NAME},
-    runtime::{Engine, Logger},
+    runtime::{Engine, Logger, StopSignal},
 };
 use std::{
     error::Error,
@@ -34,7 +34,8 @@ fn service_entry(_arguments: Vec<OsString>) {
 }
 
 fn run_service() -> Result<(), Box<dyn Error>> {
-    let (stop_tx, stop_rx) = mpsc::channel();
+    let stop = StopSignal::new()?;
+    let handler_stop = stop.clone();
     let (diagnostic_tx, diagnostic_rx) = mpsc::sync_channel(4);
     let reporter = Arc::new(Mutex::new(StatusReporter {
         handle: None,
@@ -54,7 +55,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
                 let _ =
                     diagnostic_tx.try_send(format!("Unable to report BFD StopPending: {error}"));
             }
-            let _ = stop_tx.send(());
+            let _ = handler_stop.signal();
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -94,7 +95,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             let mut supervisor_log = log.clone();
             let worker_log = &mut log;
             let worker = scope.spawn(move || {
-                let result = engine.run(&stop_rx, worker_log);
+                let result = engine.run_until(&stop, worker_log);
                 let _ = done_tx.send(());
                 result
             });

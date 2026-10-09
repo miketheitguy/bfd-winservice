@@ -5,13 +5,12 @@
 use bfd_winservice::{
     config::{Mode, Options},
     packet::{AuthConfig, AuthType, ControlPacket, State},
-    runtime::{Engine, Logger},
+    runtime::{Engine, Logger, StopSignal},
     transport::{Datagram, Transport},
 };
 use std::{
     io,
     net::UdpSocket,
-    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -59,7 +58,7 @@ fn loopback_interface(options: &Options) -> u32 {
 }
 
 struct RunningEngine {
-    stop: mpsc::Sender<()>,
+    stop: StopSignal,
     worker: Option<thread::JoinHandle<io::Result<()>>>,
 }
 
@@ -76,15 +75,16 @@ impl RunningEngine {
         let auth = options.validate().unwrap();
         let mut log = Logger::open(&options).unwrap();
         let mut engine = Engine::open(options, auth, &mut log).unwrap();
-        let (stop, receiver) = mpsc::channel();
+        let stop = StopSignal::new().unwrap();
+        let receiver = stop.clone();
         Self {
             stop,
-            worker: Some(thread::spawn(move || engine.run(&receiver, &mut log))),
+            worker: Some(thread::spawn(move || engine.run_until(&receiver, &mut log))),
         }
     }
 
     fn stop(&mut self) {
-        self.stop.send(()).unwrap();
+        self.stop.signal().unwrap();
         self.worker.take().unwrap().join().unwrap().unwrap();
     }
 }
@@ -93,7 +93,7 @@ impl Drop for RunningEngine {
     fn drop(&mut self) {
         if let Some(worker) = self.worker.take() {
             // Also release sockets and the worker if a test assertion fails.
-            let _ = self.stop.send(());
+            let _ = self.stop.signal();
             let _ = worker.join();
         }
     }
@@ -654,7 +654,7 @@ fn normal_shutdown_announces_admin_down_for_the_detection_period() {
         }
     }
     let started = Instant::now();
-    engine.stop.send(()).unwrap();
+    engine.stop.signal().unwrap();
     let mut announcements = 0;
     while announcements < 2 {
         let (length, _) = peer.recv_from(&mut buffer).unwrap();

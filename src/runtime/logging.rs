@@ -10,7 +10,7 @@ use crate::{
 use std::{
     fmt::{self, Display, Write as _},
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -18,12 +18,13 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const QUEUE_CAPACITY: usize = 256;
 const MAX_TEXT_BYTES: usize = 16_384;
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
+const FILE_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
 enum Command {
     Text(String),
@@ -292,12 +293,24 @@ fn diagnostic(message: impl Display) {
     let _ = writeln!(io::stderr().lock(), "{message}");
 }
 
-fn text_output(message: &str, console: bool, stdout_failed: &mut bool, file: &mut Option<File>) {
+fn text_output(
+    message: &str,
+    console: bool,
+    stdout_failed: &mut bool,
+    file: &mut Option<BufWriter<File>>,
+    timestamp: &mut String,
+) {
     if let Some(file) = file {
-        let timestamp = utc_timestamp();
-        let text = message.replace('\n', &format!("\n{timestamp} "));
-        if let Err(error) = writeln!(file, "{timestamp} {text}") {
-            diagnostic(format_args!("unable to write BFD file log: {error}"));
+        utc_timestamp(timestamp);
+        for line in message.split('\n') {
+            if let Err(error) = writeln!(file, "{timestamp} {line}") {
+                diagnostic(format_args!("unable to write BFD file log: {error}"));
+                break;
+            }
+        }
+        // Keep file output visible before a console pipe can block the worker.
+        if console {
+            flush_file(file);
         }
     }
     if console && !*stdout_failed {
@@ -309,6 +322,12 @@ fn text_output(message: &str, console: bool, stdout_failed: &mut bool, file: &mu
             *stdout_failed = true;
             diagnostic(format_args!("unable to write BFD console log: {error}"));
         }
+    }
+}
+
+fn flush_file(file: &mut BufWriter<File>) {
+    if let Err(error) = file.flush() {
+        diagnostic(format_args!("unable to flush BFD file log: {error}"));
     }
 }
 
@@ -339,10 +358,32 @@ fn write_records_with(
     dropped: &AtomicU64,
     mut emit: impl FnMut(&Record) -> io::Result<()>,
 ) {
-    let mut file = None;
+    let mut file: Option<BufWriter<File>> = None;
+    let mut timestamp = String::with_capacity(24);
+    let mut next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
     let mut stdout_failed = false;
     let mut reported = 0;
-    while let Ok(command) = receiver.recv() {
+    loop {
+        let pending = file.as_ref().is_some_and(|file| !file.buffer().is_empty());
+        let command = if pending {
+            receiver.recv_timeout(next_flush.saturating_duration_since(Instant::now()))
+        } else {
+            next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
+            receiver
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+        };
+        let command = match command {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(file) = &mut file {
+                    flush_file(file);
+                }
+                next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         let lost = dropped.load(Ordering::Relaxed);
         if lost != reported {
             text_output(
@@ -353,11 +394,18 @@ fn write_records_with(
                 console,
                 &mut stdout_failed,
                 &mut file,
+                &mut timestamp,
             );
             reported = lost;
         }
         match command {
-            Command::Text(text) => text_output(&text, console, &mut stdout_failed, &mut file),
+            Command::Text(text) => text_output(
+                &text,
+                console,
+                &mut stdout_failed,
+                &mut file,
+                &mut timestamp,
+            ),
             Command::Event(record) => {
                 if !console {
                     if let Err(error) = emit(&record) {
@@ -366,18 +414,33 @@ fn write_records_with(
                             console,
                             &mut stdout_failed,
                             &mut file,
+                            &mut timestamp,
                         );
                     }
                 }
                 if let Some(text) = &record.text {
-                    text_output(text, console, &mut stdout_failed, &mut file);
+                    text_output(text, console, &mut stdout_failed, &mut file, &mut timestamp);
                 }
             }
-            Command::File(next) => file = next,
+            Command::File(next) => {
+                if let Some(file) = &mut file {
+                    flush_file(file);
+                }
+                file = next.map(BufWriter::new);
+            }
             Command::Flush(reply) => {
                 let _ = reply.send(file.as_mut().map_or(Ok(()), Write::flush));
             }
         }
+        if Instant::now() >= next_flush {
+            if let Some(file) = &mut file {
+                flush_file(file);
+            }
+            next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
+        }
+    }
+    if let Some(file) = &mut file {
+        flush_file(file);
     }
 }
 
@@ -544,6 +607,44 @@ mod tests {
         assert_eq!(messages, ["engine message", "BGP message"]);
         assert_eq!(logger.dropped_records(), 0);
     }
+    #[test]
+    #[cfg(not(miri))]
+    fn buffered_file_output_flushes_on_timeout_reconfiguration_and_drop() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::reflector("127.0.0.1".parse().unwrap(), 99);
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("first.log");
+        let mut logger = Logger::open(&options).unwrap();
+        logger.log("visible without explicit flush");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let text = fs::read_to_string(&options.log_file_path).unwrap();
+            if text.contains("visible without explicit flush") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "buffered records must become visible"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        logger.log("before file switch");
+        let first_path = options.log_file_path.clone();
+        options.log_file_path = directory.path().join("second.log");
+        logger.open_file(&options).unwrap();
+        logger.log("after file switch\nsecond line\n");
+        drop(logger);
+        assert!(fs::read_to_string(first_path)
+            .unwrap()
+            .contains("before file switch"));
+        let second = fs::read_to_string(options.log_file_path).unwrap();
+        assert!(second.contains("after file switch") && second.contains("second line"));
+        let lines: Vec<_> = second.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(&lines[0][..24], &lines[1][..24]);
+        assert_eq!(&lines[0][..24], &lines[2][..24]);
+    }
+
     #[test]
     fn message_limit_preserves_utf8_boundaries() {
         let mut text = BoundedText(String::new());

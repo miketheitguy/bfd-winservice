@@ -87,7 +87,7 @@ Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
 Replace `MSI_PATH` with the local `.msi` path, such as
-`C:\Temp\BfdWinService-1.0.0-x64.msi`. Successful installation reports a **Stopped**,
+`C:\Temp\BfdWinService-1.1.0-x64.msi`. Successful installation reports a **Stopped**,
 **Automatic** service and the registered provider/channel. Exit code `3010`
 means installation succeeded and Windows requests a restart.
 

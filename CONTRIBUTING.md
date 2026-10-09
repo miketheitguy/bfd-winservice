@@ -238,6 +238,18 @@ APIs must deliver the returned packets. The Windows runtime prepares packets
 without mutation and commits sequence, Poll, and probe tracking only after a
 successful socket send; failed sends don't consume meticulous sequences.
 
+The runtime encodes packets into fixed 52-byte storage, reuses its receive
+buffer, and verifies keyed authentication without copying the packet or
+allocating a digest. The public packet convenience APIs still return owned
+vectors. Use `Transport::receive_into` with a retained `Datagram` to reuse
+receive storage in library code.
+
+Use `Engine::run_until` with a cloneable `runtime::StopSignal` to wait for socket
+events, protocol deadlines, and shutdown. Service control and console handlers
+call `StopSignal::signal` to wake the engine immediately. `Engine::run` remains
+available for callers with a channel receiver; it checks that channel every
+10 milliseconds while idle.
+
 Configuration errors use `error::ConfigError`. Packet and transport rejection
 uses `error::PacketError`; authentication uses `error::AuthError`.
 `session::ReceiveError` distinguishes packet and authentication failures. Match
@@ -325,7 +337,7 @@ Output files appear in `target\installer`:
 | `BfdWinService-VERSION-x64.msi.sha256` | SHA-256 checksum of that MSI |
 | `BfdWinService-VERSION-x64.wixpdb` | WiX symbols for package diagnostics |
 
-`VERSION` is the Cargo package version, such as `1.0.0`. The Rust PDB remains
+`VERSION` is the Cargo package version, such as `1.1.0`. The Rust PDB remains
 beside the executable in the release folder; retain it with that build.
 Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
@@ -357,7 +369,7 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 
 The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
 to `main`, tags matching `v*`, pull requests, and manual dispatch. A tag must
-match the Cargo version, such as `v1.0.0`. The workflow uses an x64
+match the Cargo version, such as `v1.1.0`. The workflow uses an x64
 `windows-2025` runner, reads `rust-toolchain.toml`, checks formatting and Clippy,
 runs optimized tests, and builds the production MSI. It also verifies the
 production executable's hardening.
@@ -382,7 +394,7 @@ read-only and can run locally:
 
 ```powershell
 .\scripts\Test-Msi.ps1 `
-    -Path '.\target\installer\BfdWinService-1.0.0-x64.msi'
+    -Path '.\target\installer\BfdWinService-1.1.0-x64.msi'
 ```
 
 Adjust the filename for the package version. Confirm that validation reports
@@ -431,20 +443,20 @@ To release a tested commit:
 4. Create the version tag from that commit, for example:
 
    ```powershell
-   git tag -a v1.0.0 -m "BFD Windows Service v1.0.0"
+   git tag -a v1.1.0 -m "BFD Windows Service v1.1.0"
    ```
 
 5. Push that tag:
 
    ```powershell
-   git push origin v1.0.0
+   git push origin v1.1.0
    ```
 
 6. Wait for **Build Windows MSI** to succeed, then open the repository's
    **Releases** page. Confirm that the version's **Assets** include
-   `BfdWinService-1.0.0-x64.msi` and its `.sha256` file.
+   `BfdWinService-1.1.0-x64.msi` and its `.sha256` file.
 
-Replace `1.0.0` with the Cargo package version. Only the release job receives
+Replace `1.1.0` with the Cargo package version. Only the release job receives
 `contents: write`; the build job retains read-only repository access. Rerunning
 the release job completes a draft or adds missing assets to an existing release.
 It preserves assets already attached to a published release.

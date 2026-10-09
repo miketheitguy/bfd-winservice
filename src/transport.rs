@@ -8,14 +8,77 @@ use std::{
     io,
     mem::{align_of, size_of},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::windows::io::AsRawSocket,
+    os::windows::io::{AsRawHandle, AsRawSocket, FromRawHandle, OwnedHandle},
     ptr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use windows_sys::Win32::NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2};
 use windows_sys::Win32::Networking::WinSock::*;
+use windows_sys::Win32::{
+    Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+    System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects},
+};
 
 use crate::config::{is_seamless_source, Mode, Options, SessionType, ValidatedOptions, SBFD_PORT};
+
+fn create_event() -> io::Result<OwnedHandle> {
+    // SAFETY: unnamed manual-reset event, no borrowed security/name storage.
+    let handle = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: CreateEventW returned a new valid handle owned by this function.
+    Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+}
+
+struct StopState {
+    event: OwnedHandle,
+    requested: AtomicBool,
+}
+
+/// Shared one-shot stop request that interrupts the engine's native socket wait.
+#[derive(Clone)]
+pub struct StopSignal {
+    state: Arc<StopState>,
+}
+
+impl StopSignal {
+    /// Creates a stop request that is initially unset and may be cloned by handlers.
+    ///
+    /// # Errors
+    /// Returns an error if Windows cannot create the event.
+    pub fn new() -> io::Result<Self> {
+        Ok(Self {
+            state: Arc::new(StopState {
+                event: create_event()?,
+                requested: AtomicBool::new(false),
+            }),
+        })
+    }
+
+    /// Requests shutdown and wakes any engine waiting on this signal.
+    /// Repeated requests are harmless; the signal cannot be cleared.
+    ///
+    /// # Errors
+    /// Returns an error if Windows cannot signal the event.
+    pub fn signal(&self) -> io::Result<()> {
+        self.state.requested.store(true, Ordering::Release);
+        // SAFETY: shared ownership keeps the manual-reset event alive for this call.
+        if unsafe { SetEvent(self.state.event.as_raw_handle()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Returns whether a handler has requested shutdown.
+    pub fn is_requested(&self) -> bool {
+        self.state.requested.load(Ordering::Acquire)
+    }
+}
 
 /// Received UDP bytes and ancillary metadata, before session validation.
 pub struct Datagram {
@@ -29,6 +92,18 @@ pub struct Datagram {
     pub interface_index: Option<u32>,
     /// The received IPv4 TTL or IPv6 hop limit, or None if unavailable.
     pub ttl: Option<u8>,
+}
+
+impl Default for Datagram {
+    fn default() -> Self {
+        Self {
+            data: Vec::new(),
+            source: SocketAddr::from(([0, 0, 0, 0], 0)),
+            destination: None,
+            interface_index: None,
+            ttl: None,
+        }
+    }
 }
 
 impl Datagram {
@@ -99,6 +174,7 @@ impl Datagram {
 /// Nonblocking sockets for one classical session or S-BFD protocol role.
 pub struct Transport {
     receiver: Socket,
+    readable: OwnedHandle,
     sender: Option<Socket>,
     peer: Option<SockAddr>,
     recv_msg: LPFN_WSARECVMSG,
@@ -281,8 +357,23 @@ impl Transport {
         }
         receiver.set_nonblocking(true)?;
         sending_socket.set_nonblocking(true)?;
+        let readable = create_event()?;
+        let network_events =
+            i32::try_from(FD_READ | FD_CLOSE).expect("network event flags fit i32");
+        // SAFETY: live socket and event; neither is closed while the transport is alive.
+        if unsafe {
+            WSAEventSelect(
+                receiver.as_raw_socket() as SOCKET,
+                readable.as_raw_handle() as WSAEVENT,
+                network_events,
+            )
+        } == SOCKET_ERROR
+        {
+            return Err(socket_error());
+        }
         Ok(Self {
             receiver,
+            readable,
             sender,
             peer: (options.session_type != SessionType::SbfdReflector)
                 .then(|| options.address(options.peer, options.control_port()).into()),
@@ -375,22 +466,65 @@ impl Transport {
     /// A successful return can also mean timeout; receive can still return WouldBlock.
     ///
     /// # Errors
-    /// Returns Winsock poll errors or failed socket events.
+    /// Returns native wait errors or failed socket events.
     pub fn wait_readable(&self, timeout: Duration) -> io::Result<()> {
-        let mut fd = WSAPOLLFD {
-            fd: self.receiver.as_raw_socket() as SOCKET,
-            events: POLLRDNORM,
-            revents: 0,
-        };
-        // Round up to milliseconds and cap the Winsock signed timeout.
-        // The runtime supplies waits of at most its 10 ms stop-check interval.
-        let milliseconds = timeout.as_nanos().div_ceil(1_000_000).min(i32::MAX as u128) as i32;
-        // SAFETY: fd is valid writable storage for exactly one descriptor.
-        if unsafe { WSAPoll(&mut fd, 1, milliseconds) } == SOCKET_ERROR {
+        self.wait_events(timeout, None)
+    }
+
+    pub(crate) fn wait_stoppable(&self, timeout: Duration, stop: &StopSignal) -> io::Result<()> {
+        self.wait_events(timeout, Some(stop))
+    }
+
+    fn wait_events(&self, timeout: Duration, stop: Option<&StopSignal>) -> io::Result<()> {
+        // Stop occupies the first slot so a simultaneous packet flood cannot mask it.
+        let handles = [
+            stop.map_or(self.readable.as_raw_handle(), |stop| {
+                stop.state.event.as_raw_handle()
+            }),
+            self.readable.as_raw_handle(),
+        ];
+        let count = if stop.is_some() { 2 } else { 1 };
+        // u32::MAX means an infinite Windows wait, so retain a finite timeout.
+        let milliseconds = u32::try_from(timeout.as_nanos().div_ceil(1_000_000))
+            .unwrap_or(u32::MAX - 1)
+            .min(u32::MAX - 1);
+        // SAFETY: count initialized handles remain alive; this is a synchronous wait.
+        let result = unsafe { WaitForMultipleObjects(count, handles.as_ptr(), 0, milliseconds) };
+        if result == WAIT_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        if result == WAIT_TIMEOUT || stop.is_some() && result == WAIT_OBJECT_0 {
+            return Ok(());
+        }
+        let readable_slot = u32::from(stop.is_some());
+        if result != WAIT_OBJECT_0 + readable_slot {
+            return Err(io::Error::other("unexpected BFD socket wait result"));
+        }
+        let mut events = WSANETWORKEVENTS::default();
+        // SAFETY: live socket/event and initialized writable event record. Enumerating
+        // after the wait atomically resets the event; the next pass receives first.
+        if unsafe {
+            WSAEnumNetworkEvents(
+                self.receiver.as_raw_socket() as SOCKET,
+                self.readable.as_raw_handle() as WSAEVENT,
+                &mut events,
+            )
+        } == SOCKET_ERROR
+        {
             return Err(socket_error());
         }
-        if fd.revents & (POLLERR | POLLHUP | POLLNVAL) != 0 {
-            return Err(io::Error::other("BFD receive socket failed"));
+        for (flag, bit) in [(FD_READ, FD_READ_BIT), (FD_CLOSE, FD_CLOSE_BIT)] {
+            let index = usize::try_from(bit).expect("network event index fits usize");
+            if events.lNetworkEvents & i32::try_from(flag).expect("network event flag fits i32")
+                != 0
+                && events.iErrorCode[index] != 0
+            {
+                return Err(io::Error::from_raw_os_error(events.iErrorCode[index]));
+            }
+        }
+        if events.lNetworkEvents & i32::try_from(FD_CLOSE).expect("close event flag fits i32") != 0
+        {
+            return Err(io::Error::other("BFD receive socket closed"));
         }
         Ok(())
     }
@@ -401,12 +535,34 @@ impl Transport {
     /// Returns WouldBlock when no packet is ready, socket errors, or errors for
     /// truncated/invalid receive output and ancillary data.
     pub fn receive(&self) -> io::Result<Datagram> {
-        let mut data = [0u8; 512];
+        let mut packet = Datagram::default();
+        self.receive_into(&mut packet)?;
+        Ok(packet)
+    }
+
+    /// Receive into reusable payload storage, replacing all ancillary metadata.
+    /// After an error the payload is empty; retain the buffer for the next call.
+    ///
+    /// # Errors
+    /// Returns the same socket and validation errors as `receive`.
+    pub fn receive_into(&self, packet: &mut Datagram) -> io::Result<()> {
+        packet.destination = None;
+        packet.interface_index = None;
+        packet.ttl = None;
+        let result = self.receive_buffered(packet);
+        if result.is_err() {
+            packet.data.clear();
+        }
+        result
+    }
+
+    fn receive_buffered(&self, packet: &mut Datagram) -> io::Result<()> {
+        packet.data.resize(512, 0);
         // usize storage provides the native WSACMSGHDR alignment on both x86 and x64.
         let mut control = [0usize; 64];
         let mut buffer = WSABUF {
-            len: data.len() as u32,
-            buf: data.as_mut_ptr(),
+            len: 512,
+            buf: packet.data.as_mut_ptr(),
         };
         let mut count = 0u32;
         let recv_msg = self.recv_msg.expect("validated at socket creation");
@@ -445,26 +601,20 @@ impl Transport {
                 Ok((count as usize, message.Control.len as usize))
             })
         }?;
-        if count > data.len() || control_len > size_of_val(&control) {
+        if count > packet.data.len() || control_len > size_of_val(&control) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid Winsock buffer length",
             ));
         }
-        let mut packet = Datagram {
-            data: data[..count].to_vec(),
-            source: source
-                .as_socket()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "non-IP sender"))?,
-            destination: None,
-            interface_index: None,
-            ttl: None,
-        };
+        packet.data.truncate(count);
+        packet.source = source
+            .as_socket()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "non-IP sender"))?;
         // SAFETY: the returned length is checked and the complete buffer is initialized.
         let bytes =
             unsafe { std::slice::from_raw_parts(control.as_ptr().cast::<u8>(), control_len) };
-        read_control(bytes, &mut packet)?;
-        Ok(packet)
+        read_control(bytes, packet)
     }
 }
 
@@ -534,6 +684,98 @@ fn read_control(bytes: &[u8], packet: &mut Datagram) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(miri))]
+    #[test]
+    fn receive_storage_is_reused_and_events_rearm_after_draining() {
+        use std::{net::UdpSocket, thread, time::Instant};
+        let mut options = Options::new(
+            "127.0.0.248".parse().unwrap(),
+            "127.0.0.249".parse().unwrap(),
+        );
+        options.multihop = true;
+        let transport = Transport::open(&options).unwrap();
+        let sender = UdpSocket::bind((options.peer, 0)).unwrap();
+        let mut packet = Datagram::default();
+        assert_eq!(
+            transport.receive_into(&mut packet).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        let storage = packet.data.as_ptr();
+        for length in [512, 24, 48] {
+            let destination = options.address(options.local, 4784);
+            let sender = sender.try_clone().unwrap();
+            let worker = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(30));
+                sender.send_to(&vec![0xa5; length], destination).unwrap();
+            });
+            let started = Instant::now();
+            let deadline = started + Duration::from_secs(2);
+            loop {
+                match transport.receive_into(&mut packet) {
+                    Ok(()) => break,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline);
+                        transport
+                            .wait_readable(deadline.saturating_duration_since(Instant::now()))
+                            .unwrap();
+                    }
+                    Err(error) => panic!("receiving test datagram: {error}"),
+                }
+            }
+            worker.join().unwrap();
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "packet must wake the native wait"
+            );
+            assert_eq!(packet.data, vec![0xa5; length]);
+            assert_eq!(packet.data.as_ptr(), storage);
+            assert_eq!(packet.destination, Some(options.local));
+            assert!(packet.interface_index.is_some() && packet.ttl.is_some());
+            assert_eq!(
+                transport.receive_into(&mut packet).unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            assert!(packet.data.is_empty());
+            assert!(
+                packet.destination.is_none()
+                    && packet.interface_index.is_none()
+                    && packet.ttl.is_none()
+            );
+        }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn stop_signal_interrupts_a_long_native_wait_and_remains_set() {
+        use std::{thread, time::Instant};
+        let mut options = Options::new(
+            "127.0.0.250".parse().unwrap(),
+            "127.0.0.251".parse().unwrap(),
+        );
+        options.multihop = true;
+        let transport = Transport::open(&options).unwrap();
+        let stop = StopSignal::new().unwrap();
+        assert!(!stop.is_requested());
+        let handler = stop.clone();
+        let worker = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            handler.signal().unwrap();
+        });
+        let started = Instant::now();
+        transport
+            .wait_stoppable(Duration::from_secs(5), &stop)
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        worker.join().unwrap();
+        assert!(stop.is_requested());
+        stop.signal().unwrap();
+        let started = Instant::now();
+        transport
+            .wait_stoppable(Duration::from_secs(5), &stop)
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 
     // Encode native ancillary bytes without raw-pointer writes, so the fixtures can
     // exercise the parser's unsafe reads independently of Winsock and alignment.

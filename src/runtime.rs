@@ -10,6 +10,7 @@ use crate::{
     transport::{Datagram, Transport},
 };
 use std::{
+    fmt::Write as _,
     io,
     sync::mpsc::{Receiver, TryRecvError},
     time::{Duration, Instant},
@@ -17,16 +18,41 @@ use std::{
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetSystemTime};
 
 mod logging;
+pub use crate::transport::StopSignal;
 pub use logging::Logger;
+
+#[derive(Clone, Copy)]
+enum StopRequest<'a> {
+    Channel(&'a Receiver<()>),
+    Event(&'a StopSignal),
+}
+
+impl StopRequest<'_> {
+    fn is_requested(self) -> bool {
+        match self {
+            Self::Channel(receiver) => !matches!(receiver.try_recv(), Err(TryRecvError::Empty)),
+            Self::Event(signal) => signal.is_requested(),
+        }
+    }
+
+    fn wait(self, transport: &Transport, timeout: Duration) -> io::Result<()> {
+        match self {
+            Self::Channel(_) => transport.wait_readable(timeout.min(Duration::from_millis(10))),
+            Self::Event(signal) => transport.wait_stoppable(timeout, signal),
+        }
+    }
+}
 
 /// Read the Windows UTC clock without applying the local timezone.
 #[allow(unsafe_code)] // GetSystemTime is the sole FFI operation in this module.
-fn utc_timestamp() -> String {
+fn utc_timestamp(text: &mut String) {
     let mut time = SYSTEMTIME::default();
     // SAFETY: time is a valid, writable SYSTEMTIME that remains alive throughout
     // the synchronous call. GetSystemTime initializes its fields with UTC values.
     unsafe { GetSystemTime(&mut time) };
-    format!(
+    text.clear();
+    write!(
+        text,
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
         time.wYear,
         time.wMonth,
@@ -36,6 +62,7 @@ fn utc_timestamp() -> String {
         time.wSecond,
         time.wMilliseconds,
     )
+    .expect("formatting into a String cannot fail");
 }
 
 /// One validated session, its UDP sockets, and any configured BGP worker.
@@ -211,7 +238,10 @@ impl Engine {
         if let Err(error) = self.transport.send(&packet.data) {
             let now = Instant::now();
             if last_error.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1)) {
-                log.log(format!("send to {} failed: {error}", self.options.peer));
+                log.log(format_args!(
+                    "send to {} failed: {error}",
+                    self.options.peer
+                ));
                 *last_error = Some(now);
             }
         } else {
@@ -279,23 +309,23 @@ impl Engine {
         }
     }
 
-    fn run_reflector(&mut self, stop: &Receiver<()>, log: &mut Logger) -> io::Result<()> {
+    fn run_reflector(&mut self, stop: StopRequest<'_>, log: &mut Logger) -> io::Result<()> {
+        let mut datagram = Datagram::default();
         let mut next_registry_read = Instant::now() + Duration::from_secs(1);
         let mut last_error = None;
         let mut last_discard = None;
         let mut last_auth_failure = None;
         loop {
-            match stop.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => return Ok(()),
-                Err(TryRecvError::Empty) => {}
+            if stop.is_requested() {
+                return Ok(());
             }
             let now = Instant::now();
             if now >= next_registry_read {
                 self.reload_sbfd_settings(log);
                 next_registry_read = now + Duration::from_secs(1);
             }
-            match self.transport.receive() {
-                Ok(datagram) => {
+            match self.transport.receive_into(&mut datagram) {
+                Ok(()) => {
                     let reply = datagram
                         .validate(&self.options)
                         .map_err(ReceiveError::Packet)
@@ -328,7 +358,10 @@ impl Engine {
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    self.transport.wait_readable(Duration::from_millis(10))?;
+                    stop.wait(
+                        &self.transport,
+                        next_registry_read.saturating_duration_since(Instant::now()),
+                    )?;
                 }
                 Err(error)
                     if error.kind() == io::ErrorKind::InvalidData
@@ -348,6 +381,19 @@ impl Engine {
     /// Returns fatal receive/wait errors or BGP cleanup failures. If both fail,
     /// the receive/wait error takes precedence.
     pub fn run(&mut self, stop: &Receiver<()>, log: &mut Logger) -> io::Result<()> {
+        self.run_inner(StopRequest::Channel(stop), log)
+    }
+
+    /// Runs with a native stop signal, sleeping until a packet, timer, or Stop arrives.
+    /// Performs the same protocol announcement and BGP cleanup as `run`.
+    ///
+    /// # Errors
+    /// Returns receive, native wait, or BGP cleanup failures.
+    pub fn run_until(&mut self, stop: &StopSignal, log: &mut Logger) -> io::Result<()> {
+        self.run_inner(StopRequest::Event(stop), log)
+    }
+
+    fn run_inner(&mut self, stop: StopRequest<'_>, log: &mut Logger) -> io::Result<()> {
         let result = if self.reflector.is_some() {
             self.run_reflector(stop, log)
         } else {
@@ -374,6 +420,7 @@ impl Engine {
     }
 
     fn announce_shutdown(&mut self, grace: Duration, log: &mut Logger) -> io::Result<()> {
+        let mut datagram = Datagram::default();
         let mut last_error = None;
         let mut last_tx = Instant::now();
         if self.session.can_transmit() {
@@ -391,8 +438,8 @@ impl Engine {
                 last_tx = now;
                 next_tx = now + self.session.jittered_interval();
             }
-            match self.transport.receive() {
-                Ok(datagram) => {
+            match self.transport.receive_into(&mut datagram) {
+                Ok(()) => {
                     let interval = self.session.transmit_interval();
                     // AdminDown updates authenticated peer parameters without
                     // restarting detection or the local state machine.
@@ -416,10 +463,15 @@ impl Engine {
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    self.transport.wait_readable(
-                        Duration::from_millis(10)
-                            .min(deadline.saturating_duration_since(Instant::now())),
-                    )?;
+                    let now = Instant::now();
+                    let mut wait = deadline.saturating_duration_since(now);
+                    if self.session.periodic_enabled() {
+                        wait = wait.min(next_tx.saturating_duration_since(now));
+                    }
+                    if let Some(detection) = self.session.detection_deadline() {
+                        wait = wait.min(detection.saturating_duration_since(now));
+                    }
+                    self.transport.wait_readable(wait)?;
                 }
                 Err(error)
                     if error.kind() == io::ErrorKind::InvalidData
@@ -430,7 +482,8 @@ impl Engine {
         Ok(())
     }
 
-    fn run_session(&mut self, stop: &Receiver<()>, log: &mut Logger) -> io::Result<()> {
+    fn run_session(&mut self, stop: StopRequest<'_>, log: &mut Logger) -> io::Result<()> {
+        let mut datagram = Datagram::default();
         let mut next_periodic_tx = Instant::now();
         let mut last_periodic_tx = None;
         let mut last_error = None;
@@ -438,9 +491,8 @@ impl Engine {
         let mut last_auth_failure = None;
         let mut next_registry_read = Instant::now() + Duration::from_secs(1);
         loop {
-            match stop.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => break,
-                Err(TryRecvError::Empty) => {}
+            if stop.is_requested() {
+                break;
             }
             let now = Instant::now();
             let previous = self.session.state;
@@ -477,8 +529,8 @@ impl Engine {
             }
             let before_interval = self.session.transmit_interval();
             let before_enabled = self.session.periodic_enabled();
-            match self.transport.receive() {
-                Ok(datagram) => {
+            match self.transport.receive_into(&mut datagram) {
+                Ok(()) => {
                     let received_at = Instant::now();
                     let previous = self.session.state;
                     let communicating = self.session.communicating();
@@ -553,14 +605,14 @@ impl Engine {
                 Err(error) => return Err(error),
             }
             let now = Instant::now();
-            let mut wait = Duration::from_millis(10);
+            let mut wait = next_registry_read.saturating_duration_since(now);
             if self.session.periodic_enabled() {
                 wait = wait.min(next_periodic_tx.saturating_duration_since(now));
             }
             if let Some(deadline) = self.session.detection_deadline() {
                 wait = wait.min(deadline.saturating_duration_since(now));
             }
-            self.transport.wait_readable(wait)?;
+            stop.wait(&self.transport, wait)?;
         }
         Ok(())
     }

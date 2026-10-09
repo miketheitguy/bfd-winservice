@@ -83,7 +83,7 @@ pub(crate) enum Transmission {
 
 /// Owned wire bytes, borrowed for socket I/O and committed only on success.
 pub(crate) struct PreparedPacket {
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: crate::packet::PacketBuffer,
     poll: bool,
     final_bit: bool,
     sequence: u32,
@@ -395,7 +395,8 @@ impl Session {
         if self.options.session_type == SessionType::SbfdReflector {
             return Err(ReceiveError::Packet(PacketError::UseReflector));
         }
-        let packet = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
+        let decoded = crate::packet::DecodedPacket::decode(data).map_err(ReceiveError::Packet)?;
+        let packet = &decoded.control;
         if packet.your_discriminator != 0 && packet.your_discriminator != self.local_discriminator {
             return Err(ReceiveError::Packet(PacketError::WrongDiscriminator));
         }
@@ -413,7 +414,7 @@ impl Session {
         // packet is discarded without a response, even if it carries Poll.
         let sequence = self
             .auth
-            .verify(data, last_seq)
+            .verify_decoded(&decoded, last_seq)
             .map_err(ReceiveError::Authentication)?;
         let previous_state = self.state;
         let previous_tx = self.desired_min_tx_us();
@@ -569,7 +570,7 @@ impl Session {
         };
         let packet = self.prepare_packet(kind, now);
         self.record_transmission(&packet);
-        packet.data
+        packet.data.to_vec()
     }
 
     /// Prepares wire bytes without changing sequence, Poll, or probe tracking.
@@ -592,7 +593,7 @@ impl Session {
             required_min_echo_rx_us: 0,
         };
         PreparedPacket {
-            data: packet.encode(&self.auth, self.transmit_auth_seq),
+            data: packet.encode_buffer(&self.auth, self.transmit_auth_seq),
             poll: packet.poll,
             final_bit,
             sequence: self.transmit_auth_seq,
@@ -632,7 +633,8 @@ impl Session {
     }
 
     fn receive_seamless(&mut self, data: &[u8], now: Instant) -> Result<Received, ReceiveError> {
-        let packet = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
+        let decoded = crate::packet::DecodedPacket::decode(data).map_err(ReceiveError::Packet)?;
+        let packet = &decoded.control;
         if packet.your_discriminator != self.local_discriminator
             || packet.my_discriminator != self.remote_discriminator
         {
@@ -645,7 +647,7 @@ impl Session {
         }
         let sequence = self
             .auth
-            .verify(data, None)
+            .verify_decoded(&decoded, None)
             .map_err(ReceiveError::Authentication)?;
         let sequence_index = if let Some(sequence) = sequence {
             Some(

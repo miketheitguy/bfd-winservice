@@ -24,11 +24,19 @@ character boundaries. When output resumes, the writer reports how many records
 were dropped to STDOUT or the enabled file log. This diagnostic does not produce
 an Operational event.
 
+File output uses an 8 KiB buffer to group writes. While output is responsive,
+the writer flushes pending bytes within 100 milliseconds, when the buffer
+fills, before replacing the output file, and on normal shutdown. Library
+callers can use `Logger::flush(timeout)` to wait for queued output and buffered
+file bytes. In console mode, the writer flushes the file before writing to
+STDOUT.
+
 At shutdown, the logger allows up to 500 milliseconds for queued output to drain.
 If output remains blocked, execution ends without waiting for that writer.
-Queued events can be lost in this case. File timestamps record the
-time the writer writes each entry, so slow output can delay them relative to
-the underlying BFD state change.
+Queued events can be lost in this case; abrupt termination can also lose
+buffered file entries. File timestamps record when the writer formats each
+entry. Slow output can delay that timestamp relative to the underlying BFD
+state change, and buffering can delay when the entry becomes visible.
 
 ## Configure file logging
 

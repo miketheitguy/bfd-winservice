@@ -6,7 +6,38 @@ use subtle::ConstantTimeEq;
 
 /// Size of the fixed BFD control header, excluding optional authentication.
 pub const HEADER_LEN: usize = 24;
+const MAX_PACKET_LEN: usize = HEADER_LEN + 8 + 20;
 const AUTH: u8 = 0x04;
+
+/// Bounded wire storage for runtime transmissions without heap allocation.
+pub(crate) struct PacketBuffer {
+    bytes: [u8; MAX_PACKET_LEN],
+    length: u8,
+}
+
+impl std::ops::Deref for PacketBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.length)]
+    }
+}
+
+/// Header and declared-length bytes checked together at the receive boundary.
+pub(crate) struct DecodedPacket<'a> {
+    pub(crate) control: ControlPacket,
+    data: &'a [u8],
+}
+
+impl<'a> DecodedPacket<'a> {
+    pub(crate) fn decode(data: &'a [u8]) -> Result<Self, PacketError> {
+        let control = ControlPacket::decode(data)?;
+        Ok(Self {
+            control,
+            data: &data[..usize::from(data[3])],
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -110,12 +141,27 @@ impl AuthConfig {
         Ok(Self { kind, key_id, key })
     }
 
-    fn digest(&self, data: &[u8]) -> Vec<u8> {
+    fn digest(&self, header: &[u8]) -> [u8; 20] {
+        let mut padded_key = [0; 20];
+        padded_key[..self.key.len()].copy_from_slice(&self.key);
+        let padded_key = &padded_key[..self.kind.hash_len()];
+        let mut digest = [0; 20];
         match self.kind {
-            AuthType::KeyedMd5 | AuthType::MeticulousMd5 => md5::compute(data).0.to_vec(),
-            AuthType::KeyedSha1 | AuthType::MeticulousSha1 => Sha1::digest(data).to_vec(),
+            AuthType::KeyedMd5 | AuthType::MeticulousMd5 => {
+                let mut context = md5::Context::new();
+                context.consume(header);
+                context.consume(padded_key);
+                digest[..16].copy_from_slice(&context.finalize().0);
+            }
+            AuthType::KeyedSha1 | AuthType::MeticulousSha1 => {
+                let mut context = Sha1::new();
+                context.update(header);
+                context.update(padded_key);
+                digest.copy_from_slice(&context.finalize());
+            }
             _ => unreachable!("digest only used for keyed authentication"),
         }
+        digest
     }
 
     /// Check packet structure, configured authentication, and keyed sequence bounds.
@@ -130,8 +176,15 @@ impl AuthConfig {
     /// and sequences outside the configured authentication's receive window.
     pub fn verify(&self, data: &[u8], last_seq: Option<u32>) -> Result<Option<u32>, AuthError> {
         // Keep the authentication API safe even when called independently of Session.
-        ControlPacket::decode(data)?;
-        let data = &data[..usize::from(data[3])];
+        self.verify_decoded(&DecodedPacket::decode(data)?, last_seq)
+    }
+
+    pub(crate) fn verify_decoded(
+        &self,
+        packet: &DecodedPacket<'_>,
+        last_seq: Option<u32>,
+    ) -> Result<Option<u32>, AuthError> {
+        let data = packet.data;
         if data[1] & AUTH == 0 {
             return if self.kind == AuthType::None {
                 Ok(None)
@@ -168,10 +221,8 @@ impl AuthConfig {
                 return Err(AuthError::SequenceWindow);
             }
         }
-        let mut signed = data.to_vec();
-        signed[32..].fill(0);
-        signed[32..32 + self.key.len()].copy_from_slice(&self.key);
-        if !bool::from(data[32..].ct_eq(&self.digest(&signed))) {
+        let digest = self.digest(&data[..32]);
+        if !bool::from(data[32..].ct_eq(&digest[..self.kind.hash_len()])) {
             return Err(AuthError::DigestMismatch);
         }
         // Return the accepted sequence only after cryptographic verification succeeds.
@@ -295,7 +346,21 @@ impl ControlPacket {
     /// Does not validate header fields. The supplied sequence is used only by
     /// keyed authentication; this method does not advance sequence tracking.
     pub fn encode(&self, auth: &AuthConfig, sequence: u32) -> Vec<u8> {
-        let mut data = vec![0; HEADER_LEN];
+        self.encode_buffer(auth, sequence).to_vec()
+    }
+
+    pub(crate) fn encode_buffer(&self, auth: &AuthConfig, sequence: u32) -> PacketBuffer {
+        let length = HEADER_LEN
+            + match auth.kind {
+                AuthType::None => 0,
+                AuthType::SimplePassword => 3 + auth.key.len(),
+                _ => 8 + auth.kind.hash_len(),
+            };
+        let mut packet = PacketBuffer {
+            bytes: [0; MAX_PACKET_LEN],
+            length: u8::try_from(length).expect("validated authentication fits the BFD length"),
+        };
+        let data = &mut packet.bytes[..length];
         data[0] = 0x20 | (self.diagnostic & 0x1f);
         data[1] = (self.state as u8) << 6
             | u8::from(self.poll) << 5
@@ -315,26 +380,24 @@ impl ControlPacket {
         if auth.kind != AuthType::None {
             data[1] |= AUTH;
             if auth.kind == AuthType::SimplePassword {
-                data.extend_from_slice(&[1, (3 + auth.key.len()) as u8, auth.key_id]);
-                data.extend_from_slice(&auth.key);
+                data[24..27].copy_from_slice(&[1, packet.length - 24, auth.key_id]);
+                data[27..].copy_from_slice(&auth.key);
             } else {
-                data.extend_from_slice(&[
+                data[24..28].copy_from_slice(&[
                     auth.kind as u8,
-                    (8 + auth.kind.hash_len()) as u8,
+                    packet.length - 24,
                     auth.key_id,
                     0,
                 ]);
-                data.extend_from_slice(&sequence.to_be_bytes());
-                data.extend_from_slice(&auth.key);
-                data.resize(32 + auth.kind.hash_len(), 0);
+                data[28..32].copy_from_slice(&sequence.to_be_bytes());
             }
         }
-        data[3] = data.len() as u8;
+        data[3] = packet.length;
         if auth.kind.hash_len() != 0 {
-            let digest = auth.digest(&data);
-            data[32..].copy_from_slice(&digest);
+            let digest = auth.digest(&data[..32]);
+            data[32..].copy_from_slice(&digest[..auth.kind.hash_len()]);
         }
-        data
+        packet
     }
 }
 
@@ -548,6 +611,29 @@ mod tests {
             assert_eq!(&data[32..], *digest);
         }
     }
+    #[test]
+    fn authentication_accepts_all_key_lengths_and_ignores_udp_padding() {
+        for (kind, maximum) in [
+            (AuthType::SimplePassword, 16),
+            (AuthType::KeyedMd5, 16),
+            (AuthType::MeticulousMd5, 16),
+            (AuthType::KeyedSha1, 20),
+            (AuthType::MeticulousSha1, 20),
+        ] {
+            for length in 1..=maximum {
+                let auth = AuthConfig::new(kind, 9, vec![0xa5; length]).unwrap();
+                let mut data = test_packet(State::Up).encode(&auth, 100);
+                let expected = (kind.hash_len() != 0).then_some(100);
+                assert_eq!(auth.verify(&data, None), Ok(expected));
+                data.extend_from_slice(&[0xff; 128]);
+                assert_eq!(auth.verify(&data, None), Ok(expected));
+                let declared = usize::from(data[3]);
+                data[declared - 1] ^= 1;
+                assert!(auth.verify(&data, None).is_err());
+            }
+        }
+    }
+
     #[test]
     fn sequence_window_wraps_and_distinguishes_meticulous() {
         for kind in [AuthType::KeyedSha1, AuthType::MeticulousSha1] {

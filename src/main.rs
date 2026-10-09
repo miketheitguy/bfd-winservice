@@ -7,10 +7,10 @@ use std::process;
 #[cfg(windows)]
 use bfd_winservice::{
     config::load_registry,
-    runtime::{Engine, Logger},
+    runtime::{Engine, Logger, StopSignal},
 };
 #[cfg(windows)]
-use std::{error::Error, io, io::Write, sync::mpsc};
+use std::{error::Error, io, io::Write};
 
 #[cfg(windows)]
 mod service;
@@ -47,14 +47,15 @@ fn run_console() -> Result<(), Box<dyn Error>> {
     let result = (|| -> io::Result<()> {
         let options = load_registry(true)?;
         log.open_file(&options)?;
-        let (stop_tx, stop_rx) = mpsc::channel();
+        let stop = StopSignal::new()?;
+        let handler_stop = stop.clone();
         ctrlc::set_handler(move || {
-            let _ = stop_tx.send(());
+            let _ = handler_stop.signal();
         })
         .map_err(io::Error::other)?;
         let mut engine = Engine::from_config(options, &mut log)?;
         log.service_started();
-        engine.run(&stop_rx, &mut log)
+        engine.run_until(&stop, &mut log)
     })();
     if let Err(error) = &result {
         log.service_failed(error);

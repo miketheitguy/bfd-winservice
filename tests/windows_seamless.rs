@@ -4,7 +4,7 @@
 use bfd_winservice::{
     config::{Options, SessionType},
     packet::{AuthType, State},
-    runtime::{Engine, Logger},
+    runtime::{Engine, Logger, StopSignal},
     seamless::Reflector,
     session::Session,
     transport::{Datagram, Transport},
@@ -12,13 +12,12 @@ use bfd_winservice::{
 use std::{
     io,
     net::{IpAddr, UdpSocket},
-    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
 struct RunningEngine {
-    stop: mpsc::Sender<()>,
+    stop: StopSignal,
     worker: Option<thread::JoinHandle<io::Result<()>>>,
 }
 impl RunningEngine {
@@ -26,17 +25,18 @@ impl RunningEngine {
         let auth = options.validate().unwrap();
         let mut log = Logger::open(&options).unwrap();
         let mut engine = Engine::open(options, auth, &mut log).unwrap();
-        let (stop, receiver) = mpsc::channel();
+        let stop = StopSignal::new().unwrap();
+        let receiver = stop.clone();
         Self {
             stop,
-            worker: Some(thread::spawn(move || engine.run(&receiver, &mut log))),
+            worker: Some(thread::spawn(move || engine.run_until(&receiver, &mut log))),
         }
     }
 }
 impl Drop for RunningEngine {
     fn drop(&mut self) {
         if let Some(worker) = self.worker.take() {
-            let _ = self.stop.send(());
+            let _ = self.stop.signal();
             worker.join().unwrap().unwrap();
         }
     }
