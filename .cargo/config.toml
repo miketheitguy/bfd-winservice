@@ -1,6 +1,9 @@
 [build]
 target = "x86_64-pc-windows-msvc"
 
+# Target flags apply to the service, Rust dependencies, and rebuilt standard
+# library. The explicit build target keeps host build scripts and proc macros
+# on their default compiler and linker settings.
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     "-C", "control-flow-guard=yes",
@@ -8,6 +11,14 @@ rustflags = [
     "-Z", "stack-protector=all",
     "-Z", "ehcont-guard=yes",
     "-Z", "src-hash-algorithm=sha256",
+    "-C", "link-arg=/MACHINE:X64",
+    "-C", "link-arg=/DYNAMICBASE",
+    "-C", "link-arg=/HIGHENTROPYVA",
+    "-C", "link-arg=/NXCOMPAT",
+    "-C", "link-arg=/GUARD:CF",
+    "-C", "link-arg=/GUARD:EHCONT",
+    "-C", "link-arg=/CETCOMPAT",
+    "-C", "link-arg=/LARGEADDRESSAWARE",
 ]
 
 [alias]

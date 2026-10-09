@@ -57,6 +57,15 @@ Debug and release builds use these protections:
 | Full debug information | `debug = 2`; release symbols aren't stripped |
 | SHA-256 source checksums in debug information | `-Z src-hash-algorithm=sha256` |
 
+The `dev` and `release` profiles in [Cargo.toml](Cargo.toml) set overflow checks,
+debug information, and the release panic strategy. Target-specific `rustflags`
+in [.cargo/config.toml](.cargo/config.toml) select compiler protections and pass
+MSVC linker switches through `-C link-arg=...`. This single list applies across
+profiles. The explicit build target keeps these flags out of host build scripts
+and procedural macros, which use Rust's prebuilt host standard library.
+The build script embeds ETW and executable version resources and checks the
+supported Windows target.
+
 The Rust [stack protector](https://doc.rust-lang.org/unstable-book/compiler-flags/stack-protector.html)
 inserts stack cookies and checks them when functions return.
 [`/GS`](https://learn.microsoft.com/en-us/cpp/build/reference/gs-buffer-security-check?view=msvc-170)
@@ -77,10 +86,11 @@ Rust dependencies. This requires the `rust-src` component and Cargo's
 [`build-std` feature](https://doc.rust-lang.org/cargo/reference/unstable.html#build-std).
 Windows system DLLs retain their own build settings.
 
-Keep the repository's compiler flags when building. The build rejects overrides
-that remove CFG checks, change the relocation or stack protector strategy,
-disable EH continuation metadata, or change source checksums from SHA-256.
-Check the build and executable again after updating nightly Rust.
+Keep the Cargo profiles and target configuration when building. Profile or
+compiler-flag overrides can change the resulting protections. Verify compiler
+output and run the executable hardening regression after changing profiles,
+target flags, or nightly Rust; PE header checks alone do not prove stack protector
+instrumentation.
 
 Structured Exception Handling Overwrite Protection (SEHOP) is a
 [Windows process policy](https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/override-mitigation-options-for-app-related-security-policies),
@@ -322,8 +332,18 @@ The script builds the hardened x64 production executable with Cargo's locked
 dependencies, restores WiX and its extensions, compiles the MSI, validates its
 tables (including per-machine scope and required administrator privileges), and
 writes a SHA-256 checksum. Successful output ends with the MSI path.
-The package version comes from `Cargo.toml` and must contain three numeric
-fields within Windows Installer's `255.255.65535` version limits.
+For a local build, the package version comes from `Cargo.toml` and must contain
+three numeric fields within Windows Installer's `255.255.65535` version limits.
+To reproduce a tagged release locally, stamp its version before building:
+
+```powershell
+.\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0'
+.\scripts\Build-Msi.ps1 -AcceptWixEula
+```
+
+The stamping script updates only the `bfd-winservice` version in `Cargo.toml`
+and `Cargo.lock`; dependency versions remain locked. It rejects malformed tags,
+prerelease or build metadata, leading zeros, and versions beyond MSI limits.
 Before packaging, the script checks the executable's `--version` output and
 Windows file and product versions against the Cargo version. It also checks the
 MSI's `ProductVersion` and packaged executable version. `-SkipBuild` rejects an
@@ -337,7 +357,7 @@ Output files appear in `target\installer`:
 | `BfdWinService-VERSION-x64.msi.sha256` | SHA-256 checksum of that MSI |
 | `BfdWinService-VERSION-x64.wixpdb` | WiX symbols for package diagnostics |
 
-`VERSION` is the Cargo package version, such as `1.1.0`. The Rust PDB remains
+`VERSION` is the build's package version, such as `1.2.0`. The Rust PDB remains
 beside the executable in the release folder; retain it with that build.
 Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
@@ -368,11 +388,18 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 ### Build with GitHub Actions
 
 The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
-to `main`, tags matching `v*`, pull requests, and manual dispatch. A tag must
-match the Cargo version, such as `v1.1.0`. The workflow uses an x64
-`windows-2025` runner, reads `rust-toolchain.toml`, checks formatting and Clippy,
-runs optimized tests, and builds the production MSI. It also verifies the
-production executable's hardening.
+to `main`, tags matching `v*`, pull requests, and manual dispatch. Every run
+checks version stamping, Rust formatting, Clippy, and optimized tests on an x64
+`windows-2025` runner using `rust-toolchain.toml`.
+
+Only builds of version tags package an MSI. Before compilation, the workflow
+removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
+package entries in `Cargo.toml` and `Cargo.lock` in the runner's checkout.
+The executable, MSI, artifact filenames, and installation checks use that
+stamped version. The workflow validates production executable hardening before
+testing installation. Branch and pull-request runs perform Rust checks without
+packaging an MSI. For a manual MSI build, select a version tag as the workflow
+ref; a manual build from a branch runs the checks only.
 
 After reviewing and accepting the WiX EULA, set the repository Actions variable
 `BFD_WIX_EULA` to `wix7`. The workflow passes `-AcceptWixEula` only when this
@@ -394,14 +421,14 @@ read-only and can run locally:
 
 ```powershell
 .\scripts\Test-Msi.ps1 `
-    -Path '.\target\installer\BfdWinService-1.1.0-x64.msi'
+    -Path '.\target\installer\BfdWinService-1.2.0-x64.msi'
 ```
 
 Adjust the filename for the package version. Confirm that validation reports
 the x64 package's elevation requirement, service, payload, registry defaults,
 firewall rules, and manifest lifecycle.
 
-After a successful workflow run, download the `BfdWinService-x64-COMMIT_SHA`
+After a successful tag build, download the `BfdWinService-x64-COMMIT_SHA`
 artifact. It contains the MSI, its checksum, WiX symbols, and matching Rust PDB.
 `COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
 including when a test fails.
@@ -412,51 +439,44 @@ Pushing a version tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the build, hardening, and installation checks pass. The release attaches the MSI,
 its SHA-256 checksum, WiX symbols, and matching Rust PDB, with generated release
-notes. Branch pushes, pull requests, and manual workflow runs produce Actions
-artifacts without publishing releases.
+notes. Branch pushes and pull requests run checks only. A manual workflow run
+on a version tag produces Actions artifacts without publishing a release.
 
-Use `Cargo.toml` as the version source. The first stable release is `1.0.0`;
-increase the minor version for each subsequent release, such as `1.1.0` and
-`1.2.0`, with patch version `0`. The executable's `--version` output, Windows
-file and product version strings, MSI `ProductVersion`, and installed-app
-`DisplayVersion` use that version. Windows numeric file and product versions
-append a fourth field of `0`, such as `1.0.0.0`. Use the matching tag `v1.0.0`,
-`v1.1.0`, or `v1.2.0`; the workflow rejects a tag that differs from the Cargo
-version before running the build checks.
+Use the GitHub tag as the release version source. The first stable release is
+`v1.0.0`; increase the minor version for each subsequent release, such as
+`v1.1.0` and `v1.2.0`, with patch version `0`. The executable's `--version`
+output, Windows file and product version strings, MSI `ProductVersion`, and
+installed-app `DisplayVersion` use the numeric part of the tag, such as `1.2.0`.
+Windows numeric file and product versions
+append a fourth field of `0`, such as `1.2.0.0`. You do not need to commit a
+matching Cargo version before releasing: the workflow stamps both Cargo files
+from the tag before running the build checks. Invalid release tags fail before
+compilation.
 
 To release a tested commit:
 
-1. Set the version in `Cargo.toml` to `1.0.0` for the first release, or increase
-   the minor version for a new release. Keep the existing version when retrying
-   a release.
-2. Refresh the package version in `Cargo.lock` without changing dependencies:
-
-   ```powershell
-   cargo update --offline -p bfd-winservice
-   ```
-
-   This command uses the dependency versions already cached from the tested
-   build. Confirm that only the `bfd-winservice` package version changes.
-3. Commit the version files and other release changes. Confirm that
+1. Choose the next version tag, for example `v1.2.0`. Keep the existing tag when
+   retrying a release.
+2. Commit the tested release changes. Confirm that
    `BFD_WIX_EULA` is set to `wix7` and that the commit contains the release
    workflow.
-4. Create the version tag from that commit, for example:
+3. Create the version tag from that commit, for example:
 
    ```powershell
-   git tag -a v1.1.0 -m "BFD Windows Service v1.1.0"
+   git tag -a v1.2.0 -m "BFD Windows Service v1.2.0"
    ```
 
-5. Push that tag:
+4. Push that tag:
 
    ```powershell
-   git push origin v1.1.0
+   git push origin v1.2.0
    ```
 
-6. Wait for **Build Windows MSI** to succeed, then open the repository's
+5. Wait for **Build Windows MSI** to succeed, then open the repository's
    **Releases** page. Confirm that the version's **Assets** include
-   `BfdWinService-1.1.0-x64.msi` and its `.sha256` file.
+   `BfdWinService-1.2.0-x64.msi` and its `.sha256` file.
 
-Replace `1.1.0` with the Cargo package version. Only the release job receives
+Replace `1.2.0` with the chosen tag version. Only the release job receives
 `contents: write`; the build job retains read-only repository access. Rerunning
 the release job completes a draft or adds missing assets to an existing release.
 It preserves assets already attached to a published release.

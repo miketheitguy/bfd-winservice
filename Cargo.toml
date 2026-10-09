@@ -26,6 +26,7 @@ debug = 2
 overflow-checks = true
 
 [profile.release]
+opt-level = 3
 debug = 2
 strip = "none"
 overflow-checks = true

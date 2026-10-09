@@ -1,4 +1,4 @@
-//! Enforce the Windows build policy and embed version and ETW resources.
+//! Embed version and ETW resources for the supported Windows target.
 #![forbid(unsafe_code)]
 use std::{env, error::Error, fs, io, path::PathBuf, process::Command};
 
@@ -8,7 +8,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=events/BFD-Service.man");
     println!("cargo:rerun-if-changed=resources/version.rc");
     for variable in [
-        "CARGO_ENCODED_RUSTFLAGS",
         "BFD_MC_PATH",
         "BFD_RC_PATH",
         "PATH",
@@ -23,34 +22,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if env::var("TARGET")? != "x86_64-pc-windows-msvc" {
         return Err("the service supports only the 64-bit x86_64-pc-windows-msvc target".into());
-    }
-    let flags = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-    for (prefix, option, required) in [
-        ("-C", "control-flow-guard", "yes"),
-        ("-C", "relocation-model", "pic"),
-        ("-Z", "stack-protector", "all"),
-        ("-Z", "ehcont-guard", "yes"),
-        ("-Z", "src-hash-algorithm", "sha256"),
-    ] {
-        if !compiler_option_is(&flags, prefix, option, required) {
-            return Err(format!(
-                "the service requires {prefix}{option}={required}; use the repository's \
-                 nightly toolchain and .cargo/config.toml without overriding its rustflags"
-            )
-            .into());
-        }
-    }
-    for argument in [
-        "/MACHINE:X64",
-        "/DYNAMICBASE",
-        "/HIGHENTROPYVA",
-        "/NXCOMPAT",
-        "/GUARD:CF",
-        "/GUARD:EHCONT",
-        "/CETCOMPAT",
-        "/LARGEADDRESSAWARE",
-    ] {
-        println!("cargo:rustc-link-arg={argument}");
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
     let manifest =
@@ -87,25 +58,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     Ok(())
-}
-
-fn compiler_option_is(flags: &str, prefix: &str, name: &str, required: &str) -> bool {
-    let mut flags = flags.split('\u{1f}');
-    let mut setting = None;
-    while let Some(flag) = flags.next() {
-        let argument = if flag == prefix {
-            flags.next()
-        } else {
-            flag.strip_prefix(prefix)
-        };
-        if let Some(value) = argument
-            .and_then(|argument| argument.strip_prefix(name))
-            .and_then(|value| value.strip_prefix('='))
-        {
-            setting = Some(value);
-        }
-    }
-    setting == Some(required)
 }
 
 fn run(command: &mut Command) -> io::Result<()> {

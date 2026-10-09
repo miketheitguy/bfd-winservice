@@ -64,10 +64,10 @@ The MSI installs the following resources for all users:
 Download `BfdWinService-VERSION-x64.msi` and its `.sha256` file from the version's
 **Assets** on
 [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
-`VERSION` is the release's numeric version. For builds from a branch or pull
-request, download and extract the `BfdWinService-x64-COMMIT_SHA` Actions artifact;
-`COMMIT_SHA` identifies the source commit. In **PowerShell as Administrator**,
-install the MSI:
+`VERSION` is the release tag without its leading `v`. Tagged builds also provide
+the `BfdWinService-x64-COMMIT_SHA` Actions artifact; `COMMIT_SHA` identifies the
+source commit. Branch and pull-request builds run checks without producing an
+MSI. In **PowerShell as Administrator**, install the MSI:
 
 ```powershell
 $msi = (Resolve-Path 'MSI_PATH').Path

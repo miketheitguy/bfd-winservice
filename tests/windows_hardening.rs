@@ -43,8 +43,8 @@ fn service_executable_is_x64_with_required_windows_mitigations() {
     let load = file_offset(&image, sections, section_count, load_rva);
     assert!(dword(&image, load) >= 280, "load configuration size");
 
-    // A cookie alone does not prove Rust instrumentation; build.rs separately
-    // requires the compiler's stack-protector=all setting.
+    // A cookie alone does not prove Rust instrumentation; .cargo/config.toml
+    // selects stack-protector=all, which also needs compiler-output verification.
     assert_ne!(qword(&image, load + 88), 0, "stack security cookie");
     assert_ne!(qword(&image, load + 112), 0, "CFG check-function pointer");
     assert_ne!(
