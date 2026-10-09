@@ -59,6 +59,12 @@ use cases, see [Configure Seamless BFD](seamless.md).
 
 IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`; do not add a `%scope` suffix.
 
+For S-BFD, `Local`, `Peer`, and `AllowedPeers` must be usable unicast addresses.
+Reserved IPv4 addresses and IPv4-mapped IPv6 addresses are rejected. `Peer`
+and each allowed source must match `Local`'s address family and loopback scope:
+use loopback sources with a loopback local address, and non-loopback sources
+with a non-loopback local address. Reflectors don't read `Peer`.
+
 With `PointToPoint=1`, outgoing packets still go to the configured `Peer`. Incoming packets must pass the destination, interface, TTL, source-port, discriminator, and authentication checks.
 
 ## Timing

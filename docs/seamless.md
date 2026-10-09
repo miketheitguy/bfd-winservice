@@ -157,6 +157,11 @@ Use `AllowedPeers` to configure source filtering:
 - On a reflector, an absent `AllowedPeers` permits routable unicast sources.
   When present, the list restricts requests to those addresses.
 
+The configured `Peer` and `AllowedPeers` addresses must match `Local`'s address
+family and loopback scope. A loopback listener accepts loopback sources;
+a non-loopback listener accepts non-loopback sources. Reserved IPv4 and
+IPv4-mapped IPv6 addresses are rejected during startup.
+
 For an initiator targeting an anycast address, add the member addresses that can
 originate replies:
 

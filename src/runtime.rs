@@ -1,184 +1,23 @@
 //! Windows BFD packet/timer loop, logging, and optional background BGP control.
 use crate::{
     bgp::Controller,
-    config::{load_sbfd_settings, Options, SessionType, Timing},
-    event_log::{Provider, SessionEvent},
+    config::{load_sbfd_settings, Options, SessionType, Timing, ValidatedOptions},
+    error::ConfigError,
+    event_log::SessionEvent,
     packet::{AuthConfig, Diagnostic, State},
     seamless::Reflector,
     session::{ReceiveError, Session},
     transport::{Datagram, Transport},
 };
 use std::{
-    fmt::Display,
-    fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io,
     sync::mpsc::{Receiver, TryRecvError},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetSystemTime};
 
-/// Operational ETW events in service mode, STDOUT in console mode, and an
-/// optional append-only file log in either mode.
-pub struct Logger {
-    file: Option<File>,
-    console: bool,
-    stdout_failed: bool,
-    event_log: Option<Provider>,
-}
-
-impl Logger {
-    /// Create a startup logger before registry settings are loaded, so a
-    /// configuration failure is visible in the service log or on STDOUT.
-    pub fn new(console: bool) -> Self {
-        let mut log = Self {
-            file: None,
-            console,
-            stdout_failed: false,
-            event_log: None,
-        };
-        if !console {
-            match Provider::register() {
-                Ok(provider) => log.event_log = Some(provider),
-                // Registry settings and the optional file log are not open
-                // yet; use stderr so this failure has a fallback destination.
-                Err(error) => {
-                    let _ = writeln!(
-                        io::stderr().lock(),
-                        "unable to register BFD-Service ETW provider: {error}"
-                    );
-                }
-            }
-        }
-        log
-    }
-
-    /// Open/create the append log and select Operational ETW or console STDOUT.
-    ///
-    /// # Errors
-    /// Returns an error if enabled file logging cannot create its parent
-    /// directories or open the configured file.
-    pub fn open(options: &Options) -> io::Result<Self> {
-        let mut log = Self::new(options.console);
-        log.open_file(options)?;
-        Ok(log)
-    }
-
-    /// Configure the append log after loading registry settings. Disabled file
-    /// logging never opens, creates, or writes the configured path. When enabled,
-    /// missing parent directories are created before opening the file.
-    ///
-    /// # Errors
-    /// Returns an error if enabled file logging cannot create its parent
-    /// directories or open the configured file.
-    pub fn open_file(&mut self, options: &Options) -> io::Result<()> {
-        self.file = if options.log_to_file {
-            if let Some(parent) = options
-                .log_file_path
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                fs::create_dir_all(parent)?;
-            }
-            Some(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&options.log_file_path)?,
-            )
-        } else {
-            None
-        };
-        Ok(())
-    }
-
-    /// Record successful engine startup (after SCM Running in service mode).
-    pub fn service_started(&mut self) {
-        self.log(format_args!(
-            "service started mode={}",
-            if self.console { "console" } else { "service" }
-        ));
-        self.event(|provider, console| provider.service_started(console));
-    }
-
-    /// Record completed shutdown, with zero for success and one for failure.
-    pub fn service_stopped(&mut self, exit_code: u32) {
-        self.log(format_args!("service stopped exit_code={exit_code}"));
-        self.event(|provider, console| provider.service_stopped(console, exit_code));
-    }
-
-    /// Record an initialization or execution failure without authentication data.
-    pub fn service_failed(&mut self, error: impl Display) {
-        let error = error.to_string();
-        self.log(format_args!("service failed: {error}"));
-        self.event(|provider, console| provider.service_failed(console, &error));
-    }
-
-    fn event(&mut self, write: impl FnOnce(&Provider, bool) -> io::Result<()>) {
-        if let Some(Err(error)) = self
-            .event_log
-            .as_ref()
-            .map(|provider| write(provider, self.console))
-        {
-            self.log(format_args!(
-                "unable to write BFD-Service ETW event: {error}"
-            ));
-        }
-    }
-
-    fn session_event(
-        &mut self,
-        event: SessionEvent,
-        options: &Options,
-        session: &Session,
-        previous: State,
-        remote_discriminator: u32,
-    ) {
-        self.event(|provider, _| {
-            provider.session_event(event, options, session, previous, remote_discriminator)
-        });
-    }
-    /// Write a timestamped message. Every file line starts with an ISO-8601 UTC
-    /// timestamp with milliseconds and a trailing Z; STDOUT uses Unix milliseconds.
-    /// Multiline file entries share the timestamp sampled immediately before writing.
-    /// Output errors are
-    /// reported to stderr on a best-effort basis rather than returned or panicked.
-    /// A failed STDOUT write disables further console writes for this logger;
-    /// file logging, ETW mode selection, and engine execution continue.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// use bfd_winservice::runtime::Logger;
-    ///
-    /// let mut log = Logger::new(true);
-    /// log.log("BFD initialization started");
-    /// ```
-    pub fn log(&mut self, message: impl Display) {
-        let message = message.to_string();
-        if self.console && !self.stdout_failed {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            let line = format!("{timestamp} {message}\n");
-            if let Err(error) = io::stdout().lock().write_all(line.as_bytes()) {
-                self.stdout_failed = true;
-                // Diagnostics must not panic if STDERR is also unavailable.
-                let _ = writeln!(
-                    io::stderr().lock(),
-                    "unable to write BFD console log: {error}"
-                );
-            }
-        }
-        if let Some(file) = &mut self.file {
-            let timestamp = utc_timestamp();
-            let message = message.replace('\n', &format!("\n{timestamp} "));
-            let line = format!("{timestamp} {message}\n");
-            if let Err(error) = file.write_all(line.as_bytes()) {
-                let _ = writeln!(io::stderr().lock(), "unable to write BFD file log: {error}");
-            }
-        }
-    }
-}
+mod logging;
+pub use logging::Logger;
 
 /// Read the Windows UTC clock without applying the local timezone.
 #[allow(unsafe_code)] // GetSystemTime is the sole FFI operation in this module.
@@ -201,7 +40,9 @@ fn utc_timestamp() -> String {
 
 /// One validated session, its UDP sockets, and any configured BGP worker.
 pub struct Engine {
-    options: Options,
+    options: ValidatedOptions,
+    timing: Timing,
+    sbfd_admin_down: bool,
     session: Session,
     transport: Transport,
     bgp: Option<Controller>,
@@ -214,23 +55,36 @@ impl Engine {
     ///
     /// # Errors
     /// Returns configuration/authentication mismatch or socket errors. When BGP
-    /// control is configured, also returns worker file-log or thread startup errors.
-    pub fn open(mut options: Options, auth: AuthConfig, log: &mut Logger) -> io::Result<Self> {
-        options
-            .validate()
+    /// control is configured, also returns worker thread startup errors.
+    pub fn open(options: Options, auth: AuthConfig, log: &mut Logger) -> io::Result<Self> {
+        let options = options
+            .into_validated()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        if options.authentication() != &auth {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                ConfigError::AuthenticationMismatch,
+            ));
+        }
+        Self::from_config(options, log)
+    }
+
+    /// Opens an engine from a validated startup snapshot without repeating validation.
+    ///
+    /// # Errors
+    /// Returns socket or BGP worker startup errors.
+    pub fn from_config(options: ValidatedOptions, log: &mut Logger) -> io::Result<Self> {
         let reflector = if options.session_type == SessionType::SbfdReflector {
             Some(
-                Reflector::new(options.clone(), auth.clone())
+                Reflector::from_config(&options)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
             )
         } else {
             None
         };
-        let session = Session::new(options.clone(), auth)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-        let transport = Transport::open(&options)?;
-        let bgp = Controller::open(&options)?;
+        let session = Session::from_config(options.clone());
+        let transport = Transport::from_config(&options)?;
+        let bgp = Controller::open(&options, log)?;
         if let Some(peer) = &options.bgp_peer_name {
             log.log(format!(
                 "BGP MI control enabled: peer={peer:?} routing_domain={:?}",
@@ -247,6 +101,8 @@ impl Engine {
             session.local_discriminator, session.state()
         ));
         Ok(Self {
+            timing: options.timing(),
+            sbfd_admin_down: options.sbfd_admin_down,
             options,
             session,
             transport,
@@ -325,9 +181,7 @@ impl Engine {
         if let Some(reflector) = &mut self.reflector {
             reflector.set_timing(timing);
         }
-        self.options.min_tx_us = timing.min_tx_us;
-        self.options.min_rx_us = timing.min_rx_us;
-        self.options.detect_mult = timing.detect_mult;
+        self.timing = timing;
         Ok(())
     }
 
@@ -336,14 +190,14 @@ impl Engine {
             return;
         }
         let result = load_sbfd_settings(&self.options).and_then(|(timing, admin_down)| {
-            if self.options.timing().map_err(io::Error::other)? != timing {
+            if self.timing != timing {
                 self.set_timing(timing)?;
                 log.log("S-BFD timing settings reloaded");
             }
             if let Some(reflector) = &mut self.reflector {
-                if self.options.sbfd_admin_down != admin_down {
+                if self.sbfd_admin_down != admin_down {
                     reflector.set_admin_down(admin_down);
-                    self.options.sbfd_admin_down = admin_down;
+                    self.sbfd_admin_down = admin_down;
                     self.session.state = reflector.state();
                     self.session.diagnostic = if admin_down {
                         Diagnostic::AdminDown
@@ -378,14 +232,7 @@ impl Engine {
                     "authentication failed for packet from {}: {reason}",
                     datagram.source
                 ));
-                log.event(|provider, _| {
-                    provider.authentication_failed(
-                        &self.options,
-                        &self.session,
-                        datagram.source,
-                        reason,
-                    )
-                });
+                log.authentication_failed(&self.options, &self.session, datagram.source, reason);
             }
             ReceiveError::Packet(reason) if self.options.verbose && log_due(last_discard, now) => {
                 log.log(format_args!(
@@ -640,6 +487,83 @@ fn log_due(last: &mut Option<Instant>, now: Instant) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(miri))]
+    use std::{fs, io::Write};
+
+    #[cfg(not(miri))]
+    #[test]
+    fn unread_stdout_cannot_block_engine_shutdown() {
+        use std::{
+            io::{BufRead, BufReader},
+            process::{Command, Stdio},
+            sync::mpsc,
+            thread,
+        };
+        const CHILD: &str = "BFD_TEST_UNREAD_STDOUT_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let mut options =
+                Options::new("127.0.0.80".parse().unwrap(), "127.0.0.81".parse().unwrap());
+            options.multihop = true;
+            options.console = true;
+            let auth = options.validate().unwrap();
+            let mut log = Logger::open(&options).unwrap();
+            let mut engine = Engine::open(options, auth, &mut log).unwrap();
+            // Fill the pipe while retaining enough queue space for a flush barrier.
+            for _ in 0..32 {
+                log.log("X".repeat(16_384));
+            }
+            assert_eq!(
+                log.flush(Duration::from_millis(50)).unwrap_err().kind(),
+                io::ErrorKind::TimedOut
+            );
+            let message = "X".repeat(4096);
+            for _ in 0..1024 {
+                log.log(&message);
+            }
+            assert!(log.dropped_records() > 0, "queue growth must be bounded");
+            let (stop, receiver) = mpsc::channel();
+            drop(stop);
+            engine.run(&receiver, &mut log).unwrap();
+            drop(engine);
+            drop(log);
+            eprintln!("engine-stopped");
+            std::process::exit(0);
+        }
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::tests::unread_stdout_cannot_block_engine_shutdown",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (sent, received) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut diagnostics = Vec::new();
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                if line == "engine-stopped" {
+                    let _ = sent.send(());
+                }
+                diagnostics.push(line);
+            }
+            diagnostics
+        });
+        let stopped = received.recv_timeout(Duration::from_secs(3)).is_ok();
+        if !stopped {
+            child.kill().unwrap();
+        }
+        let status = child.wait().unwrap();
+        let diagnostics = reader.join().unwrap();
+        assert!(
+            stopped,
+            "logging prevented engine shutdown: {diagnostics:?}"
+        );
+        assert!(status.success(), "{status}");
+    }
 
     #[cfg(not(miri))]
     #[test]
@@ -778,7 +702,7 @@ mod tests {
             engine.run(&receiver, &mut log).unwrap();
             log.service_failed("synthetic failure after STDOUT closed");
             log.service_stopped(0);
-            assert!(log.console && log.event_log.is_none());
+            assert!(log.console);
             drop(engine);
             drop(log);
             // Libtest's own completion output also uses STDOUT; avoid it after
@@ -836,8 +760,8 @@ mod tests {
     fn console_events_are_written_to_stdout_without_etw() {
         const CHILD: &str = "BFD_TEST_CONSOLE_LOG_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            let mut log = Logger::new(true);
-            assert!(log.event_log.is_none());
+            let mut log = Logger::new(true).unwrap();
+            assert!(log.console);
             log.service_started();
             log.service_failed("registry value Local is required");
             log.service_stopped(1);

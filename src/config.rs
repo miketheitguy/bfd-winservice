@@ -1,9 +1,13 @@
 //! Registry-backed configuration for classical BFD or an S-BFD protocol role.
 use std::{
     net::{IpAddr, SocketAddr},
+    num::NonZeroU32,
+    ops::Deref,
     path::PathBuf,
+    sync::Arc,
 };
 
+use crate::error::ConfigError;
 use clap::{Parser, ValueEnum};
 
 use crate::packet::{AuthConfig, AuthType};
@@ -36,6 +40,67 @@ pub enum SessionType {
     SbfdReflector,
 }
 
+/// Required settings after the protocol role has been validated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtocolRole {
+    /// Classical BFD with one normalized transport profile.
+    Classical(Mode),
+    /// An initiator with a provisioned, nonzero target identifier.
+    Initiator {
+        /// Remote reflector identifier.
+        remote_discriminator: NonZeroU32,
+    },
+    /// A reflector with a provisioned, nonzero local identifier.
+    Reflector {
+        /// Local reflector identifier.
+        discriminator: NonZeroU32,
+    },
+}
+
+/// Immutable, validated startup settings shared by runtime components.
+/// Cloning shares the snapshot rather than copying strings or authentication keys.
+///
+/// ```compile_fail
+/// use bfd_winservice::config::Options;
+/// let mut options = Options::reflector("127.0.0.1".parse().unwrap(), 99)
+///     .into_validated().unwrap();
+/// options.detect_mult = 0; // Validated settings cannot be mutated.
+/// ```
+#[derive(Clone)]
+pub struct ValidatedOptions(Arc<ValidatedSettings>);
+
+struct ValidatedSettings {
+    options: Options,
+    auth: AuthConfig,
+    role: ProtocolRole,
+}
+
+impl ValidatedOptions {
+    /// Returns the validated role and its required identifiers.
+    pub fn role(&self) -> ProtocolRole {
+        self.0.role
+    }
+    /// Borrows the authentication settings associated with this snapshot.
+    pub fn authentication(&self) -> &AuthConfig {
+        &self.0.auth
+    }
+    /// Returns the validated startup timing without repeating its checks.
+    pub fn timing(&self) -> Timing {
+        Timing {
+            min_tx_us: self.min_tx_us,
+            min_rx_us: self.min_rx_us,
+            detect_mult: self.detect_mult,
+        }
+    }
+}
+
+impl Deref for ValidatedOptions {
+    type Target = Options;
+    fn deref(&self) -> &Options {
+        &self.0.options
+    }
+}
+
 /// Validated live S-BFD timing settings, with intervals in microseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timing {
@@ -49,9 +114,9 @@ impl Timing {
     ///
     /// # Errors
     /// Rejects zero intervals or a zero multiplier.
-    pub fn new(min_tx_us: u32, min_rx_us: u32, detect_mult: u8) -> Result<Self, String> {
+    pub fn new(min_tx_us: u32, min_rx_us: u32, detect_mult: u8) -> Result<Self, ConfigError> {
         if min_tx_us == 0 || min_rx_us == 0 || detect_mult == 0 {
-            return Err("MinTxUs, MinRxUs, and DetectMult must be nonzero".into());
+            return Err(ConfigError::ZeroTiming);
         }
         Ok(Self {
             min_tx_us,
@@ -159,6 +224,35 @@ pub struct Options {
 }
 
 impl Options {
+    /// Consumes raw settings, normalizes the profile, and checks all role invariants.
+    ///
+    /// # Errors
+    /// Returns a typed configuration error without exposing authentication keys.
+    pub fn into_validated(mut self) -> Result<ValidatedOptions, ConfigError> {
+        let auth = self.validate()?;
+        let role = match self.session_type {
+            SessionType::Classical => ProtocolRole::Classical(self.mode),
+            SessionType::SbfdInitiator => ProtocolRole::Initiator {
+                remote_discriminator: self
+                    .remote_discriminator
+                    .and_then(NonZeroU32::new)
+                    .ok_or(ConfigError::MissingRemoteDiscriminator)?,
+            },
+            SessionType::SbfdReflector => ProtocolRole::Reflector {
+                discriminator: self
+                    .discriminator
+                    .and_then(NonZeroU32::new)
+                    .ok_or(ConfigError::MissingReflectorDiscriminator)?,
+            },
+        };
+        // The immutable snapshot has one consistent transport selection.
+        self.multihop = self.mode == Mode::Multihop;
+        Ok(ValidatedOptions(Arc::new(ValidatedSettings {
+            options: self,
+            auth,
+            role,
+        })))
+    }
     /// Construct default settings for the required local and peer addresses.
     /// Call validate after provisioning the transport/authentication settings.
     pub fn new(local: IpAddr, peer: IpAddr) -> Self {
@@ -204,11 +298,11 @@ impl Options {
     /// # Errors
     /// Returns an error for unsupported option combinations or invalid values/keys.
     /// Mode normalization can occur before a later validation error.
-    pub fn validate(&mut self) -> Result<AuthConfig, String> {
+    pub fn validate(&mut self) -> Result<AuthConfig, ConfigError> {
         // Validate registry-loaded and programmatically constructed settings alike.
         self.validate_ranges()?;
         if self.auth_key.is_some() && self.auth_key_hex.is_some() {
-            return Err("AuthKey and AuthKeyHex are mutually exclusive".into());
+            return Err(ConfigError::ConflictingKeys);
         }
         for (name, value) in [
             ("BgpPeerName", &self.bgp_peer_name),
@@ -218,13 +312,11 @@ impl Options {
                 .as_ref()
                 .is_some_and(|value| value.trim().is_empty() || value.contains('\0'))
             {
-                return Err(format!(
-                    "{name} must be nonempty and contain no NUL characters"
-                ));
+                return Err(ConfigError::InvalidName { field: name });
             }
         }
         if self.bgp_routing_domain.is_some() && self.bgp_peer_name.is_none() {
-            return Err("BgpRoutingDomain requires BgpPeerName".into());
+            return Err(ConfigError::BgpDomainWithoutPeer);
         }
         if self.multihop {
             self.mode = Mode::Multihop;
@@ -232,7 +324,7 @@ impl Options {
         if self.session_type != SessionType::SbfdReflector
             && self.local.is_ipv4() != self.peer.is_ipv4()
         {
-            return Err("Local and Peer must have the same address family".into());
+            return Err(ConfigError::AddressFamilyMismatch);
         }
         for (name, ip) in [("Local", self.local), ("Peer", self.peer)] {
             if name == "Peer" && self.session_type == SessionType::SbfdReflector {
@@ -241,49 +333,53 @@ impl Options {
             if ip.is_unspecified()
                 || ip.is_multicast()
                 || ip == IpAddr::V4(std::net::Ipv4Addr::BROADCAST)
+                || self.session_type != SessionType::Classical && !is_unicast(ip)
             {
-                return Err(format!("{name} must be a specific unicast address"));
+                return Err(ConfigError::InvalidAddress { field: name });
             }
         }
         if self.local == self.peer && self.session_type == SessionType::Classical {
-            return Err("Local and Peer must differ".into());
+            return Err(ConfigError::IdenticalEndpoints);
+        }
+        if self.session_type == SessionType::SbfdInitiator
+            && !is_seamless_source(self.local, self.peer)
+        {
+            return Err(ConfigError::LoopbackScope { field: "Peer" });
         }
         if self.point_to_point
             && (self.mode != Mode::SingleHop || self.session_type != SessionType::Classical)
         {
-            return Err("PointToPoint applies only to single-hop sessions".into());
+            return Err(ConfigError::PointToPointRequiresSingleHop);
         }
         if self.session_type == SessionType::Classical && self.mode == Mode::SingleHop {
             if self.passive {
-                return Err(
-                    "single-hop BFD requires the active role; Passive is multihop only".into(),
-                );
+                return Err(ConfigError::SingleHopPassive);
             }
             if self.interface_index.is_none() {
-                return Err(
-                    "single-hop BFD requires InterfaceIndex to bind the session to its path".into(),
-                );
+                return Err(ConfigError::MissingInterface);
             }
             if self.min_ttl.is_some() {
-                return Err("MinTtl applies only to multihop; single-hop requires TTL 255".into());
+                return Err(ConfigError::SingleHopMinTtl);
             }
         }
-        if self.session_type != SessionType::Classical && (self.passive || self.multihop) {
-            return Err("Passive and Multihop apply only to classical BFD".into());
+        if self.session_type != SessionType::Classical
+            && (self.passive || self.multihop || self.mode == Mode::Multihop)
+        {
+            return Err(ConfigError::ClassicalOnlySettings);
         }
         match self.session_type {
             SessionType::SbfdInitiator if self.remote_discriminator.is_none() => {
-                return Err("S-BFD initiators require RemoteDiscriminator".into());
+                return Err(ConfigError::MissingRemoteDiscriminator);
             }
             SessionType::SbfdReflector => {
                 if self.discriminator.is_none() {
-                    return Err("S-BFD reflectors require a domain-unique Discriminator".into());
+                    return Err(ConfigError::MissingReflectorDiscriminator);
                 }
                 if self.bgp_peer_name.is_some()
                     || self.source_port.is_some()
                     || self.remote_discriminator.is_some()
                 {
-                    return Err("BgpPeerName, SourcePort, and RemoteDiscriminator do not apply to reflectors".into());
+                    return Err(ConfigError::ReflectorSettings);
                 }
             }
             SessionType::Classical
@@ -291,18 +387,16 @@ impl Options {
                     || !self.allowed_peers.is_empty()
                     || self.sbfd_admin_down =>
             {
-                return Err(
-                    "RemoteDiscriminator, AllowedPeers, and SbfdAdminDown require S-BFD".into(),
-                );
+                return Err(ConfigError::SeamlessOnlySettings);
             }
             _ => {}
         }
         if self.sbfd_admin_down && self.session_type != SessionType::SbfdReflector {
-            return Err("SbfdAdminDown applies only to reflectors".into());
+            return Err(ConfigError::ReflectorOnlyAdminDown);
         }
         for ip in &self.allowed_peers {
-            if !is_unicast(*ip) || ip.is_ipv4() != self.local.is_ipv4() {
-                return Err("AllowedPeers must contain remote unicast addresses of the local address family".into());
+            if !is_seamless_source(self.local, *ip) {
+                return Err(ConfigError::InvalidAllowedPeers);
             }
         }
         if [self.local, self.peer]
@@ -316,22 +410,21 @@ impl Options {
             .any(|ip| matches!(ip, IpAddr::V6(ip) if ip.is_unicast_link_local()))
             && self.interface_index.is_none()
         {
-            return Err("IPv6 link-local addresses require InterfaceIndex".into());
+            return Err(ConfigError::LinkLocalRequiresInterface);
         }
         let key = if let Some(hex) = &self.auth_key_hex {
             if hex.len() % 2 != 0 || !hex.is_ascii() {
-                return Err("AuthKeyHex must contain pairs of hexadecimal digits".into());
+                return Err(ConfigError::InvalidHexKey);
             }
             (0..hex.len())
                 .step_by(2)
                 .map(|i| {
-                    u8::from_str_radix(&hex[i..i + 2], 16)
-                        .map_err(|_| "AuthKeyHex contains an invalid byte".to_owned())
+                    u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ConfigError::InvalidHexByte)
                 })
                 .collect::<Result<Vec<_>, _>>()?
         } else if let Some(key) = &self.auth_key {
             if !key.is_ascii() {
-                return Err("AuthKey must be ASCII; use AuthKeyHex for binary keys".into());
+                return Err(ConfigError::NonAsciiKey);
             }
             key.as_bytes().to_vec()
         } else {
@@ -340,27 +433,27 @@ impl Options {
         AuthConfig::new(self.auth, self.auth_key_id, key)
     }
 
-    pub(crate) fn validate_ranges(&self) -> Result<(), String> {
+    pub(crate) fn validate_ranges(&self) -> Result<(), ConfigError> {
         if self.min_tx_us == 0 || self.min_rx_us == 0 {
-            return Err("MinTxUs and MinRxUs must be nonzero".into());
+            return Err(ConfigError::ZeroIntervals);
         }
         if self.startup_tx_us < 1_000_000 {
-            return Err("StartupTxUs must be at least 1000000".into());
+            return Err(ConfigError::StartupInterval);
         }
         if self.detect_mult == 0 {
-            return Err("DetectMult must be nonzero".into());
+            return Err(ConfigError::ZeroDetectMultiplier);
         }
         if self.discriminator == Some(0) {
-            return Err("Discriminator must be nonzero".into());
+            return Err(ConfigError::ZeroDiscriminator);
         }
         if self.remote_discriminator == Some(0) {
-            return Err("RemoteDiscriminator must be nonzero".into());
+            return Err(ConfigError::ZeroRemoteDiscriminator);
         }
         if self.source_port.is_some_and(|port| port < 49152) {
-            return Err("SourcePort must be within 49152..65535".into());
+            return Err(ConfigError::SourcePortRange);
         }
         if self.interface_index == Some(0) || self.min_ttl == Some(0) {
-            return Err("InterfaceIndex and MinTtl must be nonzero when specified".into());
+            return Err(ConfigError::ZeroInterfaceOrTtl);
         }
         Ok(())
     }
@@ -392,7 +485,7 @@ impl Options {
     ///
     /// # Errors
     /// Rejects zero intervals or a zero multiplier.
-    pub fn timing(&self) -> Result<Timing, String> {
+    pub fn timing(&self) -> Result<Timing, ConfigError> {
         Timing::new(self.min_tx_us, self.min_rx_us, self.detect_mult)
     }
 
@@ -424,9 +517,73 @@ pub(crate) fn is_unicast(ip: IpAddr) -> bool {
         && !matches!(ip, IpAddr::V6(ip) if ip.to_ipv4_mapped().is_some())
 }
 
+pub(crate) fn is_seamless_source(local: IpAddr, source: IpAddr) -> bool {
+    is_unicast(source)
+        && source.is_ipv4() == local.is_ipv4()
+        && source.is_loopback() == local.is_loopback()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validated_snapshots_share_storage_and_require_role_identifiers() {
+        let reflector = Options::reflector("127.0.0.1".parse().unwrap(), 99)
+            .into_validated()
+            .unwrap();
+        assert_eq!(
+            reflector.role(),
+            ProtocolRole::Reflector {
+                discriminator: NonZeroU32::new(99).unwrap()
+            }
+        );
+        assert!(Arc::ptr_eq(&reflector.0, &reflector.clone().0));
+        let mut initiator =
+            Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        initiator.session_type = SessionType::SbfdInitiator;
+        assert_eq!(
+            initiator.clone().into_validated().err(),
+            Some(ConfigError::MissingRemoteDiscriminator)
+        );
+        initiator.remote_discriminator = Some(7);
+        let snapshot = initiator.clone().into_validated().unwrap();
+        assert_eq!(
+            snapshot.role(),
+            ProtocolRole::Initiator {
+                remote_discriminator: NonZeroU32::new(7).unwrap()
+            }
+        );
+        initiator.mode = Mode::Multihop;
+        assert_eq!(
+            initiator.into_validated().err(),
+            Some(ConfigError::ClassicalOnlySettings)
+        );
+        let mut classical =
+            Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        classical.mode = Mode::Multihop;
+        let snapshot = classical.into_validated().unwrap();
+        assert_eq!(snapshot.role(), ProtocolRole::Classical(Mode::Multihop));
+        assert!(snapshot.multihop);
+    }
+
+    #[test]
+    fn seamless_configuration_rejects_sources_that_transport_cannot_accept() {
+        for (local, peer) in [
+            ("192.0.2.1", "240.0.0.1"),
+            ("127.0.0.1", "192.0.2.2"),
+            ("192.0.2.1", "127.0.0.1"),
+            ("::1", "::ffff:192.0.2.2"),
+        ] {
+            let mut options = Options::new(local.parse().unwrap(), peer.parse().unwrap());
+            options.session_type = SessionType::SbfdInitiator;
+            options.remote_discriminator = Some(99);
+            assert!(options.validate().is_err(), "accepted {local} -> {peer}");
+        }
+        let mut options = Options::reflector("192.0.2.2".parse().unwrap(), 99);
+        options.allowed_peers = vec!["127.0.0.1".parse().unwrap()];
+        assert!(options.validate().is_err());
+    }
 
     fn options() -> Options {
         Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap())

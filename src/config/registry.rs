@@ -1,7 +1,7 @@
 //! Read service settings without creating or modifying registry keys.
 // Registry calls and handle ownership require the Windows FFI boundary.
 #![allow(unsafe_code)]
-use super::{Mode, Options, SessionType, Timing, PARAMETERS_KEY};
+use super::{Mode, Options, SessionType, Timing, ValidatedOptions, PARAMETERS_KEY};
 use crate::packet::AuthType;
 use clap::ValueEnum;
 use std::{io, net::IpAddr, ptr};
@@ -16,14 +16,17 @@ use windows_sys::Win32::{
 /// mode comes from the command line; optional values retain their defaults.
 /// Multihop selects the transport: absent/0 is single-hop, 1 is multihop.
 /// SessionType selects classical BFD or an S-BFD role; reflectors omit Peer.
-/// Call Options::validate before opening the engine.
+/// Returns an immutable, validated snapshot ready for Engine::from_config.
 ///
 /// # Errors
 /// Returns errors for missing required addresses, denied registry access,
 /// incorrect value types, invalid Unicode/enums, or overflowing numeric values.
 /// Error messages identify value names and never include authentication keys.
-pub fn load_registry(console: bool) -> io::Result<Options> {
-    Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY).load(console)
+pub fn load_registry(console: bool) -> io::Result<ValidatedOptions> {
+    Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY)
+        .load(console)?
+        .into_validated()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
 
 pub(crate) fn load_sbfd_settings(options: &Options) -> io::Result<(Timing, bool)> {

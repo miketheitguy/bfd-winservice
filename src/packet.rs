@@ -1,4 +1,5 @@
 //! RFC 5880 section 4 wire format and section 6.7 authentication.
+use crate::error::{AuthError, ConfigError, PacketError};
 use clap::ValueEnum;
 use sha1::{Digest, Sha1};
 use subtle::ConstantTimeEq;
@@ -93,7 +94,7 @@ impl AuthConfig {
     ///
     /// # Errors
     /// Returns an error for a missing, oversized, or unexpected key.
-    pub fn new(kind: AuthType, key_id: u8, key: Vec<u8>) -> Result<Self, String> {
+    pub fn new(kind: AuthType, key_id: u8, key: Vec<u8>) -> Result<Self, ConfigError> {
         let max = if kind == AuthType::SimplePassword {
             16
         } else {
@@ -101,10 +102,10 @@ impl AuthConfig {
         };
         if kind == AuthType::None {
             if !key.is_empty() {
-                return Err("an authentication key requires Auth".into());
+                return Err(ConfigError::UnexpectedKey);
             }
         } else if key.is_empty() || key.len() > max {
-            return Err(format!("{kind:?} requires a key of 1..{max} bytes"));
+            return Err(ConfigError::InvalidKeyLength { kind, max });
         }
         Ok(Self { kind, key_id, key })
     }
@@ -127,7 +128,7 @@ impl AuthConfig {
     /// # Errors
     /// Rejects malformed packets, authentication mismatches, invalid digests/passwords,
     /// and sequences outside the configured authentication's receive window.
-    pub fn verify(&self, data: &[u8], last_seq: Option<u32>) -> Result<Option<u32>, &'static str> {
+    pub fn verify(&self, data: &[u8], last_seq: Option<u32>) -> Result<Option<u32>, AuthError> {
         // Keep the authentication API safe even when called independently of Session.
         ControlPacket::decode(data)?;
         let data = &data[..usize::from(data[3])];
@@ -135,43 +136,43 @@ impl AuthConfig {
             return if self.kind == AuthType::None {
                 Ok(None)
             } else {
-                Err("authentication required")
+                Err(AuthError::Required)
             };
         }
         if self.kind == AuthType::None {
-            return Err("unexpected authenticated packet");
+            return Err(AuthError::Unexpected);
         }
         if data[24] != self.kind as u8 {
-            return Err("authentication type mismatch");
+            return Err(AuthError::WrongType);
         }
         let auth_len = usize::from(data[25]);
         if auth_len < 3 || HEADER_LEN + auth_len != data.len() {
-            return Err("invalid authentication length");
+            return Err(AuthError::InvalidLength);
         }
         if data[26] != self.key_id {
-            return Err("authentication key ID mismatch");
+            return Err(AuthError::WrongKeyId);
         }
         if self.kind == AuthType::SimplePassword {
             if auth_len != 3 + self.key.len() || !bool::from(data[27..].ct_eq(&self.key)) {
-                return Err("password mismatch");
+                return Err(AuthError::PasswordMismatch);
             }
             return Ok(None);
         }
         if auth_len != 8 + self.kind.hash_len() {
-            return Err("invalid keyed authentication length");
+            return Err(AuthError::InvalidKeyedLength);
         }
         let seq = word(data, 28);
         if let Some(last) = last_seq {
             let delta = seq.wrapping_sub(last);
             if (self.kind.meticulous() && delta == 0) || delta > 3 * u32::from(data[2]) {
-                return Err("authentication sequence outside receive window");
+                return Err(AuthError::SequenceWindow);
             }
         }
         let mut signed = data.to_vec();
         signed[32..].fill(0);
         signed[32..32 + self.key.len()].copy_from_slice(&self.key);
         if !bool::from(data[32..].ct_eq(&self.digest(&signed))) {
-            return Err("authentication digest mismatch");
+            return Err(AuthError::DigestMismatch);
         }
         // Return the accepted sequence only after cryptographic verification succeeds.
         Ok(Some(seq))
@@ -234,12 +235,12 @@ impl ControlPacket {
     /// simultaneous Poll/Final, and reserved zero multiplier, sender
     /// discriminator, or desired TX interval;
     /// Init/Up also require a nonzero receiver discriminator.
-    pub fn decode(data: &[u8]) -> Result<Self, &'static str> {
+    pub fn decode(data: &[u8]) -> Result<Self, PacketError> {
         if data.len() < HEADER_LEN {
-            return Err("truncated header");
+            return Err(PacketError::TruncatedHeader);
         }
         if data[0] >> 5 != 1 {
-            return Err("unsupported version");
+            return Err(PacketError::UnsupportedVersion);
         }
         let minimum = if data[1] & AUTH == 0 {
             HEADER_LEN
@@ -247,19 +248,19 @@ impl ControlPacket {
             HEADER_LEN + 2
         };
         if usize::from(data[3]) < minimum || usize::from(data[3]) > data.len() {
-            return Err("invalid packet length");
+            return Err(PacketError::InvalidLength);
         }
         if data[2] == 0 {
-            return Err("zero detection multiplier");
+            return Err(PacketError::ZeroDetectMultiplier);
         }
         if data[1] & 1 != 0 {
-            return Err("multipoint is unsupported");
+            return Err(PacketError::UnsupportedMultipoint);
         }
         if data[1] & 0x30 == 0x30 {
-            return Err("Poll and Final cannot both be set");
+            return Err(PacketError::PollAndFinal);
         }
         if word(data, 4) == 0 {
-            return Err("zero sender discriminator");
+            return Err(PacketError::ZeroSenderDiscriminator);
         }
         let state = match data[1] >> 6 {
             0 => State::AdminDown,
@@ -268,10 +269,10 @@ impl ControlPacket {
             _ => State::Up,
         };
         if word(data, 8) == 0 && !matches!(state, State::Down | State::AdminDown) {
-            return Err("zero receiver discriminator in Init/Up");
+            return Err(PacketError::ZeroReceiverDiscriminator);
         }
         if word(data, 12) == 0 {
-            return Err("reserved zero desired transmit interval");
+            return Err(PacketError::ZeroDesiredTx);
         }
         Ok(Self {
             diagnostic: data[0] & 0x1f,
@@ -447,10 +448,7 @@ mod tests {
         let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
         let mut data = test_packet(State::Up).encode(&auth, 0);
         data[1] |= 0x30;
-        assert_eq!(
-            ControlPacket::decode(&data),
-            Err("Poll and Final cannot both be set")
-        );
+        assert_eq!(ControlPacket::decode(&data), Err(PacketError::PollAndFinal));
     }
     #[test]
     fn rejects_malformed_packets_without_panicking() {
@@ -491,15 +489,12 @@ mod tests {
             let auth = AuthConfig::new(kind, 9, b"secret".to_vec()).unwrap();
             assert_eq!(
                 auth.verify(&unauthenticated, None),
-                Err("authentication required")
+                Err(AuthError::Required)
             );
             let mut data = packet.encode(&auth, 100);
-            assert_eq!(
-                no_auth.verify(&data, None),
-                Err("unexpected authenticated packet")
-            );
+            assert_eq!(no_auth.verify(&data, None), Err(AuthError::Unexpected));
             data[1] &= !AUTH;
-            assert_eq!(auth.verify(&data, None), Err("authentication required"));
+            assert_eq!(auth.verify(&data, None), Err(AuthError::Required));
         }
     }
     #[test]

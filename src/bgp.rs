@@ -72,21 +72,22 @@ type Mailbox = Arc<(Mutex<Pending>, Condvar)>;
 pub(crate) struct Controller {
     mailbox: Mailbox,
     worker: Option<JoinHandle<io::Result<()>>>,
+    log: Option<Logger>,
 }
 
 impl Controller {
-    pub(crate) fn open(options: &Options) -> io::Result<Option<Self>> {
+    pub(crate) fn open(options: &Options, logger: &Logger) -> io::Result<Option<Self>> {
         let Some(peer) = options.bgp_peer_name.clone() else {
             return Ok(None);
         };
         let domain = options.bgp_routing_domain.clone();
-        let mut log = Logger::open(options)?;
+        let mut log = logger.clone();
         let mailbox = Mailbox::default();
         let worker_mailbox = Arc::clone(&mailbox);
         let worker = thread::Builder::new()
             .name("bgp-mi".into())
             .spawn(move || {
-                match mi::started(&peer, domain.as_deref()) {
+                match mi::started(&peer, domain.as_deref(), &log) {
                     Ok(started) => {
                         log.log(format!("BGP peer={peer:?} startup started={started}; BFD handshake begins without changing BGP"));
                     }
@@ -96,8 +97,8 @@ impl Controller {
                 }
                 work(&worker_mailbox, |method| {
                     let result = reconcile(method,
-                        || mi::started(&peer, domain.as_deref()),
-                        |method| mi::invoke(&peer, domain.as_deref(), method),
+                        || mi::started(&peer, domain.as_deref(), &log),
+                        |method| mi::invoke(&peer, domain.as_deref(), method, &log),
                         || start_is_current(&worker_mailbox));
                     match &result {
                         Ok(true) => log.log(format!(
@@ -116,6 +117,7 @@ impl Controller {
         Ok(Some(Self {
             mailbox,
             worker: Some(worker),
+            log: Some(logger.clone()),
         }))
     }
 
@@ -236,7 +238,9 @@ fn work(mailbox: &Mailbox, mut invoke: impl FnMut(Method) -> io::Result<()>) -> 
 impl Drop for Controller {
     fn drop(&mut self) {
         if let Err(error) = self.finish() {
-            eprintln!("BGP MI shutdown failed: {error}");
+            if let Some(log) = &mut self.log {
+                log.log(format_args!("BGP MI shutdown failed: {error}"));
+            }
         }
     }
 }
@@ -249,6 +253,7 @@ mod tests {
     #[test]
     fn startup_handshake_preserves_bgp_until_bfd_first_establishes() {
         let controller = Controller {
+            log: None,
             mailbox: Mailbox::default(),
             worker: None,
         };
@@ -328,6 +333,7 @@ mod tests {
     #[test]
     fn down_during_status_query_prevents_the_pending_start() {
         let controller = Controller {
+            log: None,
             mailbox: Mailbox::default(),
             worker: None,
         };
@@ -403,6 +409,7 @@ mod tests {
             Method::Stop
         );
         let controller = Controller {
+            log: None,
             mailbox: Arc::clone(&mailbox),
             worker: Some(worker),
         };
@@ -444,6 +451,7 @@ mod tests {
             })
         });
         let controller = Controller {
+            log: None,
             mailbox,
             worker: Some(worker),
         };

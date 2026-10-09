@@ -14,7 +14,21 @@ In Windows Service Control Manager (SCM) mode, the service uses Event Tracing fo
 
 Ordinary send errors are logged at most once per second. Generic discard reasons require `Verbose=1` and have a separate one-second limit. These messages go to STDOUT or the configured file; they do not produce Operational events.
 
-If a STDOUT write fails, the affected logger disables further console writes and attempts one standard error (STDERR) diagnostic. File logging, BFD execution, and Border Gateway Protocol (BGP) control continue. A failed diagnostic write is ignored.
+If a STDOUT write fails, the shared writer disables further console writes and attempts one standard error (STDERR) diagnostic. File logging, BFD execution, and Border Gateway Protocol (BGP) control continue. A failed diagnostic write is ignored.
+
+One background writer handles text output and ETW events for the engine and its
+BGP worker. Slow output does not delay BFD timers or Stop processing. The queue
+holds up to 256 records; when it fills, additional records are dropped instead
+of delaying protocol execution. Text messages are limited to 16 KiB on UTF-8
+character boundaries. When output resumes, the writer reports how many records
+were dropped to STDOUT or the enabled file log. This diagnostic does not produce
+an Operational event.
+
+At shutdown, the logger allows up to 500 milliseconds for queued output to drain.
+If output remains blocked, execution ends without waiting for that writer.
+Queued lifecycle events can be lost in this case. File timestamps record the
+time the writer writes each entry, so slow output can delay them relative to
+the underlying BFD state change.
 
 ## Configure file logging
 
@@ -116,4 +130,4 @@ The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](..
 
 ETW registration failures are reported to STDERR before the optional file log is open. ETW write failures go to the optional text log. Neither stops BFD.
 
-The provider registers before configuration is read, allowing registry and file-log startup failures to emit event 3. Dispatcher/control-handler failures, registration failures, or abrupt process termination can prevent lifecycle events. A successful ETW write does not guarantee Event Log delivery; install the manifest and keep the channel enabled.
+The logger starts before configuration is read. Its output worker registers the provider before processing queued events, allowing registry and file-log startup failures to emit event 3. Dispatcher/control-handler failures, registration failures, blocked output, queue overflow, or abrupt process termination can prevent lifecycle events. A successful ETW write does not guarantee Event Log delivery; install the manifest and keep the channel enabled.

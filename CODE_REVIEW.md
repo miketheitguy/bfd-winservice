@@ -2,6 +2,52 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## rust-security remediation — 2026-10-08
+
+Applied the installed [rust-security skill](.codex/skills/rust-security/SKILL.md),
+which declares the name `build-rust`, and the relevant local Rust guidelines.
+Fixed both confirmed defects from the review:
+
+- **P1: blocked logging could stall protocol execution and shutdown.** Engine,
+  BGP, MI cleanup, and service supervisor messages now share a bounded output
+  worker. Producers use nonblocking enqueue operations. The control handler
+  queues status diagnostics without performing output under its mutex. An unread
+  STDOUT pipe regression first failed, then passed with bounded queue growth,
+  a timed-out flush request, and successful engine shutdown.
+- **P2: S-BFD accepted unusable startup addresses.** Configuration and receive
+  validation now share the unicast, address-family, and loopback policy. Reserved
+  IPv4, IPv4-mapped IPv6, and incompatible loopback sources fail startup instead
+  of creating a session that discards every response. The regression first failed
+  for `192.0.2.1` targeting `240.0.0.1`, then passed.
+
+Also implemented the applicable API recommendations. `Options::into_validated`
+produces an immutable shared snapshot with typed roles and nonzero S-BFD
+identifiers. Registry loading validates once; runtime components reuse the
+snapshot, while live timing and maintenance state remain separate. Public
+configuration, packet, authentication, and receive errors are typed enums.
+Key-bearing configuration still omits `Debug`, and errors omit secrets.
+
+These changes affect library callers: `load_registry` returns `ValidatedOptions`,
+`Logger::new` returns `io::Result<Logger>`, and domain APIs return typed errors.
+See the [configuration and error API guide](CONTRIBUTING.md#use-the-rust-configuration-and-error-apis).
+Registry names and the `--console` interface remain compatible. The log queue
+holds 256 records, caps text at 16 KiB, and allows up to 500 ms to drain on final
+drop. Saturated or blocked output can lose records, including lifecycle events;
+see [logging limits](docs/logging.md#log-destinations).
+
+Validation passed: 112 tests in each debug, optimized, and AddressSanitizer suite,
+with one opt-in CIM schema test ignored; 43 configuration, packet, classical
+session, and S-BFD tests under Miri with strict provenance and tree borrows;
+formatting; strict Clippy; and rustdoc with warnings and missing documentation
+denied. The separate production release build passed its x64 PE hardening and
+PDB-presence regression. Local documentation links and whitespace checks passed.
+
+Native fixtures use temporary files, HKCU registry keys, and loopback UDP sockets.
+No installed service configuration or BGP state was changed. Live SCM deployment,
+Event Viewer delivery, and real BGP mutations remain untested. The installed
+skill's domain reference files are absent; this applies its available main
+instructions and does not claim complete skill compliance.
+
 ## rust-check remediation — 2026-10-07
 
 Applied the explicitly requested [rust-check skill](.codex/skills/rust-check/SKILL.md) to the service code, using its minimal-change guidance. **The P2 console-output finding below is resolved.** `Logger` now uses fallible `Write` calls, reports console failure once per logger on a best-effort basis, and suppresses subsequent STDOUT writes while preserving console mode, file logging, and engine/BGP execution. Failed STDERR diagnostics cannot panic in the logger. The closed-pipe regression first failed on the old implementation with OS error 232, then passed after the fix, reaching AdminDown and recording subsequent lifecycle messages in the file log. No BGP provider mutation is needed for this regression.

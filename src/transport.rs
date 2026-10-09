@@ -1,6 +1,7 @@
 //! Windows UDP transport. WSARecvMsg is required to validate the received TTL and interface.
 // Winsock ancillary data and route lookup require the Windows FFI boundary.
 #![allow(unsafe_code)]
+use crate::error::PacketError;
 use rand::Rng;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::{
@@ -14,7 +15,7 @@ use std::{
 use windows_sys::Win32::NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2};
 use windows_sys::Win32::Networking::WinSock::*;
 
-use crate::config::{is_unicast, Mode, Options, SessionType, SBFD_PORT};
+use crate::config::{is_seamless_source, Mode, Options, SessionType, ValidatedOptions, SBFD_PORT};
 
 /// Received UDP bytes and ancillary metadata, before session validation.
 pub struct Datagram {
@@ -38,63 +39,58 @@ impl Datagram {
     ///
     /// # Errors
     /// Rejects mismatched addresses/path or missing required metadata.
-    pub fn validate(&self, options: &Options) -> Result<(), &'static str> {
+    pub fn validate(&self, options: &Options) -> Result<(), PacketError> {
         // RFC 5881 section 6 identifies a point-to-point neighbor by its link,
         // then its discriminator, even if its source address changes.
         if options.session_type == SessionType::Classical {
             let point_to_point = options.mode == Mode::SingleHop && options.point_to_point;
             if !point_to_point && self.source.ip() != options.peer {
-                return Err("unexpected peer address");
+                return Err(PacketError::UnexpectedPeer);
             }
             if self.source.port() < 49152 {
-                return Err("peer source port is outside 49152..65535");
+                return Err(PacketError::SourcePort);
             }
         } else {
             let source = self.source.ip();
-            if !is_unicast(source)
-                || source.is_ipv4() != options.local.is_ipv4()
-                || source.is_loopback() != options.local.is_loopback()
-            {
-                return Err("invalid S-BFD source address");
+            if !is_seamless_source(options.local, source) {
+                return Err(PacketError::InvalidSeamlessSource);
             }
             match options.session_type {
                 SessionType::SbfdInitiator => {
                     if self.source.port() != SBFD_PORT {
-                        return Err("S-BFD response source port must be 7784");
+                        return Err(PacketError::SeamlessResponsePort);
                     }
                     if source != options.peer && !options.allowed_peers.contains(&source) {
-                        return Err("S-BFD response source is not allowed");
+                        return Err(PacketError::DisallowedResponse);
                     }
                 }
                 SessionType::SbfdReflector => {
                     if self.source.port() == 0 || self.source.port() == SBFD_PORT {
-                        return Err(
-                            "S-BFD request source port must be nonzero and different from 7784",
-                        );
+                        return Err(PacketError::SeamlessRequestPort);
                     }
                     if !options.allowed_peers.is_empty() && !options.allowed_peers.contains(&source)
                     {
-                        return Err("S-BFD request source is not allowed");
+                        return Err(PacketError::DisallowedRequest);
                     }
                 }
                 SessionType::Classical => unreachable!("classical packets validated separately"),
             }
         }
         if self.destination != Some(options.local) {
-            return Err("destination address is not the configured local address");
+            return Err(PacketError::WrongDestination);
         }
         if options.interface_index.is_some() && self.interface_index != options.interface_index {
-            return Err("packet arrived on another interface");
+            return Err(PacketError::WrongInterface);
         }
-        let ttl = self.ttl.ok_or("missing received TTL/hop limit")?;
+        let ttl = self.ttl.ok_or(PacketError::MissingTtl)?;
         if options.session_type == SessionType::Classical
             && options.mode == Mode::SingleHop
             && ttl != 255
         {
-            return Err("single-hop TTL/hop limit must be 255");
+            return Err(PacketError::SingleHopTtl);
         }
         if options.min_ttl.is_some_and(|minimum| ttl < minimum) {
-            return Err("TTL/hop limit below MinTtl");
+            return Err(PacketError::MinimumTtl);
         }
         Ok(())
     }
@@ -176,15 +172,23 @@ fn new_socket(options: &Options) -> io::Result<Socket> {
 impl Transport {
     /// Open sockets with TTL/hop limit 255 and receive metadata enabled.
     ///
-    /// Checks numeric ranges only. Full session callers must first validate and
-    /// normalize Options; Engine::open does so.
+    /// Validates all startup settings before opening the sockets.
     ///
     /// # Errors
     /// Returns configuration, binding, or Winsock setup failures.
     pub fn open(options: &Options) -> io::Result<Self> {
-        options
-            .validate_ranges()
+        let options = options
+            .clone()
+            .into_validated()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        Self::from_config(&options)
+    }
+
+    /// Opens sockets from an immutable snapshot without repeating validation.
+    ///
+    /// # Errors
+    /// Returns binding or Winsock setup failures.
+    pub fn from_config(options: &ValidatedOptions) -> io::Result<Self> {
         let receiver = new_socket(options)?;
         let sender = if options.session_type == SessionType::Classical {
             receiver.bind(

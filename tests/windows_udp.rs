@@ -46,6 +46,18 @@ fn receive(transport: &Transport) -> Datagram {
     }
 }
 
+fn loopback_interface(options: &Options) -> u32 {
+    let mut discovery = options.clone();
+    discovery.mode = Mode::Multihop;
+    discovery.multihop = true;
+    let transport = Transport::open(&discovery).unwrap();
+    let sender = UdpSocket::bind(options.address(options.peer, 0)).unwrap();
+    sender
+        .send_to(&[0; 24], options.address(options.local, 4784))
+        .unwrap();
+    receive(&transport).interface_index.unwrap()
+}
+
 struct RunningEngine {
     stop: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<io::Result<()>>>,
@@ -277,6 +289,7 @@ fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once()
 #[test]
 fn windows_ipv4_metadata_and_single_hop_ttl_are_checked() {
     let mut options = options("127.0.0.10", "127.0.0.11", "single-hop");
+    options.interface_index = Some(loopback_interface(&options));
     let transport = Transport::open(&options).unwrap();
     let peer = UdpSocket::bind("127.0.0.11:55001").unwrap();
     peer.set_ttl(255).unwrap();
@@ -294,9 +307,10 @@ fn windows_ipv4_metadata_and_single_hop_ttl_are_checked() {
 
 #[test]
 fn windows_ipv6_hop_limit_and_destination_metadata_are_available() {
-    // A same-host IPv6 transport test uses ::1 for both socket endpoints; provisioned
-    // real sessions require distinct endpoint addresses and validate this in Options.
-    let options = options("::1", "::1", "multihop");
+    // S-BFD permits same-host probes, so this fixture also passes full validation.
+    let mut options = Options::new("::1".parse().unwrap(), "::1".parse().unwrap());
+    options.session_type = bfd_winservice::config::SessionType::SbfdInitiator;
+    options.remote_discriminator = Some(99);
     let transport = Transport::open(&options).unwrap();
     let peer = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -305,16 +319,11 @@ fn windows_ipv6_hop_limit_and_destination_metadata_are_available() {
     )
     .unwrap();
     peer.set_unicast_hops_v6(253).unwrap();
-    peer.bind(
-        &"[::1]:55002"
-            .parse::<std::net::SocketAddr>()
-            .unwrap()
-            .into(),
-    )
-    .unwrap();
+    peer.bind(&"[::1]:7784".parse::<std::net::SocketAddr>().unwrap().into())
+        .unwrap();
     peer.send_to(
         &[0; 24],
-        &"[::1]:4784".parse::<std::net::SocketAddr>().unwrap().into(),
+        &options.address(options.local, transport.source_port).into(),
     )
     .unwrap();
     let packet = receive(&transport);
@@ -592,11 +601,7 @@ fn point_to_point_bootstrap_and_source_changes_keep_the_configured_destination()
     let changed_sender = bfd_sender("127.0.0.43");
     changed_sender.set_ttl(255).unwrap();
     // Discover the Windows loopback interface without assuming its index.
-    options.interface_index = {
-        let transport = Transport::open(&options).unwrap();
-        initial_sender.send_to(&[0; 24], "127.0.0.40:3784").unwrap();
-        Some(receive(&transport).interface_index.unwrap())
-    };
+    options.interface_index = Some(loopback_interface(&options));
     options.point_to_point = true;
     options.auth = AuthType::MeticulousSha1;
     options.auth_key = Some("secret".to_owned());

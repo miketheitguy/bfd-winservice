@@ -1,6 +1,7 @@
 //! Stateless RFC 7880 reflection; transport validates addresses and UDP ports first.
 use crate::{
-    config::{Options, SessionType, Timing},
+    config::{Options, ProtocolRole, Timing, ValidatedOptions},
+    error::{ConfigError, PacketError},
     packet::{AuthConfig, ControlPacket, Diagnostic, State},
     session::ReceiveError,
 };
@@ -19,17 +20,27 @@ impl Reflector {
     ///
     /// # Errors
     /// Rejects invalid options, another protocol role, or mismatched authentication.
-    pub fn new(mut options: Options, auth: AuthConfig) -> Result<Self, String> {
-        if options.validate()? != auth || options.session_type != SessionType::SbfdReflector {
-            return Err("reflector requires matching S-BFD reflector configuration".into());
+    pub fn new(options: Options, auth: AuthConfig) -> Result<Self, ConfigError> {
+        let options = options.into_validated()?;
+        if options.authentication() != &auth {
+            return Err(ConfigError::AuthenticationMismatch);
         }
+        Self::from_config(&options)
+    }
+
+    /// Constructs a reflector from an immutable snapshot without repeating validation.
+    ///
+    /// # Errors
+    /// Rejects a snapshot for another protocol role.
+    pub fn from_config(options: &ValidatedOptions) -> Result<Self, ConfigError> {
+        let ProtocolRole::Reflector { discriminator } = options.role() else {
+            return Err(ConfigError::WrongReflectorRole);
+        };
         Ok(Self {
-            discriminator: options
-                .discriminator
-                .expect("validated reflector discriminator"),
+            discriminator: discriminator.get(),
             min_rx_us: options.min_rx_us,
             admin_down: options.sbfd_admin_down,
-            auth,
+            auth: options.authentication().clone(),
         })
     }
 
@@ -60,31 +71,23 @@ impl Reflector {
     /// # Errors
     /// Rejects malformed packets, wrong discriminators, cleared Demand, invalid
     /// initiator states/receive intervals, or authentication failures without responding.
-    pub fn respond(&self, data: &[u8]) -> Result<Vec<u8>, &'static str> {
-        self.respond_checked(data).map_err(|error| match error {
-            ReceiveError::Packet(reason) | ReceiveError::Authentication(reason) => reason,
-        })
+    pub fn respond(&self, data: &[u8]) -> Result<Vec<u8>, ReceiveError> {
+        self.respond_checked(data)
     }
 
     pub(crate) fn respond_checked(&self, data: &[u8]) -> Result<Vec<u8>, ReceiveError> {
         let request = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
         if request.your_discriminator != self.discriminator {
-            return Err(ReceiveError::Packet(
-                "unknown S-BFD reflector discriminator",
-            ));
+            return Err(ReceiveError::Packet(PacketError::UnknownReflector));
         }
         if !request.demand {
-            return Err(ReceiveError::Packet(
-                "S-BFD reflector requires the Demand bit",
-            ));
+            return Err(ReceiveError::Packet(PacketError::MissingDemand));
         }
         if request.state == State::Init
             || request.required_min_rx_us != 0
             || request.required_min_echo_rx_us != 0
         {
-            return Err(ReceiveError::Packet(
-                "invalid S-BFD initiator state or receive intervals",
-            ));
+            return Err(ReceiveError::Packet(PacketError::InvalidInitiator));
         }
         let sequence = self
             .auth

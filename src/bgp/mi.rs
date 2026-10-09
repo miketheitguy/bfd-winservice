@@ -9,6 +9,7 @@
 #![deny(clippy::undocumented_unsafe_blocks, unsafe_op_in_unsafe_fn)]
 
 use super::Method;
+use crate::runtime::Logger;
 use std::{ffi::c_void, io, mem::transmute, ptr};
 use windows_sys::{core::w, Win32::System::Wmi::*};
 
@@ -149,16 +150,16 @@ fn wide(value: &str) -> io::Result<Vec<u16>> {
     Ok(value.encode_utf16().chain(Some(0)).collect())
 }
 
-struct Application(MI_Application);
+struct Application(MI_Application, Logger);
 
 impl Application {
-    fn open() -> io::Result<Self> {
+    fn open(log: &Logger) -> io::Result<Self> {
         let mut handle = MI_Application::default();
         // SAFETY: writable zero-initialized handle; optional arguments are null.
         let result =
             unsafe { MI_Application_InitializeV1(0, ptr::null(), ptr::null_mut(), &mut handle) };
         check(result, "initialize MI application")?;
-        Ok(Self(handle))
+        Ok(Self(handle, log.clone()))
     }
 
     fn session(&mut self) -> io::Result<Session> {
@@ -202,6 +203,7 @@ impl Application {
         Ok(Session {
             handle: session,
             _destination: destination,
+            log: self.1.clone(),
         })
     }
 
@@ -229,7 +231,7 @@ impl Application {
         if instance.is_null() {
             return Err(io::Error::other("MI returned null method parameters"));
         }
-        let mut parameters = Parameters(instance);
+        let mut parameters = Parameters(instance, self.1.clone());
         let mut names = [name.as_mut_ptr()];
         let value = MI_Value {
             stringa: MI_StringA {
@@ -299,7 +301,7 @@ impl Drop for Application {
             let close: ApplicationClose = transmute((*self.0.ft).Close);
             close(&mut self.0)
         };
-        cleanup(result, "close MI application");
+        cleanup(result, "close MI application", &self.1);
     }
 }
 
@@ -317,6 +319,7 @@ impl Drop for DestinationOptions {
 struct Session {
     handle: MI_Session,
     _destination: DestinationOptions,
+    log: Logger,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -326,11 +329,11 @@ impl Drop for Session {
             let close: SessionClose = transmute((*self.handle.ft).Close);
             close(&mut self.handle, ptr::null_mut(), None)
         };
-        cleanup(result, "close MI session");
+        cleanup(result, "close MI session", &self.log);
     }
 }
 
-struct Parameters(*mut MI_Instance);
+struct Parameters(*mut MI_Instance, Logger);
 impl Parameters {
     /// The value's pointers must remain valid for the duration of this call.
     ///
@@ -355,7 +358,7 @@ impl Drop for Parameters {
             let delete: InstanceDelete = transmute((*(*self.0).ft).Delete);
             delete(self.0)
         };
-        cleanup(result, "delete MI parameters");
+        cleanup(result, "delete MI parameters", &self.1);
     }
 }
 
@@ -374,6 +377,7 @@ struct Operation {
     handle: MI_Operation,
     drained: bool,
     class_result: bool,
+    log: Logger,
 }
 
 impl Operation {
@@ -466,7 +470,7 @@ impl Drop for Operation {
                 let cancel: OperationCancel = transmute((*self.handle.ft).Cancel);
                 cancel(&mut self.handle, 0)
             };
-            cleanup(result, "cancel MI operation");
+            cleanup(result, "cancel MI operation", &self.log);
             let result = if self.class_result {
                 // SAFETY: class operation; exact SDK GetClass accessor.
                 let next: GetClass = unsafe { transmute((*self.handle.ft).GetClass) };
@@ -477,7 +481,9 @@ impl Drop for Operation {
                 self.drain(next, |_| Ok(()))
             };
             if let Err(error) = result {
-                eprintln!("drain canceled MI operation: {error}");
+                self.log
+                    .clone()
+                    .log(format_args!("drain canceled MI operation: {error}"));
             }
         }
         // SAFETY: uniquely owned initialized operation; exact SDK Close signature.
@@ -486,13 +492,13 @@ impl Drop for Operation {
             let close: OperationClose = transmute((*self.handle.ft).Close);
             close(&mut self.handle)
         };
-        cleanup(result, "close MI operation");
+        cleanup(result, "close MI operation", &self.log);
     }
 }
 
-fn cleanup(result: MI_Result, context: &str) {
+fn cleanup(result: MI_Result, context: &str, log: &Logger) {
     if let Err(error) = check(result, context) {
-        eprintln!("{error}");
+        log.clone().log(error);
     }
 }
 
@@ -739,11 +745,12 @@ fn schema_operation(
         handle,
         drained: false,
         class_result: true,
+        log: session.log.clone(),
     })
 }
 
-pub(super) fn started(peer: &str, domain: Option<&str>) -> io::Result<bool> {
-    let mut application = Application::open()?;
+pub(super) fn started(peer: &str, domain: Option<&str>, log: &Logger) -> io::Result<bool> {
+    let mut application = Application::open(log)?;
     let mut session = application.session()?;
     let parameters = application.parameters(Method::Get, peer, domain)?;
     let mut options = application.options()?;
@@ -793,6 +800,7 @@ pub(super) fn started(peer: &str, domain: Option<&str>) -> io::Result<bool> {
         handle,
         drained: false,
         class_result: false,
+        log: session.log.clone(),
     };
     let mut started = None;
     operation.finish_with(|instance| {
@@ -808,10 +816,15 @@ pub(super) fn started(peer: &str, domain: Option<&str>) -> io::Result<bool> {
     started.ok_or_else(|| io::Error::other("BGP status query returned no peer"))
 }
 
-pub(super) fn invoke(peer: &str, domain: Option<&str>, method: Method) -> io::Result<()> {
+pub(super) fn invoke(
+    peer: &str,
+    domain: Option<&str>,
+    method: Method,
+    log: &Logger,
+) -> io::Result<()> {
     // Children are declared after application, so reverse local-variable drop
     // order closes them first. Native handles stay on the calling thread.
-    let mut application = Application::open()?;
+    let mut application = Application::open(log)?;
     let mut session = application.session()?;
     let parameters = application.parameters(method, peer, domain)?;
     let mut options = application.options()?;
@@ -846,6 +859,7 @@ pub(super) fn invoke(peer: &str, domain: Option<&str>, method: Method) -> io::Re
         handle,
         drained: false,
         class_result: false,
+        log: session.log.clone(),
     };
     operation.finish()
 }
@@ -875,7 +889,7 @@ mod tests {
     #[test]
     #[ignore = "requires access to Windows CIM namespaces; run explicitly outside a restricted sandbox"]
     fn native_mi_reads_enum_qualifiers_from_local_class_schema() {
-        let mut application = Application::open().unwrap();
+        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         let mut session = application.session().unwrap();
         let mut options = application.options().unwrap();
         // Read-only Windows network adapter schema; no BGP changes.
@@ -904,7 +918,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_parses_embedded_bgp_status_and_rejects_ambiguous_results() {
-        let mut application = Application::open().unwrap();
+        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         let mapping = vec![(7, "Stopped".into()), (8, "Connecting".into())];
         for code in [7, 8, 9] {
             let mut peer = application.parameters(Method::Get, "test", None).unwrap();
@@ -961,7 +975,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_parameters_copy_strings_and_force_stop_without_confirmation() {
-        let mut application = Application::open().unwrap();
+        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         for method in [Method::Start, Method::Stop] {
             let parameters = application
                 .parameters(method, "peer-\u{1f642}", Some("Rd001"))
@@ -1012,7 +1026,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_drains_provider_error_and_closes_handles() {
-        let mut application = Application::open().unwrap();
+        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         let mut session = application.session().unwrap();
         let parameters = application.parameters(Method::Start, "test", None).unwrap();
         let mut options = application.options().unwrap();
@@ -1039,6 +1053,7 @@ mod tests {
             handle,
             drained: false,
             class_result: false,
+            log: session.log.clone(),
         };
         let error = operation.finish().unwrap_err().to_string();
         assert!(error.contains("CIM method failed"), "{error}");
@@ -1048,7 +1063,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_checks_cim_return_code_and_type() {
-        let mut application = Application::open().unwrap();
+        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         for (value, kind, succeeds) in [
             (MI_Value { uint32: 0 }, MI_UINT32, true),
             (MI_Value { uint32: 5 }, MI_UINT32, false),

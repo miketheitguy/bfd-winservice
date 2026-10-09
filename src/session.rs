@@ -2,6 +2,7 @@
 //!
 //! The caller supplies monotonic receive/expiry times and handles transport I/O.
 //! Discriminators, initial authentication sequences, and transmit jitter use randomness.
+use crate::error::{AuthError, ConfigError, PacketError};
 use rand::Rng;
 use std::{
     collections::VecDeque,
@@ -9,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    config::{Options, SessionType, Timing},
+    config::{Options, ProtocolRole, SessionType, Timing, ValidatedOptions},
     packet::{AuthConfig, AuthType, ControlPacket, Diagnostic, State},
 };
 
@@ -21,7 +22,8 @@ pub struct Session {
     pub(crate) local_discriminator: u32,
     pub(crate) remote_discriminator: u32,
     pub(crate) polling: bool,
-    options: Options,
+    options: ValidatedOptions,
+    timing: Timing,
     auth: AuthConfig,
     remote_state: State,
     remote_demand: bool,
@@ -47,22 +49,17 @@ pub struct Received {
     pub state_changed: bool,
 }
 
-/// Internal rejection classification for logging; public callers retain the
-/// existing static-string error API. Reasons never contain packet/key bytes.
+/// Public rejection classification for callers and operational logging.
+/// Reasons never contain packet or key bytes.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(crate) enum ReceiveError {
+#[non_exhaustive]
+pub enum ReceiveError {
+    /// A structural, transport, or protocol-role check failed.
     #[error("{0}")]
-    Packet(&'static str),
+    Packet(#[from] PacketError),
+    /// Authentication failed before any session state was changed.
     #[error("{0}")]
-    Authentication(&'static str),
-}
-
-impl ReceiveError {
-    fn reason(self) -> &'static str {
-        match self {
-            Self::Packet(reason) | Self::Authentication(reason) => reason,
-        }
-    }
+    Authentication(#[from] AuthError),
 }
 
 impl Session {
@@ -70,14 +67,22 @@ impl Session {
     ///
     /// # Errors
     /// Returns an error for invalid options or mismatched authentication settings.
-    pub fn new(mut options: Options, auth: AuthConfig) -> Result<Self, String> {
-        if options.validate()? != auth {
-            return Err("session authentication does not match its configured settings".into());
+    pub fn new(options: Options, auth: AuthConfig) -> Result<Self, ConfigError> {
+        let options = options.into_validated()?;
+        if options.authentication() != &auth {
+            return Err(ConfigError::AuthenticationMismatch);
         }
+        Ok(Self::from_config(options))
+    }
+
+    /// Constructs a session from a validated snapshot without repeating validation.
+    pub fn from_config(options: ValidatedOptions) -> Self {
+        let auth = options.authentication().clone();
+        let timing = options.timing();
         let local_discriminator = options
             .discriminator
             .unwrap_or_else(|| rand::thread_rng().gen_range(1..=u32::MAX));
-        Ok(Self {
+        Self {
             state: if options.session_type == SessionType::SbfdReflector {
                 if options.sbfd_admin_down {
                     State::AdminDown
@@ -95,9 +100,15 @@ impl Session {
                 Diagnostic::None
             },
             local_discriminator,
-            remote_discriminator: options.remote_discriminator.unwrap_or(0),
+            remote_discriminator: match options.role() {
+                ProtocolRole::Initiator {
+                    remote_discriminator,
+                } => remote_discriminator.get(),
+                _ => 0,
+            },
             polling: false,
             options,
+            timing,
             auth,
             remote_state: State::Down,
             remote_demand: false,
@@ -112,7 +123,7 @@ impl Session {
             communicating: false,
             congestion_backoff: 0,
             pending_final: false,
-        })
+        }
     }
 
     /// Return the current local BFD state.
@@ -152,14 +163,14 @@ impl Session {
     ///
     /// # Errors
     /// Rejects classical sessions; their negotiated timer updates are unsupported.
-    pub fn set_timing(&mut self, timing: Timing) -> Result<(), &'static str> {
+    pub fn set_timing(&mut self, timing: Timing) -> Result<(), ConfigError> {
         if self.options.session_type == SessionType::Classical {
-            return Err("live timing updates require S-BFD");
+            return Err(ConfigError::ClassicalTimingUpdate);
         }
         let old_tx = self.desired_min_tx_us();
-        self.options.min_tx_us = timing.min_tx_us;
-        self.options.min_rx_us = timing.min_rx_us;
-        self.options.detect_mult = timing.detect_mult;
+        self.timing.min_tx_us = timing.min_tx_us;
+        self.timing.min_rx_us = timing.min_rx_us;
+        self.timing.detect_mult = timing.detect_mult;
         if self.state == State::Up
             && self.options.session_type == SessionType::SbfdInitiator
             && old_tx != self.desired_min_tx_us()
@@ -173,9 +184,9 @@ impl Session {
     /// S-BFD timeout backoff multiplies this interval with saturating arithmetic.
     pub fn desired_min_tx_us(&self) -> u32 {
         let interval = if self.state == State::Up {
-            self.options.min_tx_us
+            self.timing.min_tx_us
         } else {
-            self.options.startup_tx_us.max(self.options.min_tx_us)
+            self.options.startup_tx_us.max(self.timing.min_tx_us)
         };
         if self.options.session_type == SessionType::SbfdInitiator {
             let base = if self.congestion_backoff == 0 {
@@ -201,11 +212,11 @@ impl Session {
     pub fn detection_time(&self) -> Duration {
         if self.options.session_type == SessionType::SbfdInitiator {
             // MinRxUs is the round-trip budget even though the wire RX field is zero.
-            return self.transmit_interval() * u32::from(self.options.detect_mult)
-                + Duration::from_micros(u64::from(self.options.min_rx_us));
+            return self.transmit_interval() * u32::from(self.timing.detect_mult)
+                + Duration::from_micros(u64::from(self.timing.min_rx_us));
         }
         Duration::from_micros(
-            u64::from(self.options.min_rx_us.max(self.remote_min_tx_us))
+            u64::from(self.timing.min_rx_us.max(self.remote_min_tx_us))
                 * u64::from(self.remote_detect_mult),
         )
     }
@@ -260,7 +271,7 @@ impl Session {
     /// Sample 75-100% of the negotiated interval (75-90% for multiplier 1).
     /// This calculates an interval even when periodic transmission is disabled.
     pub fn jittered_interval(&self) -> Duration {
-        let upper = if self.options.detect_mult == 1 {
+        let upper = if self.timing.detect_mult == 1 {
             9000
         } else {
             10000
@@ -281,9 +292,8 @@ impl Session {
     /// # Errors
     /// Rejects malformed, wrong-session, or incorrectly authenticated packets without
     /// changing session state, timers, or sequence tracking.
-    pub fn receive(&mut self, data: &[u8], now: Instant) -> Result<Received, &'static str> {
+    pub fn receive(&mut self, data: &[u8], now: Instant) -> Result<Received, ReceiveError> {
         self.receive_checked(data, now)
-            .map_err(ReceiveError::reason)
     }
 
     /// Preserve the rejection stage so runtime logging does not classify errors
@@ -297,15 +307,11 @@ impl Session {
             return self.receive_seamless(data, now);
         }
         if self.options.session_type == SessionType::SbfdReflector {
-            return Err(ReceiveError::Packet(
-                "use Reflector::respond for stateless requests",
-            ));
+            return Err(ReceiveError::Packet(PacketError::UseReflector));
         }
         let packet = ControlPacket::decode(data).map_err(ReceiveError::Packet)?;
         if packet.your_discriminator != 0 && packet.your_discriminator != self.local_discriminator {
-            return Err(ReceiveError::Packet(
-                "receiver discriminator does not identify this session",
-            ));
+            return Err(ReceiveError::Packet(PacketError::WrongDiscriminator));
         }
         // RFC 6.8.1 permits resynchronization after twice the Detection Time.
         let last_seq = if self
@@ -466,11 +472,11 @@ impl Session {
             final_bit,
             control_plane_independent: false,
             demand: seamless,
-            detect_mult: self.options.detect_mult,
+            detect_mult: self.timing.detect_mult,
             my_discriminator: self.local_discriminator,
             your_discriminator: self.remote_discriminator,
             desired_min_tx_us: self.desired_min_tx_us(),
-            required_min_rx_us: if seamless { 0 } else { self.options.min_rx_us },
+            required_min_rx_us: if seamless { 0 } else { self.timing.min_rx_us },
             required_min_echo_rx_us: 0,
         };
         let data = packet.encode(&self.auth, self.transmit_auth_seq);
@@ -503,13 +509,11 @@ impl Session {
             || packet.my_discriminator != self.remote_discriminator
         {
             return Err(ReceiveError::Packet(
-                "S-BFD response discriminator mismatch",
+                PacketError::WrongSeamlessDiscriminator,
             ));
         }
         if packet.demand || !matches!(packet.state, State::Up | State::AdminDown) {
-            return Err(ReceiveError::Packet(
-                "invalid S-BFD reflector state or Demand flag",
-            ));
+            return Err(ReceiveError::Packet(PacketError::InvalidReflectorState));
         }
         let sequence = self
             .auth
@@ -524,7 +528,7 @@ impl Session {
                             && now.saturating_duration_since(*time) < self.detection_time()
                     })
                     .ok_or(ReceiveError::Authentication(
-                        "S-BFD response sequence was not outstanding",
+                        AuthError::SequenceNotOutstanding,
                     ))?,
             )
         } else {
@@ -618,7 +622,7 @@ mod tests {
     }
     #[test]
     fn constructor_rejects_invalid_options_and_mismatched_authentication() {
-        let valid = session().options;
+        let valid = (*session().options).clone();
         let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
         let mut invalid = valid.clone();
         invalid.detect_mult = 0;
@@ -696,7 +700,7 @@ mod tests {
         invalid.desired_min_tx_us = 9_000_000;
         assert_eq!(
             session.receive_checked(&wire(&invalid), now + Duration::from_millis(1)),
-            Err(ReceiveError::Packet("Poll and Final cannot both be set"))
+            Err(ReceiveError::Packet(PacketError::PollAndFinal))
         );
         assert_eq!(
             before,
@@ -817,9 +821,11 @@ mod tests {
     }
     #[test]
     fn passive_waits_and_jitter_obeys_multiplier_one_bounds() {
-        let mut session = session();
-        session.options.passive = true;
-        session.options.detect_mult = 1;
+        let mut options = (*session().options).clone();
+        options.passive = true;
+        options.detect_mult = 1;
+        let auth = options.validate().unwrap();
+        let mut session = Session::new(options, auth).unwrap();
         assert!(!session.periodic_enabled());
         session.admin_down();
         assert!(!session.can_transmit());
@@ -877,22 +883,16 @@ mod tests {
             let mut invalid_length = peer.encode(&auth, 100);
             invalid_length[25] = 0;
             for (data, reason) in [
-                (wire(&peer), "authentication required"),
-                (
-                    peer.encode(&wrong_id, 100),
-                    "authentication key ID mismatch",
-                ),
-                (
-                    peer.encode(&wrong_type, 100),
-                    "authentication type mismatch",
-                ),
-                (invalid_length, "invalid authentication length"),
+                (wire(&peer), AuthError::Required),
+                (peer.encode(&wrong_id, 100), AuthError::WrongKeyId),
+                (peer.encode(&wrong_type, 100), AuthError::WrongType),
+                (invalid_length, AuthError::InvalidLength),
                 (
                     peer.encode(&wrong_key, 100),
                     if kind == AuthType::SimplePassword {
-                        "password mismatch"
+                        AuthError::PasswordMismatch
                     } else {
-                        "authentication digest mismatch"
+                        AuthError::DigestMismatch
                     },
                 ),
             ] {
@@ -908,15 +908,13 @@ mod tests {
             }
             assert_eq!(
                 session.receive_checked(&[0; 24], now).err(),
-                Some(ReceiveError::Packet("unsupported version"))
+                Some(ReceiveError::Packet(PacketError::UnsupportedVersion))
             );
             let mut wrong_session = peer.clone();
             wrong_session.your_discriminator = 42;
             assert_eq!(
                 session.receive_checked(&wire(&wrong_session), now).err(),
-                Some(ReceiveError::Packet(
-                    "receiver discriminator does not identify this session"
-                ))
+                Some(ReceiveError::Packet(PacketError::WrongDiscriminator))
             );
             session
                 .receive_checked(&peer.encode(&auth, 100), now)
@@ -924,9 +922,7 @@ mod tests {
             if kind != AuthType::SimplePassword {
                 assert_eq!(
                     session.receive_checked(&peer.encode(&auth, 99), now).err(),
-                    Some(ReceiveError::Authentication(
-                        "authentication sequence outside receive window"
-                    ))
+                    Some(ReceiveError::Authentication(AuthError::SequenceWindow))
                 );
                 assert_eq!(session.received_auth_seq, Some(100));
             }
@@ -935,9 +931,7 @@ mod tests {
         let auth = AuthConfig::new(AuthType::MeticulousSha1, 9, b"secret".to_vec()).unwrap();
         assert_eq!(
             session.receive_checked(&peer.encode(&auth, 100), now).err(),
-            Some(ReceiveError::Authentication(
-                "unexpected authenticated packet"
-            ))
+            Some(ReceiveError::Authentication(AuthError::Unexpected))
         );
     }
 
@@ -948,7 +942,9 @@ mod tests {
             for passive in [false, true] {
                 let mut session = session();
                 session.auth = AuthConfig::new(kind, 9, b"secret".to_vec()).unwrap();
-                session.options.passive = passive;
+                let mut options = (*session.options).clone();
+                options.passive = passive;
+                session.options = options.into_validated().unwrap();
                 for state in [State::AdminDown, State::Down, State::Init, State::Up] {
                     let mut peer = test_packet(state);
                     peer.poll = true;
@@ -956,7 +952,7 @@ mod tests {
                     peer.demand = true;
                     assert_eq!(
                         session.receive(&wire(&peer), now).err(),
-                        Some("authentication required"),
+                        Some(ReceiveError::Authentication(AuthError::Required)),
                         "{kind:?}, passive={passive}, peer={state:?}"
                     );
                     assert_eq!(session.state, State::Down);
@@ -978,7 +974,7 @@ mod tests {
                 assert!(session.periodic_enabled());
                 assert_eq!(
                     session.receive(&wire(&test_packet(State::Init)), now).err(),
-                    Some("authentication required")
+                    Some(ReceiveError::Authentication(AuthError::Required))
                 );
                 assert_eq!(session.state, State::Init);
             }
@@ -1013,7 +1009,7 @@ mod tests {
                         session
                             .receive(&wire(&peer), now + Duration::from_millis(599))
                             .err(),
-                        Some("authentication required")
+                        Some(ReceiveError::Authentication(AuthError::Required))
                     );
                     assert_eq!(session.state, State::Up);
                     assert_eq!(session.diagnostic, Diagnostic::None);

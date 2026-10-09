@@ -5,7 +5,7 @@ use bfd_winservice::{
 use std::{
     error::Error,
     ffi::OsString,
-    io,
+    io::{self, Write},
     sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
@@ -29,12 +29,13 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
 fn service_entry(_arguments: Vec<OsString>) {
     if let Err(error) = run_service() {
-        eprintln!("BFD service failed: {error}");
+        let _ = writeln!(io::stderr().lock(), "BFD service failed: {error}");
     }
 }
 
 fn run_service() -> Result<(), Box<dyn Error>> {
     let (stop_tx, stop_rx) = mpsc::channel();
+    let (diagnostic_tx, diagnostic_rx) = mpsc::sync_channel(4);
     let reporter = Arc::new(Mutex::new(StatusReporter {
         handle: None,
         state: ServiceState::StartPending,
@@ -49,7 +50,9 @@ fn run_service() -> Result<(), Box<dyn Error>> {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             if let Err(error) = reporter.set(ServiceState::StopPending, ServiceExitCode::Win32(0)) {
-                eprintln!("Unable to report BFD StopPending: {error}");
+                // Output must never block a control handler or retain its lock.
+                let _ =
+                    diagnostic_tx.try_send(format!("Unable to report BFD StopPending: {error}"));
             }
             let _ = stop_tx.send(());
             ServiceControlHandlerResult::NoError
@@ -62,14 +65,20 @@ fn run_service() -> Result<(), Box<dyn Error>> {
         reporter.handle = Some(handle);
         reporter.publish(ServiceExitCode::Win32(0))?;
     }
-    let mut log = Logger::new(false);
+    let mut log = match Logger::new(false) {
+        Ok(log) => log,
+        Err(error) => {
+            reporter
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .set(ServiceState::Stopped, ServiceExitCode::ServiceSpecific(1))?;
+            return Err(error.into());
+        }
+    };
     let result = (|| -> Result<(), Box<dyn Error>> {
-        let mut options = load_registry(false)?;
-        let auth = options
-            .validate()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let options = load_registry(false)?;
         log.open_file(&options)?;
-        let mut engine = Engine::open(options, auth, &mut log)?;
+        let mut engine = Engine::from_config(options, &mut log)?;
         let started = {
             let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
             reporter.set(ServiceState::Running, ServiceExitCode::Win32(0))?;
@@ -82,6 +91,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
         // request, advance SCM StopPending checkpoints until it finishes.
         let (done_tx, done_rx) = mpsc::channel();
         thread::scope(|scope| -> io::Result<()> {
+            let mut supervisor_log = log.clone();
             let worker_log = &mut log;
             let worker = scope.spawn(move || {
                 let result = engine.run(&stop_rx, worker_log);
@@ -91,18 +101,27 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             while let Err(mpsc::RecvTimeoutError::Timeout) =
                 done_rx.recv_timeout(Duration::from_secs(1))
             {
+                for diagnostic in diagnostic_rx.try_iter() {
+                    supervisor_log.log(diagnostic);
+                }
                 let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
                 if let Err(error) = reporter.heartbeat() {
-                    eprintln!("Unable to report BFD shutdown progress: {error}");
+                    supervisor_log.log(format_args!(
+                        "Unable to report BFD shutdown progress: {error}"
+                    ));
                 }
                 // The receiver also wakes if the worker unwinds.
                 if worker.is_finished() {
                     break;
                 }
             }
-            worker
+            let result = worker
                 .join()
-                .map_err(|_| io::Error::other("BFD engine worker panicked"))?
+                .map_err(|_| io::Error::other("BFD engine worker panicked"))?;
+            for diagnostic in diagnostic_rx.try_iter() {
+                supervisor_log.log(diagnostic);
+            }
+            result
         })?;
         Ok(())
     })();

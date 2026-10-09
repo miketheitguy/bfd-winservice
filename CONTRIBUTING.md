@@ -212,6 +212,31 @@ ASan is a [testing tool](https://doc.rust-lang.org/nightly/unstable-book/compile
 Distribute the normal release executable. ASan tests don't instrument Windows
 system DLLs or the prebuilt MSVC runtime.
 
+## Use the Rust configuration and error APIs
+
+`Options` contains mutable provisioning input. Call `Options::into_validated()`
+to produce an immutable `ValidatedOptions` snapshot. On Windows,
+`config::load_registry()` returns this snapshot directly. Clones share its
+storage, and `ProtocolRole` carries the required nonzero initiator or reflector
+discriminator.
+
+Use `Engine::from_config`, `Session::from_config`, `Reflector::from_config`, and
+`Transport::from_config` to reuse a snapshot without repeating validation.
+The constructors that accept raw `Options` still validate before use.
+Live S-BFD timers and maintenance state are separate from startup settings.
+
+Configuration errors use `error::ConfigError`. Packet and transport rejection
+uses `error::PacketError`; authentication uses `error::AuthError`.
+`session::ReceiveError` distinguishes packet and authentication failures. Match
+these enums rather than comparing their display strings. Error messages omit
+keys and packet contents.
+
+`Logger::new` returns `io::Result<Logger>`. Logger clones share one bounded output
+worker. `Logger::flush(timeout)` provides explicit completion when a caller needs
+to read the output immediately, and `Logger::dropped_records()` reports queue
+loss. Do not call `flush` from the protocol timer loop. See
+[log destinations and queue limits](docs/logging.md#log-destinations).
+
 ## Prepare installation files
 
 Give administrators these files from the same source revision:

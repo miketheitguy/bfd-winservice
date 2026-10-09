@@ -6,6 +6,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 pub mod config;
 #[forbid(unsafe_code)]
+pub mod error;
+#[forbid(unsafe_code)]
 pub mod packet;
 #[forbid(unsafe_code)]
 pub mod seamless;

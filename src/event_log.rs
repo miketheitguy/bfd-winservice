@@ -7,7 +7,7 @@
 // ETW registration and writes require the Windows FFI boundary.
 #![allow(unsafe_code)]
 use crate::{config::Options, packet::State, session::Session};
-use std::{io, net::SocketAddr, ptr};
+use std::{io, io::Write, net::SocketAddr, ptr};
 use windows_sys::{
     core::GUID,
     Win32::System::Diagnostics::Etw::{
@@ -49,7 +49,7 @@ pub(crate) enum SessionEvent {
 }
 
 impl SessionEvent {
-    fn descriptor(&self, state: State) -> &EVENT_DESCRIPTOR {
+    fn descriptor(&self, state: State) -> &'static EVENT_DESCRIPTOR {
         match self {
             Self::CommunicationStarted => &PEER_COMMUNICATION_STARTED,
             Self::CommunicationStopped => &PEER_COMMUNICATION_STOPPED,
@@ -66,6 +66,59 @@ pub(crate) struct Provider {
     handle: REGHANDLE,
 }
 
+pub(crate) struct Record {
+    event: &'static EVENT_DESCRIPTOR,
+    payload: Vec<u8>,
+}
+
+impl Record {
+    pub(crate) fn service_started(console: bool) -> Self {
+        Self {
+            event: &SERVICE_STARTED,
+            payload: vec![u8::from(console)],
+        }
+    }
+    pub(crate) fn service_stopped(console: bool, exit_code: u32) -> Self {
+        let mut payload = vec![u8::from(console)];
+        payload.extend_from_slice(&exit_code.to_le_bytes());
+        Self {
+            event: &SERVICE_STOPPED,
+            payload,
+        }
+    }
+    pub(crate) fn service_failed(console: bool, error: &str) -> Self {
+        let mut payload = vec![u8::from(console)];
+        append_unicode(&mut payload, error);
+        Self {
+            event: &SERVICE_FAILED,
+            payload,
+        }
+    }
+    pub(crate) fn session_event(
+        event: SessionEvent,
+        options: &Options,
+        session: &Session,
+        previous: State,
+        remote_discriminator: u32,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            event: event.descriptor(session.state()),
+            payload: session_payload(options, session, previous, remote_discriminator)?,
+        })
+    }
+    pub(crate) fn authentication_failed(
+        options: &Options,
+        session: &Session,
+        source: SocketAddr,
+        reason: &str,
+    ) -> Self {
+        Self {
+            event: &AUTHENTICATION_FAILED,
+            payload: authentication_payload(options, session.local_discriminator(), source, reason),
+        }
+    }
+}
+
 impl Provider {
     pub(crate) fn register() -> io::Result<Self> {
         let mut handle = 0;
@@ -80,56 +133,12 @@ impl Provider {
         unsafe { EventEnabled(self.handle, event) }
     }
 
-    pub(crate) fn service_started(&self, console: bool) -> io::Result<()> {
-        self.write(&SERVICE_STARTED, &[u8::from(console)])
-    }
-
-    pub(crate) fn service_stopped(&self, console: bool, exit_code: u32) -> io::Result<()> {
-        let mut payload = [0; 5];
-        payload[0] = u8::from(console);
-        payload[1..].copy_from_slice(&exit_code.to_le_bytes());
-        self.write(&SERVICE_STOPPED, &payload)
-    }
-
-    pub(crate) fn service_failed(&self, console: bool, error: &str) -> io::Result<()> {
-        if !self.enabled(&SERVICE_FAILED) {
-            return Ok(());
+    pub(crate) fn emit(&self, record: &Record) -> io::Result<()> {
+        if self.enabled(record.event) {
+            self.write(record.event, &record.payload)
+        } else {
+            Ok(())
         }
-        let mut payload = Vec::with_capacity(256);
-        payload.push(u8::from(console));
-        append_unicode(&mut payload, error);
-        self.write(&SERVICE_FAILED, &payload)
-    }
-
-    pub(crate) fn session_event(
-        &self,
-        event: SessionEvent,
-        options: &Options,
-        session: &Session,
-        previous: State,
-        remote_discriminator: u32,
-    ) -> io::Result<()> {
-        let event = event.descriptor(session.state());
-        if !self.enabled(event) {
-            return Ok(());
-        }
-        let payload = session_payload(options, session, previous, remote_discriminator)?;
-        self.write(event, &payload)
-    }
-
-    pub(crate) fn authentication_failed(
-        &self,
-        options: &Options,
-        session: &Session,
-        source: SocketAddr,
-        reason: &'static str,
-    ) -> io::Result<()> {
-        if !self.enabled(&AUTHENTICATION_FAILED) {
-            return Ok(());
-        }
-        let payload =
-            authentication_payload(options, session.local_discriminator(), source, reason);
-        self.write(&AUTHENTICATION_FAILED, &payload)
     }
 
     fn write(&self, event: &EVENT_DESCRIPTOR, payload: &[u8]) -> io::Result<()> {
@@ -152,7 +161,10 @@ impl Drop for Provider {
         // SAFETY: this non-Clone owner unregisters its live handle exactly once,
         // after all methods borrowing it have completed. No callbacks exist.
         if let Err(error) = check(unsafe { EventUnregister(self.handle) }) {
-            eprintln!("Unable to unregister BFD-Service ETW provider: {error}");
+            let _ = writeln!(
+                io::stderr().lock(),
+                "Unable to unregister BFD-Service ETW provider: {error}"
+            );
         }
     }
 }
@@ -219,7 +231,7 @@ fn authentication_payload(
     options: &Options,
     local_discriminator: u32,
     source: SocketAddr,
-    reason: &'static str,
+    reason: &str,
 ) -> Vec<u8> {
     let mut payload = Vec::with_capacity(256);
     append_unicode(&mut payload, &options.local.to_string());
@@ -359,10 +371,10 @@ mod tests {
     #[cfg(not(miri))]
     fn native_provider_registration_and_lifecycle_writes_succeed() {
         let provider = Provider::register().unwrap();
-        provider.service_started(true).unwrap();
+        provider.emit(&Record::service_started(true)).unwrap();
         provider
-            .service_failed(true, "synthetic ETW smoke test")
+            .emit(&Record::service_failed(true, "synthetic ETW smoke test"))
             .unwrap();
-        provider.service_stopped(true, 1).unwrap();
+        provider.emit(&Record::service_stopped(true, 1)).unwrap();
     }
 }

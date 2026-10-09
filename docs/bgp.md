@@ -41,6 +41,10 @@ A running BGP peer continues during the initial BFD handshake. A stopped peer wa
 
 A dedicated worker handles provider calls while BFD continues running. Failed actions retry after one second unless replaced by a newer action or shutdown. At most a Stop/Start pair remains queued; Down/AdminDown discard queued Starts. An already issued call finishes before the next action runs.
 
+The BGP worker shares the engine's background log writer. Slow log output does
+not delay provider calls; the [logging queue limits](logging.md#log-destinations)
+apply to both sources.
+
 Each Management Infrastructure (MI) operation requests a five-second timeout, which is **not a hard shutdown deadline** ([timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)). Shutdown discards queued Starts, attempts pending Stops, and waits for the worker. A failed final Stop produces a nonzero exit status; final shutdown calls are not retried indefinitely.
 
 <details>

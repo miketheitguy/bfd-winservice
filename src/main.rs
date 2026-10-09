@@ -10,7 +10,7 @@ use bfd_winservice::{
     runtime::{Engine, Logger},
 };
 #[cfg(windows)]
-use std::{error::Error, io, sync::mpsc};
+use std::{error::Error, io, io::Write, sync::mpsc};
 
 #[cfg(windows)]
 mod service;
@@ -26,7 +26,7 @@ fn main() {
         };
         if let Err(error) = result {
             if !command_line.console {
-                eprintln!("BFD failed: {error}");
+                let _ = writeln!(io::stderr().lock(), "BFD failed: {error}");
             }
             process::exit(1);
         }
@@ -41,19 +41,18 @@ fn main() {
 
 #[cfg(windows)]
 fn run_console() -> Result<(), Box<dyn Error>> {
-    let mut log = Logger::new(true);
+    let mut log = Logger::new(true).inspect_err(|error| {
+        let _ = writeln!(io::stderr().lock(), "unable to start BFD logger: {error}");
+    })?;
     let result = (|| -> io::Result<()> {
-        let mut options = load_registry(true)?;
-        let auth = options
-            .validate()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let options = load_registry(true)?;
         log.open_file(&options)?;
         let (stop_tx, stop_rx) = mpsc::channel();
         ctrlc::set_handler(move || {
             let _ = stop_tx.send(());
         })
         .map_err(io::Error::other)?;
-        let mut engine = Engine::open(options, auth, &mut log)?;
+        let mut engine = Engine::from_config(options, &mut log)?;
         log.service_started();
         engine.run(&stop_rx, &mut log)
     })();

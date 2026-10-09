@@ -2,6 +2,19 @@
 
 Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
 
+## rust-security fixes — 2026-10-08
+
+The current runtime shares immutable validated startup settings and one bounded
+logging worker. S-BFD startup and receive validation use the same source-address
+policy. Public configuration, packet, authentication, and receive errors use
+typed enums. See the [latest remediation record](CODE_REVIEW.md#rust-security-remediation--2026-10-08)
+for the original defects, API changes, regression evidence, and limits.
+
+All 112 tests passed in debug, optimized, and ASan builds; 43 protocol and
+configuration tests passed under Miri with strict provenance and tree borrows.
+The production release image passed the x64 hardening/PDB regression. Formatting,
+strict Clippy, and rustdoc checks passed. One opt-in CIM schema test was ignored.
+
 ## Expanded hardening review — 2026-10-08
 
 Mapped the requested MSVC and Rust settings to the Rust-only build in
@@ -189,17 +202,17 @@ Added descriptions for 33 public enum variants and fields. Rust source compariso
 ## Resolved public API findings
 
 - **F1:** Authentication kind and key are private. `AuthConfig::kind()` exposes the type without mutation; changing authentication requires constructing a new validated configuration. A compile-fail doctest checks that the kind cannot be assigned directly.
-- **F2:** `Options::validate` checks numeric ranges and option combinations, normalizes the multihop shortcut, and returns validated authentication. `Session::new` returns a `Result` and requires matching options/authentication. Session state, discriminators, and Poll tracking are read-only outside the crate. `Engine::open` validates configuration before opening sockets. The lower-level `Transport::open` checks numeric ranges only; direct callers must first normalize and fully validate their options.
+- **F2:** `Options::into_validated` checks numeric ranges, endpoint source policy, and option combinations, then creates an immutable `ValidatedOptions` snapshot. Its `ProtocolRole` contains required nonzero S-BFD identifiers. The runtime shares this snapshot between components, while live timers and maintenance state remain separate. Raw constructors, including `Transport::open`, perform full validation. Session state, discriminators, and Poll tracking are read-only outside the crate.
 
-Options remain publicly mutable, so callers must validate again after changing them. `ControlPacket::encode` serializes public header fields without validating them; decoding and authentication verification provide receive-side checks.
+Raw `Options` remain publicly mutable; consume them into a new validated snapshot after changing them. `ControlPacket::encode` serializes public header fields without validating them; decoding and authentication verification provide receive-side checks. Public configuration, packet, authentication, and receive errors use typed enums.
 
-`CommandLine` parses only `--console` plus standard help/version flags. `Options::new` constructs defaults for explicit local/peer addresses; it does not validate them. On Windows, `config::load_registry` reads the service's HKLM Parameters key without creating or modifying it. Startup then calls `Options::validate` before opening sockets. The loader enforces `REG_SZ`/`REG_DWORD`, checks numeric narrowing, rejects invalid Booleans and malformed UTF-16, and excludes authentication contents from errors. Native loader tests use unique temporary HKCU keys rather than the installed service's configuration.
+`CommandLine` parses only `--console` plus standard help/version flags. `Options::new` constructs defaults for explicit local/peer addresses; it does not validate them. On Windows, `config::load_registry` reads the service's HKLM Parameters key without creating or modifying it and returns a validated snapshot before sockets open. The loader enforces `REG_SZ`/`REG_DWORD`, checks numeric narrowing, rejects invalid Booleans and malformed UTF-16, and excludes authentication contents from errors. Native loader tests use unique temporary HKCU keys rather than the installed service's configuration.
 
 `Multihop` is the only registry transport selector: absent or DWORD `0` selects single-hop; DWORD `1` selects multihop. Other values and types fail loading. The former `Mode` registry value is ignored. The loader sets the internal transport profile before returning options; library callers can still use the `Mode` enum directly.
 
 The 2026-10-08 selector change passed 72 default tests (61 library, 2 service, 7 UDP, and 2 doctests), with one opt-in CIM schema test ignored. The native regression verifies absent/0/1 selection and ignored legacy `Mode` entries; existing type/range tests reject malformed `Multihop` settings. Formatting, strict Clippy, rustdoc with warnings denied, and the release build passed. Tests used temporary HKCU keys; the installed service's configuration was not modified.
 
-`LogFilePath` is a `REG_SZ` path, defaulting to `C:\ProgramData\BfdWinService\trace.log`. `LogToFile` is a `REG_DWORD` flag, defaulting to `0`. Startup reads both values; disabled logging never opens, creates, or writes the path. With DWORD `1`, each logger creates missing parent directories and opens the file for append. This applies to the main logger and the BGP worker. Folder creation and file-open failures propagate as startup errors; runtime write failures remain best-effort diagnostics.
+`LogFilePath` is a `REG_SZ` path, defaulting to `C:\ProgramData\BfdWinService\trace.log`. `LogToFile` is a `REG_DWORD` flag, defaulting to `0`. Startup reads both values; disabled logging never opens, creates, or writes the path. With DWORD `1`, the startup logger creates missing parent directories and opens one append file shared by engine, BGP, and service supervisor messages. Folder creation and file-open failures propagate as startup errors; runtime write failures remain best-effort diagnostics.
 
 The administrator-only [logging setup script](scripts/Initialize-Logging.ps1) provisions the default registry values and folder separately from the read-only runtime loader. It disables file output and does not create or write `trace.log`.
 
@@ -241,7 +254,11 @@ Follow the [contributor guide](CONTRIBUTING.md) for Miri checks and [Set up a BF
 
 Registry configuration checks on 2026-10-07 passed: 69 tests including the doctest, with one opt-in native schema test ignored; formatting; strict Clippy including undocumented unsafe blocks; documentation with warnings denied; and the release build. Seven configuration tests passed under Miri with strict provenance, and the final string decoder was checked again after the parity-check lint correction. Release smoke checks confirmed that help exposes only `--console` plus help/version, removed configuration arguments are rejected, and a missing Parameters key produces exit code 1 with lifecycle/failure messages on STDOUT and empty STDERR. No installed service configuration was modified.
 
-No full 265-rule reassessment or complete Rust skill compliance is claimed. The crate still uses string-based configuration errors, does not declare an MSRV, and has no checked-in CI workflow. These are guideline gaps rather than confirmed runtime defects.
+No full 265-rule reassessment or complete Rust skill compliance is claimed. The
+string-based configuration errors noted in that registry review have since been
+replaced by typed enums. The crate uses a pinned nightly toolchain and has no
+checked-in CI workflow; these are project constraints rather than confirmed
+runtime defects.
 
 ## Code and documentation review — 2026-10-07
 

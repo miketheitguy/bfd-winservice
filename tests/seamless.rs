@@ -300,6 +300,14 @@ fn timing_changes_preserve_state_discriminators_and_authentication() {
 
 #[test]
 fn invalid_role_configuration_is_rejected() {
+    use bfd_winservice::error::ConfigError;
+
+    let options = Options::reflector("192.0.2.2".parse().unwrap(), 99);
+    let mismatched = AuthConfig::new(AuthType::SimplePassword, 1, b"secret".to_vec()).unwrap();
+    assert!(matches!(
+        Reflector::new(options, mismatched),
+        Err(ConfigError::AuthenticationMismatch)
+    ));
     let mut options = initiator_options();
     options.remote_discriminator = None;
     assert!(options.validate().is_err());
