@@ -6,7 +6,7 @@ use crate::{
     event_log::SessionEvent,
     packet::{AuthConfig, Diagnostic, State},
     seamless::Reflector,
-    session::{ReceiveError, Session},
+    session::{ReceiveError, Session, Transmission},
     transport::{Datagram, Transport},
 };
 use std::{
@@ -156,24 +156,23 @@ impl Engine {
         );
     }
     fn transmit(&mut self, kind: Transmission, log: &mut Logger, last_error: &mut Option<Instant>) {
-        let packet = match kind {
-            Transmission::Periodic => self.session.packet(false),
-            Transmission::Final => self.session.packet(true),
-            Transmission::StateChange => self.session.state_change_packet(),
-        };
-        if let Err(error) = self.transport.send(&packet) {
+        let packet = self.session.prepare_packet(kind, Instant::now());
+        if let Err(error) = self.transport.send(&packet.data) {
             let now = Instant::now();
             if last_error.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1)) {
                 log.log(format!("send to {} failed: {error}", self.options.peer));
                 *last_error = Some(now);
             }
+        } else {
+            self.session.record_transmission(&packet);
         }
     }
 
     /// Applies live S-BFD timers without resetting protocol state.
     ///
     /// # Errors
-    /// Rejects classical sessions, which use startup-only local settings.
+    /// Rejects classical sessions, which use startup-only local settings, and
+    /// overlapping transmitted initiator Poll changes.
     pub fn set_timing(&mut self, timing: Timing) -> io::Result<()> {
         self.session
             .set_timing(timing)
@@ -305,7 +304,7 @@ impl Engine {
     }
     /// Run until a stop message/channel disconnect or fatal receive/wait error.
     ///
-    /// On exit, set AdminDown, attempt one role-permitted shutdown packet, and
+    /// On exit, set AdminDown, announce shutdown when the role permits it, and
     /// wait for BGP cleanup. Send failures are logged, not returned. The BGP
     /// controller is consumed during cleanup; construct a new engine to restart.
     ///
@@ -318,20 +317,81 @@ impl Engine {
         } else {
             self.run_session(stop, log)
         };
+        // Honor the RFC 5880 shutdown recommendation for an established peer.
+        // Bound SCM/console stop latency even when a peer advertises huge timers.
+        let grace = if result.is_ok()
+            && self.options.session_type == SessionType::Classical
+            && self.session.communicating()
+        {
+            self.session.detection_time().min(Duration::from_secs(5))
+        } else {
+            Duration::ZERO
+        };
         let previous = self.session.state;
         self.session.admin_down();
         if self.reflector.is_none() {
             self.state_changed(previous, log);
         }
-        // Queue BGP Stop also after fatal transport errors. Attempt one AdminDown
-        // packet; unlike RFC 5880 section 6.8.16's recommendation, shutdown does
-        // not continue BFD transmission for a full Detection Time.
-        if self.session.can_transmit() {
-            self.transmit(Transmission::Periodic, log, &mut None);
-        }
+        // BGP Stop is already queued, including after fatal transport errors.
+        let announcements = self.announce_shutdown(grace, log);
         // Wait for the pending Stop attempt and propagate failure before completion.
         let shutdown = self.bgp.take().map_or(Ok(()), Controller::shutdown);
-        result.and(shutdown)
+        result.and(announcements).and(shutdown)
+    }
+
+    fn announce_shutdown(&mut self, grace: Duration, log: &mut Logger) -> io::Result<()> {
+        let mut last_error = None;
+        let mut last_tx = Instant::now();
+        if self.session.can_transmit() {
+            self.transmit(Transmission::StateChange, log, &mut last_error);
+        }
+        let deadline = Instant::now() + grace;
+        let mut next_tx = last_tx + self.session.jittered_interval();
+        let mut last_discard = None;
+        let mut last_auth_failure = None;
+        while Instant::now() < deadline {
+            let now = Instant::now();
+            self.session.expire(now);
+            if self.session.periodic_enabled() && now >= next_tx {
+                self.transmit(Transmission::Periodic, log, &mut last_error);
+                last_tx = now;
+                next_tx = now + self.session.jittered_interval();
+            }
+            match self.transport.receive() {
+                Ok(datagram) => {
+                    let interval = self.session.transmit_interval();
+                    // AdminDown updates authenticated peer parameters without
+                    // restarting detection or the local state machine.
+                    if let Err(error) = datagram
+                        .validate(&self.options)
+                        .map_err(ReceiveError::Packet)
+                        .and_then(|()| self.session.receive_checked(&datagram.data, now))
+                    {
+                        self.log_rejection(
+                            &datagram,
+                            error,
+                            log,
+                            &mut last_discard,
+                            &mut last_auth_failure,
+                        );
+                    }
+                    if interval != self.session.transmit_interval() {
+                        next_tx = last_tx + self.session.jittered_interval();
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    self.transport.wait_readable(
+                        Duration::from_millis(10)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    )?;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::InvalidData
+                        || error.raw_os_error() == Some(10040) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
     fn run_session(&mut self, stop: &Receiver<()>, log: &mut Logger) -> io::Result<()> {
@@ -466,13 +526,6 @@ impl Engine {
         }
         Ok(())
     }
-}
-
-#[derive(Clone, Copy)]
-enum Transmission {
-    Periodic,
-    Final,
-    StateChange,
 }
 
 fn log_due(last: &mut Option<Instant>, now: Instant) -> bool {

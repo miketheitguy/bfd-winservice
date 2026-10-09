@@ -225,6 +225,18 @@ Use `Engine::from_config`, `Session::from_config`, `Reflector::from_config`, and
 The constructors that accept raw `Options` still validate before use.
 Live S-BFD timers and maintenance state are separate from startup settings.
 
+`Session::set_timing` rejects overlapping transmitted Poll changes with
+`ConfigError::PollInProgress`. Wait for the Final and a subsequent non-Final
+response before another wire timer change. An Up TX increase is advertised in
+the Poll but takes effect only after its Final. See the
+[S-BFD timing reference](docs/seamless.md#change-timing-and-entity-availability).
+
+`Session::packet` and `packet_at` are convenience APIs that reserve a sequence
+and register a transmission when they return bytes. Library callers using these
+APIs must deliver the returned packets. The Windows runtime prepares packets
+without mutation and commits sequence, Poll, and probe tracking only after a
+successful socket send; failed sends don't consume meticulous sequences.
+
 Configuration errors use `error::ConfigError`. Packet and transport rejection
 uses `error::PacketError`; authentication uses `error::AuthError`.
 `session::ReceiveError` distinguishes packet and authentication failures. Match
@@ -318,6 +330,17 @@ To check S-BFD state, reflection, timers, and authentication under Miri, run:
 ```powershell
 cargo +nightly miri test --locked --test seamless
 ```
+
+To check the RFC 5880 boundary regressions under Miri, run:
+
+```powershell
+cargo +nightly miri test --locked --test rfc5880
+```
+
+These tests cover diagnostic retention, AdminDown validity clocks, stale zero-RX
+limits, Poll acknowledgement, live TX increases, and multihop backoff. For the
+requirements and native shutdown coverage, see the
+[RFC 5880 conformance review](docs/rfc5880-conformance.md).
 
 Native S-BFD tests additionally check IPv4/IPv6 sockets, source-port reflection,
 return-route lookup, concurrent initiators, anycast response sources, and the

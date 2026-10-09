@@ -230,8 +230,11 @@ Stop-Service BfdWinService
 
 The service reports `StopPending` with advancing checkpoints during cleanup,
 then `Stopped`. Stop and Shutdown initiate this status transition immediately.
-The engine sets `AdminDown`, attempts one shutdown packet when its active/passive
-role permits transmission, and waits for any configured BGP cleanup.
+The engine sets `AdminDown` and queues any configured BGP Stop. With a
+communicating classical peer, it continues permitted announcements for the
+detection period, capped at five seconds, before finishing cleanup. Other roles
+or sessions without a communicating peer attempt one role-permitted notification.
+See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 
 ## Run in a console
 
@@ -270,11 +273,12 @@ After configuring the remote peer, confirm the console output contains
 
 ### 4. Stop the session
 
-Press **Ctrl+C**. The engine sets `AdminDown`, attempts one shutdown packet when
-transmission is permitted, and waits for any configured BGP cleanup.
+Press **Ctrl+C**. The engine uses the same AdminDown announcements and BGP cleanup
+as [service shutdown](protocol.md#supported-modes-and-limits).
 
-Settings are read at startup. Stop execution, edit the registry, and restart to
-apply changes.
+Classical settings are read at startup. Stop execution, edit the registry, and
+restart to apply changes. For S-BFD timing updates, see
+[Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 ### Optional: Capture console output
 

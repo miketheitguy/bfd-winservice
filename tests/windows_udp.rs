@@ -495,7 +495,7 @@ fn state_notifications_are_authenticated_without_periodic_traffic_or_extra_polls
     let (length, _) = peer.recv_from(&mut buffer).unwrap();
     let recovered = ControlPacket::decode(&buffer[..length]).unwrap();
     assert_eq!(recovered.state, State::Up);
-    assert_eq!(recovered.diagnostic, 0);
+    assert_eq!(recovered.diagnostic, 3);
     assert_eq!(buffer[1], 0xc4);
     let sequence = auth.verify(&buffer[..length], sequence).unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
@@ -516,13 +516,54 @@ fn state_notifications_are_authenticated_without_periodic_traffic_or_extra_polls
     assert!(auth.verify(&buffer[..length], sequence).is_ok());
     let contents = std::fs::read_to_string(log.path()).unwrap();
     for (change, count) in [
-        ("state=Up diagnostic=None", 2),
+        ("state=Up diagnostic=None", 1),
+        ("state=Up diagnostic=NeighborDown", 1),
         ("state=Down diagnostic=NeighborDown", 1),
         ("state=Down diagnostic=DetectionExpired", 1),
         ("state=AdminDown diagnostic=AdminDown", 1),
     ] {
         assert_eq!(contents.matches(change).count(), count, "{contents}");
     }
+}
+
+#[test]
+fn normal_shutdown_announces_admin_down_for_the_detection_period() {
+    let mut options = options("127.0.0.90", "127.0.0.91", "multihop");
+    options.source_port = Some(55090);
+    let peer = UdpSocket::bind("127.0.0.91:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let sender = bfd_sender("127.0.0.91");
+    let mut engine = RunningEngine::start(options);
+    let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+    let mut buffer = [0; 512];
+    peer.recv_from(&mut buffer).unwrap();
+    let mut packet = peer_packet(State::Init);
+    packet.desired_min_tx_us = 800_000; // 3 × 800 ms = 2.4 s detection.
+    packet.detect_mult = 3;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.90:4784")
+        .unwrap();
+    loop {
+        let (length, _) = peer.recv_from(&mut buffer).unwrap();
+        if ControlPacket::decode(&buffer[..length]).unwrap().state == State::Up {
+            break;
+        }
+    }
+    let started = Instant::now();
+    engine.stop.send(()).unwrap();
+    let mut announcements = 0;
+    while announcements < 2 {
+        let (length, _) = peer.recv_from(&mut buffer).unwrap();
+        let packet = ControlPacket::decode(&buffer[..length]).unwrap();
+        if packet.state == State::AdminDown {
+            assert_eq!(packet.diagnostic, 7);
+            assert!(!packet.poll && !packet.final_bit);
+            announcements += 1;
+        }
+    }
+    engine.worker.take().unwrap().join().unwrap().unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(2300));
+    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[test]

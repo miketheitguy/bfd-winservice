@@ -111,9 +111,10 @@ In Event Viewer, open **Applications and Services Logs → BFD-Service → Opera
 
 Events 100–104 include endpoint addresses, discriminators, previous/current states, diagnostic, and transmit/detection intervals in microseconds. Event 101 retains the last known remote discriminator. Events 100/101 track valid reception separately from Up: a peer sending Down or AdminDown packets is still communicating. Repeated packets or timeout checks do not duplicate these events.
 
-The diagnostic is the local reason: `0` for startup or establishment,
-`1` for detection expiry, `3` for peer-signaled Down/AdminDown, and `7`
-for local shutdown. See [States and diagnostics](protocol.md#states-and-diagnostics)
+The diagnostic is the local reason: `0` initially, `1` when Init/Up detection
+expires, `3` for a peer-signaled failure, and `7` for local shutdown. Classical
+recovery retains the preceding failure reason, including in an Up event.
+See [States and diagnostics](protocol.md#states-and-diagnostics)
 for the transition rules.
 
 S-BFD initiators use these events for valid responses, Up, and detection expiry.

@@ -2,6 +2,62 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## RFC 5880 conformance remediation — 2026-10-08
+
+Re-read the complete [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html),
+its errata, and the relevant RFC 7880 overrides. The
+[requirement mapping](docs/rfc5880-conformance.md) records supported procedures,
+optional features, and deployment limits. Fixed the confirmed discrepancies:
+
+| Severity | Finding | Correction |
+| --- | --- | --- |
+| P1 | Local AdminDown reception left the authentication resynchronization clock stale, permitting replay after two detection periods despite fresh authenticated traffic. A session first receiving in AdminDown also never expired its learned discriminator. | Separate authenticated peer-validity and liveness clocks; preserve ordered AdminDown processing without starting detection. Both cases have regression tests. |
+| P1 | An Up S-BFD TX increase took effect before Final; overlapping timer changes made Final acknowledgement ambiguous. An unsolicited Final also completed an unsent Poll. | Typed Pending/Sent/Quiet Poll states, a held effective TX rate, atomic rejection with `PollInProgress`, and non-Final separation after acknowledgement. |
+| P1 | Classical multihop had no discovery congestion backoff. Failed socket sends consumed meticulous sequences and S-BFD probe/Final tracking. | Saturating timeout backoff with the preceding negotiated rate as its floor; packet preparation commits protocol tracking only after successful runtime sends. |
+| P2 | Classical recovery cleared the previous failure diagnostic. Stale zero-RX advertisements suppressed active discovery indefinitely. Shutdown attempted only one AdminDown packet. | Retain LocalDiag through recovery; reset stale peer RX after one detection time; repeat permitted normal classical shutdown announcements for the detection period, capped at five seconds. |
+
+The first eight RFC boundary regressions and the shutdown regression failed
+before their fixes. A ninth boundary regression then exposed the need to retain
+a slow peer's rate as the multihop backoff floor. Existing wire fixtures and the
+16-case classical state matrix remain valid; the native recovery assertion now
+expects the retained diagnostic.
+
+Applied the [rust-check skill](.codex/skills/rust-check/SKILL.md), the installed
+[rust-security skill](.codex/skills/rust-security/SKILL.md), and the relevant
+[Rust guidelines](.codex/skills/rust-skills/SKILL.md). Packet I/O borrows one owned
+buffer without cloning it. Small Poll states remain inline, probe tracking stays
+bounded, backoff saturates, and authentication sequences explicitly wrap.
+The changes add no unsafe code or shared locks to the protocol loop. The
+rust-security skill's referenced domain files remain absent; this review applies
+its available main instructions rather than claiming coverage of missing rules.
+
+Validation passed: **124 tests** in each debug, optimized, and ASan suite, with
+one opt-in CIM schema test ignored; **54 tests** covering configuration, packets,
+sessions, S-BFD, and RFC boundary regressions under Miri with strict provenance
+and tree borrows; formatting; strict all-target Clippy; rustdoc with warnings and
+missing documentation denied; and a rebuilt production release passing its x64
+PE hardening/PDB regression. The initial overlapping optimized/ASan runs caused
+test-port conflicts; sequential runs passed. Native fixtures used temporary files,
+HKCU keys, and loopback sockets. Installed service settings and BGP state were
+untouched. Live SCM, Event Viewer delivery, real peer interoperability, and BGP
+provider mutations remain outside this validation.
+
+Applied the installed `technical-documentation` skill to the affected
+administrator and developer references. **Score: 5/10 → 9/10**
+for the updated pages: incorrect behavior descriptions are corrected, and the
+requirement map distinguishes supported procedures from optional features and
+bounded shutdown behavior. The complete revised text is in the linked guides.
+
+### Documentation change log
+
+The documentation changes follow these skill rules:
+
+| Change | Rule ID and name | Reason |
+| --- | --- | --- |
+| Correct diagnostic recovery, validity clocks, stale RX, backoff, send commitment, and shutdown descriptions | P11 — Every behavior verified in code | Administrator references describe the implemented behavior and its limits. |
+| Document `PollInProgress` and convenience packet API delivery obligations | A4 — Return values and exceptions documented | Library callers can handle deferred updates and failed sends correctly. |
+| Add a focused RFC requirement map and link it from the README and development guide | R2 — Document type matches the reader's task (inferred taxonomy) | Maintainers can locate protocol evidence without mixing it into installation procedures. |
+
 ## rust-security remediation — 2026-10-08
 
 Applied the installed [rust-security skill](.codex/skills/rust-security/SKILL.md),

@@ -2,7 +2,7 @@
 
 This reference is for network administrators checking Bidirectional Forwarding Detection (BFD) interoperability, firewall requirements, and session limits. For a fresh installation, see [Set up a BFD session](setup.md).
 
-The implementation follows [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html), [RFC 5881](https://www.rfc-editor.org/rfc/rfc5881.html) for single-hop User Datagram Protocol (UDP), and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) for multihop.
+The implementation supports asynchronous [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) sessions, [RFC 5881](https://www.rfc-editor.org/rfc/rfc5881.html) single-hop User Datagram Protocol (UDP), and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) multihop. For the requirement mapping, regression evidence, and optional features, see the [RFC 5880 conformance review](rfc5880-conformance.md).
 
 IP-routed Seamless BFD (S-BFD) uses [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html)
 and [RFC 7881](https://www.rfc-editor.org/rfc/rfc7881.html). Its capabilities and
@@ -64,16 +64,18 @@ Local diagnostics use these values:
 
 | Code | Reason | When emitted |
 | --- | --- | --- |
-| 0 | No local diagnostic | Initially and after successful establishment |
-| 1 | Receive detection expired | Control packets stop arriving within the detection interval |
+| 0 | No local diagnostic | Initially; retained until a local failure or administrative stop |
+| 1 | Receive detection expired | An Init/Up session's control detection timer expires |
 | 3 | Peer signaled failure | Up receives Down, or Init/Up receives AdminDown |
 | 7 | Local administrative stop | The service shuts down |
 
-Classical Init recovery retains the preceding failure diagnostic until Up.
+Classical recovery retains the preceding failure diagnostic in Init and Up.
 Repeated packets that leave the state unchanged don't replace that diagnostic.
 S-BFD uses its [own state machine](seamless.md#3-verify-establishment): it
 establishes directly from Down to Up, and a reflector AdminDown response can
 move Up to Down while proving continued communication.
+S-BFD clears its failure diagnostic when it transitions back to Up; RFC 7880
+leaves initiator diagnostic policy to the implementation.
 
 ## Classical session behavior
 
@@ -81,8 +83,9 @@ Transmit (TX) and receive (RX) behavior follows these rules:
 
 - One process runs one local/peer session. The receive address/port is exclusively bound; multiple peers sharing it are unsupported. Another process can use a different local address or transport profile.
 - Incoming packets must pass peer/path metadata, discriminator, and authentication checks before affecting the session. Point-to-point mode permits source-address changes on the configured single-hop interface. Missing required receive metadata is discarded.
-- Outside Up, desired TX is `max(StartupTxUs, MinTxUs)`. Entering Up starts a Poll sequence when this interval changes. Valid peer timer changes are honored; timeouts move Init/Up to Down.
-- Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Passive transmission stops when the learned discriminator expires.
+- Outside Up, the base desired TX is `max(StartupTxUs, MinTxUs)`. Classical multihop doubles the greater of this base and its preceding negotiated interval after an unanswered discovery window or detection timeout, using saturating arithmetic. A valid peer packet clears backoff. Single-hop keeps the base interval.
+- Entering Up starts a Poll sequence when desired TX changes. A received Final completes only a Poll that has been transmitted. Valid peer timer changes are honored; timeouts move Init/Up to Down.
+- Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Both clocks use accepted, authenticated packets, including reception in AdminDown. Passive transmission stops when the learned discriminator expires.
 - State changes trigger immediate notifications when the active/passive role
   permits transmission, including when a zero peer RX interval suppresses
   periodic traffic. A Final reply can carry the changed state. Separate state
@@ -96,12 +99,21 @@ S-BFD provides live timing updates and uses the Demand bit to identify initiator
 
 Classical periodic transmission stops when the peer advertises a zero required
 RX interval, or when both ends are Up, the peer sets Demand, and no local Poll is
-pending. A timeout retains the peer's last timer parameters. Accepted classical
+pending. After one detection time without valid packets, the peer's required RX
+interval resets to `1`, as recommended by RFC 5880 section 6.8.18. This removes
+stale zero-RX suppression and lets active discovery resume. The last peer TX
+interval and multiplier remain available for detection calculations. Accepted classical
 Polls receive immediate Final replies unless local state is AdminDown; replies
 do not postpone periodic transmissions. S-BFD initiators continue periodic
 probing; reflectors answer requests and send no periodic packets.
 
-Shutdown attempts one packet when transmission is permitted. Passive sessions
-with no learned remote discriminator and S-BFD reflectors send none.
-Classical shutdown differs from the recommendation to transmit for a detection
-period in [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16).
+On normal classical shutdown with a communicating peer, the service sends an
+immediate AdminDown notification and continues permitted periodic announcements
+for the detection period, capped at five seconds. The cap bounds the BFD portion
+of shutdown when peers advertise long detection times; it limits the
+recommendation in [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16).
+Zero-RX suppression and passive-role restrictions still apply to periodic traffic.
+Without a communicating peer, after a fatal transport error, or for an S-BFD
+initiator, shutdown attempts one role-permitted notification. Passive sessions
+with no learned discriminator and S-BFD reflectors send none. BGP Stop is queued
+before these announcements; waiting for its provider can extend total shutdown.

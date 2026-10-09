@@ -188,8 +188,9 @@ password, MD5, and SHA-1 modes are available.
 A keyed reflector verifies the digest and returns the request's sequence
 number with a newly computed digest. It doesn't apply a sequence window to
 incoming requests. An initiator accepts a keyed response only for an outstanding,
-unexpired generated sequence and consumes it once, including across wraparound.
-Tracking is bounded to the newest 1,024 generated keyed probes. Choose rates and
+unexpired transmitted sequence and consumes it once, including across wraparound.
+The Windows runtime records probes only after a successful socket send.
+Tracking is bounded to the newest 1,024 transmitted keyed probes. Choose rates and
 round-trip budgets that keep the number of outstanding probes within this bound.
 
 Initiators set the Demand bit; reflectors clear it. Each role rejects packets
@@ -201,8 +202,10 @@ liveness or cause a response. Authentication failures use Operational event `105
 
 In S-BFD service and console execution, `MinTxUs`, `MinRxUs`, `DetectMult`, and
 the reflector's `SbfdAdminDown` are checked once per second. Valid changes apply
-without restarting or resetting the session. Invalid values leave the preceding
-settings active and produce a text diagnostic. Other registry settings are read
+without restarting or resetting the session. Invalid values and timer changes
+that overlap a transmitted Poll leave the preceding settings active and produce
+a text diagnostic. The next registry check retries the requested values.
+Other registry settings are read
 at startup.
 
 An initiator uses `MinRxUs` as its expected round-trip time (RTT) allowance. Choose a value
@@ -210,7 +213,7 @@ that covers the path's latency and responder scheduling delay. Before jitter,
 timing follows these formulas:
 
 ```text
-Probe interval = max(local desired TX, reflector required RX)
+Probe interval = max(effective local TX, reflector required RX)
 Detection time = local DetectMult × probe interval + local MinRxUs
 ```
 
@@ -218,6 +221,12 @@ Outside `Up`, the initial desired interval is `max(StartupTxUs, MinTxUs)`.
 After missing responses, the initiator doubles its probing interval with
 saturating arithmetic to reduce traffic. A valid response clears this backoff.
 Poll/Final exchanges acknowledge interval changes without adding an `Init` phase.
+When `MinTxUs` increases in Up, probes advertise the requested value but continue
+at the preceding local TX rate until the Poll receives a Final. The probe and
+detection calculations use that effective rate while acknowledgement is pending.
+Another wire timer change waits for both the Final and a subsequent response
+with Final clear, preventing an older Final from acknowledging a newer change.
+Changes combined before the first Poll transmission share that Poll.
 
 To mark a reflector entity temporarily unavailable while keeping the listener
 active, set its maintenance flag:
@@ -236,6 +245,9 @@ Set the DWORD to `0` to restore `Up` replies.
 
 Library callers can use `Timing::new`, `Session::set_timing`,
 `Engine::set_timing`, and `Reflector::set_timing` without registry access.
+Initiator timing calls return `ConfigError::PollInProgress` while a transmitted
+Poll or its separation period protects a preceding change. Reflectors apply
+their stateless response settings immediately.
 
 ## RFC 7882 use-case coverage and limits
 

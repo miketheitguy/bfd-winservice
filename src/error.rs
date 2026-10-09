@@ -98,6 +98,9 @@ pub enum ConfigError {
     /// Live timing updates require S-BFD.
     #[error("live timing updates require S-BFD")]
     ClassicalTimingUpdate,
+    /// A transmitted Poll or its separation period still protects a timer change.
+    #[error("wait for the Poll Final and a subsequent non-Final response before changing timers")]
+    PollInProgress,
     /// A name is empty or contains an embedded NUL.
     #[error("{field} must be nonempty and contain no NUL characters")]
     InvalidName {

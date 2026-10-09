@@ -32,7 +32,7 @@ configure the addresses and transport:
 | `InterfaceIndex` | `REG_DWORD` | Required for classical single-hop or link-local IPv6 | Nonzero incoming/outgoing interface index |
 | `PointToPoint` | `REG_DWORD` | `0` | Classical single-hop only: accept peer source-address changes on the configured interface |
 | `SourcePort` | `REG_DWORD` | Random available port | Classical or S-BFD initiator source port, 49152–65535; invalid for reflectors |
-| `Discriminator` | `REG_DWORD` | Random nonzero value, except required for reflectors | Local session identifier or reflector entity identifier |
+| `Discriminator` | `REG_DWORD` | Random nonzero value, except required for reflectors | Local session identifier or reflector entity identifier; assign distinct values to coexisting local sessions |
 | `Passive` | `REG_DWORD` | `0` | Classical multihop only: wait for a valid peer packet before sending |
 | `MinTtl` | `REG_DWORD` | No threshold | Multihop or S-BFD minimum received TTL/hop limit, 1–255 |
 
@@ -76,7 +76,7 @@ Transmit (TX) and receive (RX) intervals use microseconds. For S-BFD initiators,
 | --- | --- | --- | --- |
 | `MinTxUs` | `REG_DWORD` | `300000` | Desired transmit interval while Up, 1–4294967295 microseconds |
 | `MinRxUs` | `REG_DWORD` | `300000` | Required receive interval; S-BFD initiator RTT allowance, 1–4294967295 microseconds |
-| `StartupTxUs` | `REG_DWORD` | `1000000` | Startup interval, at least one second; outside Up, the desired interval is `max(StartupTxUs, MinTxUs)` |
+| `StartupTxUs` | `REG_DWORD` | `1000000` | Startup interval, at least one second; the base outside Up is `max(StartupTxUs, MinTxUs)` before congestion backoff |
 | `DetectMult` | `REG_DWORD` | `3` | Advertised/local detection multiplier, 1–255; reflectors copy the request multiplier |
 
 Classical BFD intervals are **microseconds** before jitter:
@@ -89,6 +89,8 @@ Detection time    = peer multiplier × max(local required RX, peer desired TX)
 Periodic transmit intervals are randomly reduced by 0–25%, or 10–25% when the local multiplier is 1. With matching 300000-microsecond intervals and multiplier 3, detection time is 900 ms. Windows scheduling adds latency; the service does not guarantee microsecond timing.
 
 For S-BFD, see [timing and live updates](seamless.md#change-timing-and-entity-availability).
+For multihop timeout backoff and expired peer RX limits, see
+[Classical session behavior](protocol.md#classical-session-behavior).
 
 ## Authentication
 

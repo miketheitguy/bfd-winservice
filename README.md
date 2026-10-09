@@ -94,6 +94,7 @@ Use these guides for the next task:
 | Enable file output or interpret Operational events | [Logs and events](docs/logging.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
 | Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
+| Review RFC 5880 requirements, coverage, and implementation limits | [RFC 5880 conformance review](docs/rfc5880-conformance.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |
 
 For recorded checks and their limits, see the

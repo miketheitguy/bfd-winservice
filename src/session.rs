@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    config::{Options, ProtocolRole, SessionType, Timing, ValidatedOptions},
+    config::{Mode, Options, ProtocolRole, SessionType, Timing, ValidatedOptions},
     packet::{AuthConfig, AuthType, ControlPacket, Diagnostic, State},
 };
 
@@ -21,7 +21,7 @@ pub struct Session {
     pub(crate) diagnostic: Diagnostic,
     pub(crate) local_discriminator: u32,
     pub(crate) remote_discriminator: u32,
-    pub(crate) polling: bool,
+    poll: Poll,
     options: ValidatedOptions,
     timing: Timing,
     auth: AuthConfig,
@@ -31,13 +31,62 @@ pub struct Session {
     remote_min_tx_us: u32,
     remote_detect_mult: u8,
     last_received: Option<Instant>,
+    last_valid: Option<Instant>,
     received_auth_seq: Option<u32>,
     transmit_auth_seq: u32,
     sent_auth_sequences: VecDeque<(u32, Instant)>,
     first_transmitted: Option<Instant>,
     communicating: bool,
     congestion_backoff: u8,
+    congestion_floor_us: u32,
     pending_final: bool,
+}
+
+/// A Final can acknowledge only a transmitted Poll. Quiet requires a subsequent
+/// non-Final packet before another live timer change (RFC 5880 section 6.8.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Poll {
+    Idle,
+    Pending(Option<u32>),
+    Sent(Option<u32>),
+    Quiet,
+}
+
+impl Poll {
+    fn held_tx(self) -> Option<u32> {
+        match self {
+            Self::Pending(tx) | Self::Sent(tx) => tx,
+            _ => None,
+        }
+    }
+
+    fn request(&mut self, held_tx: Option<u32>) {
+        *self = Self::Pending(self.held_tx().or(held_tx));
+    }
+
+    fn receive(&mut self, final_bit: bool) {
+        match (*self, final_bit) {
+            (Self::Sent(_), true) => *self = Self::Quiet,
+            (Self::Quiet, false) => *self = Self::Idle,
+            _ => {}
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Transmission {
+    Periodic,
+    Final,
+    StateChange,
+}
+
+/// Owned wire bytes, borrowed for socket I/O and committed only on success.
+pub(crate) struct PreparedPacket {
+    pub(crate) data: Vec<u8>,
+    poll: bool,
+    final_bit: bool,
+    sequence: u32,
+    generated_at: Instant,
 }
 
 /// Effects of accepting a control packet; no response has been transmitted yet.
@@ -106,7 +155,7 @@ impl Session {
                 } => remote_discriminator.get(),
                 _ => 0,
             },
-            polling: false,
+            poll: Poll::Idle,
             options,
             timing,
             auth,
@@ -116,12 +165,14 @@ impl Session {
             remote_min_tx_us: 1_000_000,
             remote_detect_mult: 1,
             last_received: None,
+            last_valid: None,
             received_auth_seq: None,
             transmit_auth_seq: rand::random(),
             sent_auth_sequences: VecDeque::new(),
             first_transmitted: None,
             communicating: false,
             congestion_backoff: 0,
+            congestion_floor_us: 0,
             pending_final: false,
         }
     }
@@ -131,7 +182,8 @@ impl Session {
         self.state
     }
 
-    /// Returns the local failure or shutdown reason; reestablishment clears it.
+    /// Returns the local failure or shutdown reason. Classical recovery retains it;
+    /// an S-BFD transition back to Up clears it under the initiator's local policy.
     pub fn diagnostic(&self) -> Diagnostic {
         self.diagnostic
     }
@@ -149,7 +201,7 @@ impl Session {
 
     /// Return whether a local Poll sequence is pending.
     pub fn polling(&self) -> bool {
-        self.polling
+        matches!(self.poll, Poll::Pending(_) | Poll::Sent(_))
     }
 
     /// Returns whether a valid response has arrived within the detection window.
@@ -159,38 +211,49 @@ impl Session {
     }
 
     /// Applies S-BFD timing settings while retaining state and discriminators.
-    /// A changed transmit interval starts a Poll sequence when the initiator is Up.
+    /// Wire timing changes start a Poll when the initiator is Up. A TX increase
+    /// is advertised immediately but takes effect only after its Final reply.
     ///
     /// # Errors
-    /// Rejects classical sessions; their negotiated timer updates are unsupported.
+    /// Rejects classical sessions and overlapping transmitted Poll changes.
+    /// After a Final, a non-Final response must arrive before another wire change.
     pub fn set_timing(&mut self, timing: Timing) -> Result<(), ConfigError> {
         if self.options.session_type == SessionType::Classical {
             return Err(ConfigError::ClassicalTimingUpdate);
         }
-        let old_tx = self.desired_min_tx_us();
+        let wire_change = self.state == State::Up
+            && self.options.session_type == SessionType::SbfdInitiator
+            && (self.timing.min_tx_us != timing.min_tx_us
+                || self.timing.detect_mult != timing.detect_mult);
+        if wire_change && matches!(self.poll, Poll::Sent(_) | Poll::Quiet) {
+            return Err(ConfigError::PollInProgress);
+        }
+        let old_tx = self.effective_min_tx_us();
         self.timing.min_tx_us = timing.min_tx_us;
         self.timing.min_rx_us = timing.min_rx_us;
         self.timing.detect_mult = timing.detect_mult;
-        if self.state == State::Up
-            && self.options.session_type == SessionType::SbfdInitiator
-            && old_tx != self.desired_min_tx_us()
-        {
-            self.polling = true;
+        if wire_change {
+            self.poll
+                .request((self.desired_min_tx_us() > old_tx).then_some(old_tx));
         }
         Ok(())
     }
 
     /// Returns the Up rate, or the greater of the startup and Up rates otherwise.
-    /// S-BFD timeout backoff multiplies this interval with saturating arithmetic.
+    /// S-BFD and unanswered classical multihop probes apply saturating backoff.
     pub fn desired_min_tx_us(&self) -> u32 {
         let interval = if self.state == State::Up {
             self.timing.min_tx_us
         } else {
             self.options.startup_tx_us.max(self.timing.min_tx_us)
         };
-        if self.options.session_type == SessionType::SbfdInitiator {
+        if self.options.session_type == SessionType::SbfdInitiator
+            || self.options.mode == Mode::Multihop && self.state != State::Up
+        {
             let base = if self.congestion_backoff == 0 {
                 interval
+            } else if self.options.session_type == SessionType::Classical {
+                interval.max(self.congestion_floor_us)
             } else {
                 interval.max(self.remote_min_rx_us)
             };
@@ -200,10 +263,19 @@ impl Session {
         }
     }
 
+    fn effective_min_tx_us(&self) -> u32 {
+        let desired = self.desired_min_tx_us();
+        if self.state == State::Up {
+            desired.min(self.poll.held_tx().unwrap_or(desired))
+        } else {
+            desired
+        }
+    }
+
     /// Negotiated TX interval before jitter, whether or not traffic is enabled.
     pub fn transmit_interval(&self) -> Duration {
         Duration::from_micros(u64::from(
-            self.desired_min_tx_us().max(self.remote_min_rx_us),
+            self.effective_min_tx_us().max(self.remote_min_rx_us),
         ))
     }
 
@@ -223,7 +295,8 @@ impl Session {
 
     /// Returns the receive-expiry deadline, if monitoring has begun.
     /// S-BFD starts detection after its first generated probe; classical BFD
-    /// requires a validated peer packet first.
+    /// requires a validated peer packet first. AdminDown reception still starts
+    /// peer-discriminator expiry, without enabling liveness detection.
     pub fn detection_deadline(&self) -> Option<Instant> {
         if self.options.session_type == SessionType::SbfdInitiator {
             return self
@@ -232,7 +305,7 @@ impl Session {
                 .map(|last| last + self.detection_time());
         }
         // Also wake in Down to forget the remote discriminator after one Detection Time.
-        self.last_received
+        self.last_valid
             .filter(|_| self.remote_discriminator != 0)
             .map(|last| last + self.detection_time())
     }
@@ -255,7 +328,7 @@ impl Session {
                 || self.remote_demand
                     && self.state == State::Up
                     && self.remote_state == State::Up
-                    && !self.polling)
+                    && !self.polling())
     }
 
     pub(crate) fn minimum_transmit_interval(&self) -> Duration {
@@ -315,7 +388,7 @@ impl Session {
         }
         // RFC 6.8.1 permits resynchronization after twice the Detection Time.
         let last_seq = if self
-            .last_received
+            .last_valid
             .is_some_and(|last| now.saturating_duration_since(last) >= self.detection_time() * 2)
         {
             None
@@ -332,21 +405,23 @@ impl Session {
         let previous_state = self.state;
         let previous_tx = self.desired_min_tx_us();
         self.received_auth_seq = sequence;
+        self.last_valid = Some(now);
         self.remote_discriminator = packet.my_discriminator;
         self.remote_state = packet.state;
         self.remote_demand = packet.demand;
         self.remote_min_rx_us = packet.required_min_rx_us;
         self.remote_min_tx_us = packet.desired_min_tx_us;
         self.remote_detect_mult = packet.detect_mult;
-        if packet.final_bit {
-            self.polling = false;
-        }
+        self.poll.receive(packet.final_bit);
         if self.state == State::AdminDown {
             return Ok(Received {
                 reply_final: false,
                 state_changed: false,
             });
         }
+        self.congestion_backoff = 0;
+        self.congestion_floor_us = 0;
+        self.first_transmitted = None;
         if packet.state == State::AdminDown {
             if self.state != State::Down {
                 self.state = State::Down;
@@ -365,11 +440,8 @@ impl Session {
                 _ => {}
             }
         }
-        if self.state == State::Up && previous_state != State::Up {
-            self.diagnostic = Diagnostic::None;
-        }
         if previous_tx != self.desired_min_tx_us() {
-            self.polling = true;
+            self.poll.request(None);
         }
         self.last_received = Some(now);
         self.communicating = true;
@@ -384,6 +456,7 @@ impl Session {
     /// Classical BFD clears the remote discriminator after one detection time and
     /// authentication tracking after two. S-BFD retains its configured target,
     /// clears outstanding sequences, and doubles its probing backoff on timeout.
+    /// Classical multihop also backs off when discovery or detection expires.
     /// Returns false if the local state did not change.
     pub fn expire(&mut self, now: Instant) -> bool {
         if self.options.session_type == SessionType::SbfdInitiator {
@@ -402,39 +475,64 @@ impl Session {
             if self.state != State::AdminDown {
                 self.state = State::Down;
                 self.diagnostic = Diagnostic::DetectionExpired;
-                self.polling = false;
+                self.poll = Poll::Idle;
             }
             return changed;
         }
-        let Some(last) = self.last_received else {
-            return false;
-        };
-        let elapsed = now.saturating_duration_since(last);
-        if elapsed >= self.detection_time() * 2 {
+        let detection = self.detection_time();
+        let valid_elapsed = self
+            .last_valid
+            .map(|last| now.saturating_duration_since(last));
+        if valid_elapsed.is_some_and(|elapsed| elapsed >= detection * 2) {
             self.received_auth_seq = None;
         }
-        if elapsed < self.detection_time() {
-            return false;
+        let old_tx = self.desired_min_tx_us();
+        let old_interval_us = self.effective_min_tx_us().max(self.remote_min_rx_us);
+        let peer_expired = self.remote_discriminator != 0
+            && valid_elapsed.is_some_and(|elapsed| elapsed >= detection);
+        if peer_expired {
+            self.remote_discriminator = 0;
+            // RFC 5880 section 6.8.18 recommends resetting a stale RX limit.
+            self.remote_min_rx_us = 1;
         }
-        self.remote_discriminator = 0;
-        self.communicating = false;
-        if matches!(self.state, State::Init | State::Up) {
-            let old_tx = self.desired_min_tx_us();
+        let detection_expired = self
+            .last_received
+            .is_some_and(|last| now.saturating_duration_since(last) >= detection);
+        let changed = detection_expired && matches!(self.state, State::Init | State::Up);
+        if detection_expired {
+            self.communicating = false;
+        }
+        if changed {
             self.state = State::Down;
             self.diagnostic = Diagnostic::DetectionExpired;
-            if old_tx != self.desired_min_tx_us() {
-                self.polling = true;
-            }
-            return true;
         }
-        false
+        let retry_expired = self.state == State::Down
+            && self.first_transmitted.is_some_and(|first| {
+                now.saturating_duration_since(first)
+                    >= self.transmit_interval() * u32::from(self.timing.detect_mult)
+            });
+        if self.options.mode == Mode::Multihop
+            && self.state != State::AdminDown
+            && (peer_expired || retry_expired)
+        {
+            if self.congestion_backoff == 0 {
+                // Resetting the peer's stale RX limit must not accelerate retries.
+                self.congestion_floor_us = old_interval_us;
+            }
+            self.congestion_backoff = self.congestion_backoff.saturating_add(1).min(31);
+            self.first_transmitted = Some(now);
+        }
+        if old_tx != self.desired_min_tx_us() {
+            self.poll.request(None);
+        }
+        changed
     }
 
     /// Set AdminDown locally and clear Poll; performs no transport or BGP I/O.
     pub fn admin_down(&mut self) {
         self.state = State::AdminDown;
         self.diagnostic = Diagnostic::AdminDown;
-        self.polling = false;
+        self.poll = Poll::Idle;
     }
 
     /// Encode the current state, reserving an authentication sequence on every call.
@@ -450,25 +548,25 @@ impl Session {
     /// Keyed responses must match an unconsumed generated sequence before its expiry.
     /// Generating a packet reserves its sequence even if a later socket send fails.
     pub fn packet_at(&mut self, final_bit: bool, now: Instant) -> Vec<u8> {
-        self.encode_packet_at(final_bit, true, now)
+        let kind = if final_bit {
+            Transmission::Final
+        } else {
+            Transmission::Periodic
+        };
+        let packet = self.prepare_packet(kind, now);
+        self.record_transmission(&packet);
+        packet.data
     }
 
-    /// Announces a classical state change without adding an unscheduled Poll.
-    /// The pending Poll sequence remains active for periodic transmissions.
-    pub(crate) fn state_change_packet(&mut self) -> Vec<u8> {
-        self.encode_packet_at(false, false, Instant::now())
-    }
-
-    fn encode_packet_at(&mut self, final_bit: bool, include_poll: bool, now: Instant) -> Vec<u8> {
+    /// Prepares wire bytes without changing sequence, Poll, or probe tracking.
+    /// State notifications keep Poll clear; periodic packets carry pending Polls.
+    pub(crate) fn prepare_packet(&self, kind: Transmission, now: Instant) -> PreparedPacket {
         let seamless = self.options.session_type == SessionType::SbfdInitiator;
-        let final_bit = final_bit || seamless && self.pending_final;
-        if final_bit {
-            self.pending_final = false;
-        }
+        let final_bit = matches!(kind, Transmission::Final) || seamless && self.pending_final;
         let packet = ControlPacket {
             diagnostic: self.diagnostic as u8,
             state: self.state,
-            poll: self.polling && include_poll && !final_bit,
+            poll: self.polling() && !matches!(kind, Transmission::StateChange) && !final_bit,
             final_bit,
             control_plane_independent: false,
             demand: seamless,
@@ -479,28 +577,44 @@ impl Session {
             required_min_rx_us: if seamless { 0 } else { self.timing.min_rx_us },
             required_min_echo_rx_us: 0,
         };
-        let data = packet.encode(&self.auth, self.transmit_auth_seq);
-        if seamless {
-            self.first_transmitted.get_or_insert(now);
-            if matches!(
+        PreparedPacket {
+            data: packet.encode(&self.auth, self.transmit_auth_seq),
+            poll: packet.poll,
+            final_bit,
+            sequence: self.transmit_auth_seq,
+            generated_at: now,
+        }
+    }
+
+    pub(crate) fn record_transmission(&mut self, packet: &PreparedPacket) {
+        if packet.final_bit {
+            self.pending_final = false;
+        }
+        if packet.poll {
+            self.poll = Poll::Sent(self.poll.held_tx());
+        }
+        let seamless = self.options.session_type == SessionType::SbfdInitiator;
+        if seamless || self.options.mode == Mode::Multihop {
+            self.first_transmitted.get_or_insert(packet.generated_at);
+        }
+        if seamless
+            && matches!(
                 self.auth.kind(),
                 AuthType::KeyedMd5
                     | AuthType::MeticulousMd5
                     | AuthType::KeyedSha1
                     | AuthType::MeticulousSha1
-            ) {
-                // Bound memory even if callers generate packets faster than the runtime.
-                if self.sent_auth_sequences.len() == 1024 {
-                    self.sent_auth_sequences.pop_front();
-                }
-                self.sent_auth_sequences
-                    .push_back((self.transmit_auth_seq, now));
+            )
+        {
+            // Bound memory even if callers generate packets faster than the runtime.
+            if self.sent_auth_sequences.len() == 1024 {
+                self.sent_auth_sequences.pop_front();
             }
+            self.sent_auth_sequences
+                .push_back((packet.sequence, packet.generated_at));
         }
-        // Reserve the next sequence for each generated packet, even if sending fails.
-        // Incrementing per transmitted packet is also legal for non-meticulous auth.
-        self.transmit_auth_seq = self.transmit_auth_seq.wrapping_add(1);
-        data
+        // Meticulous authentication advances by exactly one per successful send.
+        self.transmit_auth_seq = packet.sequence.wrapping_add(1);
     }
 
     fn receive_seamless(&mut self, data: &[u8], now: Instant) -> Result<Received, ReceiveError> {
@@ -544,9 +658,7 @@ impl Session {
         self.remote_min_tx_us = packet.desired_min_tx_us;
         self.remote_detect_mult = packet.detect_mult;
         self.congestion_backoff = 0;
-        if packet.final_bit {
-            self.polling = false;
-        }
+        self.poll.receive(packet.final_bit);
         if self.state != State::AdminDown {
             self.state = if packet.state == State::Up {
                 State::Up
@@ -565,7 +677,7 @@ impl Session {
             self.communicating = true;
             self.pending_final |= packet.poll;
             if self.state == State::Up && old_tx != self.desired_min_tx_us() {
-                self.polling = true;
+                self.poll.request(None);
             }
         }
         Ok(Received {
@@ -579,6 +691,52 @@ impl Session {
 mod tests {
     use super::*;
     use crate::packet::{test_packet, AuthType};
+
+    #[test]
+    fn unsent_packets_do_not_advance_sequences_or_acknowledge_polls() {
+        let mut session = session();
+        session.auth = AuthConfig::new(AuthType::MeticulousMd5, 0, b"secret".to_vec()).unwrap();
+        session.transmit_auth_seq = u32::MAX;
+        session.poll = Poll::Pending(None);
+        let now = Instant::now();
+        for _ in 0..100 {
+            let packet = session.prepare_packet(Transmission::Periodic, now);
+            assert_eq!(
+                session.auth.verify(&packet.data, None).unwrap(),
+                Some(u32::MAX)
+            );
+        }
+        session.poll.receive(true);
+        assert_eq!(session.poll, Poll::Pending(None));
+        assert!(session.first_transmitted.is_none());
+        let packet = session.prepare_packet(Transmission::Periodic, now);
+        session.record_transmission(&packet);
+        assert_eq!(session.poll, Poll::Sent(None));
+        let packet = session.prepare_packet(Transmission::Periodic, now);
+        assert_eq!(session.auth.verify(&packet.data, None).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn unsent_seamless_final_keeps_its_reply_and_probe_tracking_pending() {
+        let mut options = (*session().options).clone();
+        options.mode = Mode::SingleHop;
+        options.multihop = false;
+        options.session_type = SessionType::SbfdInitiator;
+        options.remote_discriminator = Some(99);
+        options.auth = AuthType::MeticulousSha1;
+        options.auth_key = Some("secret".into());
+        let mut session = Session::from_config(options.into_validated().unwrap());
+        session.pending_final = true;
+        let packet = session.prepare_packet(Transmission::Periodic, Instant::now());
+        assert!(ControlPacket::decode(&packet.data).unwrap().final_bit);
+        assert!(session.pending_final);
+        assert!(session.sent_auth_sequences.is_empty());
+        assert!(session.detection_deadline().is_none());
+        session.record_transmission(&packet);
+        assert!(!session.pending_final);
+        assert_eq!(session.sent_auth_sequences.len(), 1);
+        assert!(session.detection_deadline().is_some());
+    }
 
     #[test]
     fn seamless_authentication_correlates_wrapped_sequences_and_consumes_each_once() {
@@ -687,7 +845,7 @@ mod tests {
         let before = (
             session.state,
             session.diagnostic,
-            session.polling,
+            session.poll,
             session.remote_discriminator,
             session.remote_min_rx_us,
             session.remote_min_tx_us,
@@ -707,7 +865,7 @@ mod tests {
             (
                 session.state,
                 session.diagnostic,
-                session.polling,
+                session.poll,
                 session.remote_discriminator,
                 session.remote_min_rx_us,
                 session.remote_min_tx_us,
@@ -717,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_report_failure_and_clear_on_reestablishment() {
+    fn diagnostics_report_failure_and_survive_reestablishment() {
         let now = Instant::now();
         let mut session = session();
         session
@@ -738,7 +896,7 @@ mod tests {
         session
             .receive(&wire(&test_packet(State::Up)), deadline)
             .unwrap();
-        assert_eq!(session.packet(false)[0], 0x20);
+        assert_eq!(session.packet(false)[0], 0x21);
         session
             .receive(&wire(&test_packet(State::Down)), deadline)
             .unwrap();
@@ -762,7 +920,7 @@ mod tests {
             .receive(&wire(&test_packet(State::Init)), now)
             .unwrap();
         assert_eq!(session.state, State::Up);
-        assert!(session.polling);
+        assert!(session.polling());
         assert_eq!(session.transmit_interval(), Duration::from_micros(200_000));
         assert_eq!(session.detection_time(), Duration::from_micros(600_000));
         assert!(!session.expire(now + Duration::from_micros(599_999)));
@@ -798,11 +956,14 @@ mod tests {
         let reply = ControlPacket::decode(&session.packet(true)).unwrap();
         assert!(reply.final_bit);
         assert!(!reply.poll);
-        assert!(session.polling);
+        assert!(session.polling());
         peer.poll = false;
         peer.final_bit = true;
         session.receive(&wire(&peer), Instant::now()).unwrap();
-        assert!(!session.polling);
+        assert!(session.polling()); // No Poll was transmitted by the Final reply.
+        assert!(ControlPacket::decode(&session.packet(false)).unwrap().poll);
+        session.receive(&wire(&peer), Instant::now()).unwrap();
+        assert!(!session.polling());
     }
     #[test]
     fn remote_demand_only_suppresses_when_both_ends_are_up() {
@@ -811,6 +972,7 @@ mod tests {
         peer.demand = true;
         session.receive(&wire(&peer), Instant::now()).unwrap();
         assert!(session.periodic_enabled());
+        session.packet(false);
         peer.state = State::Up;
         peer.final_bit = true;
         session.receive(&wire(&peer), Instant::now()).unwrap();
@@ -992,7 +1154,7 @@ mod tests {
                 .receive(&test_packet(State::Init).encode(&auth, 100), now)
                 .unwrap();
             assert_eq!(session.state, State::Up);
-            assert!(session.polling);
+            assert!(session.polling());
             let sequence = session.received_auth_seq;
             let deadline = session.detection_deadline();
             for state in [State::AdminDown, State::Down, State::Init, State::Up] {
@@ -1014,7 +1176,7 @@ mod tests {
                     assert_eq!(session.state, State::Up);
                     assert_eq!(session.diagnostic, Diagnostic::None);
                     assert_eq!(session.remote_discriminator, 0x10203040);
-                    assert!(session.polling);
+                    assert!(session.polling());
                     assert!(session.periodic_enabled());
                     assert_eq!(session.received_auth_seq, sequence);
                     assert_eq!(session.last_received, Some(now));

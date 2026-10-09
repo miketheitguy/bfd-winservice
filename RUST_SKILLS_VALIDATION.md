@@ -2,6 +2,33 @@
 
 Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
 
+## RFC 5880 validation — 2026-10-08
+
+The [RFC conformance review](docs/rfc5880-conformance.md) maps the complete
+document to implementation and tests, including the RFC 7880 overrides used by
+S-BFD. Its [remediation record](CODE_REVIEW.md#rfc-5880-conformance-remediation--2026-10-08)
+describes the confirmed findings, Rust skill review, and documentation changes.
+
+Classical recovery retains LocalDiag. Authenticated validity and liveness use
+separate clocks, including in AdminDown. Stale peer RX limits expire after one
+detection time. Multihop retries back off from the greater of the startup base
+and the preceding negotiated rate. Live S-BFD TX increases retain the old
+effective rate until a transmitted Poll is acknowledged; another wire change
+requires a subsequent non-Final response. Runtime socket failures don't commit
+sequence, Poll, or S-BFD probe tracking.
+
+Normal classical shutdown with a communicating peer repeats permitted AdminDown
+announcements for the detection period, capped at five seconds. The cap and
+unsupported optional features are explicit in the requirement map. Earlier
+dated entries describe the revisions reviewed at those times.
+
+All **124 tests** passed in debug, optimized, and ASan builds; **54 configuration
+and protocol tests** passed under Miri with strict provenance and tree borrows.
+Formatting, strict Clippy, rustdoc, and the rebuilt production release's
+x64 PE hardening/PDB check passed. The default suite still ignores one opt-in
+CIM schema test. These checks don't replace live service, Event Viewer, real
+peer interoperability, or BGP provider validation.
+
 ## rust-security fixes — 2026-10-08
 
 The current runtime shares immutable validated startup settings and one bounded
