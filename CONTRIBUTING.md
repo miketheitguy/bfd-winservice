@@ -406,18 +406,19 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 ### Build with GitHub Actions
 
 The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
-to `main`, tags matching `v*`, pull requests, and manual dispatch. Every run
-checks version stamping, Rust formatting, Clippy, and optimized tests on an x64
-`windows-2025` runner using `rust-toolchain.toml`.
+of version tags matching `v*` and supports manual dispatch. The build job runs
+only when the selected ref is a version tag. It checks version stamping, Rust
+formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
+`rust-toolchain.toml`.
 
 Only builds of version tags package an MSI. Before compilation, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
 package entries in `Cargo.toml` and `Cargo.lock` in the runner's checkout.
 The executable, MSI, artifact filenames, and installation checks use that
 stamped version. The workflow validates production executable hardening before
-testing installation. Branch and pull-request runs perform Rust checks without
-packaging an MSI. For a manual MSI build, select a version tag as the workflow
-ref; a manual build from a branch runs the checks only.
+testing installation. Pushes to `main` or other branches and pull requests do
+not trigger this workflow. For a manual MSI build, select a version tag as the
+workflow ref; a manual run from a branch skips the build job.
 
 The workflow explicitly passes `-AcceptWixEula` for tagged MSI builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.
@@ -456,8 +457,8 @@ Pushing a version tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the build, hardening, and installation checks pass. The release attaches the MSI,
 its SHA-256 checksum, WiX symbols, and matching Rust PDB, with generated release
-notes. Branch pushes and pull requests run checks only. A manual workflow run
-on a version tag produces Actions artifacts without publishing a release.
+notes. A manual workflow run on a version tag produces Actions artifacts
+without publishing a release.
 
 Use the GitHub tag as the release version source. The first stable release is
 `v1.0.0`; increase the minor version for each subsequent release, such as

@@ -66,8 +66,9 @@ Download `BfdWinService-VERSION-x64.msi` and its `.sha256` file from the version
 [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
 `VERSION` is the release tag without its leading `v`. Tagged builds also provide
 the `BfdWinService-x64-COMMIT_SHA` Actions artifact; `COMMIT_SHA` identifies the
-source commit. Branch and pull-request builds run checks without producing an
-MSI. In **PowerShell as Administrator**, install the MSI:
+source commit. The build workflow runs only for version tags; branch pushes
+and pull requests do not trigger it. In **PowerShell as Administrator**, install
+the MSI:
 
 ```powershell
 $msi = (Resolve-Path 'MSI_PATH').Path
