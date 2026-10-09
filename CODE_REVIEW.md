@@ -2,6 +2,72 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## State and diagnostic logging review — 2026-10-08
+
+Reviewed state changes against
+[RFC 5880 section 6.2](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.2)
+and the state/diagnostic fields in
+[section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1).
+The [Operational event reference](docs/logging.md#operational-events) lists all
+22 event IDs, fields, and severity levels. Fixed these logging gaps:
+
+| Finding | Correction |
+| --- | --- |
+| State text and ETW output were queued separately; the state-event helper alone produced no file entry. | Each state or diagnostic record owns both the ETW payload and its text representation. The worker submits it to ETW and writes the enabled file with the same ID and level. |
+| AdminDown shared event 104 with Init; reflector maintenance was text-only, and reflector shutdown skipped state logging. | Dedicated Informational AdminDown event 106, Informational Up event 102, and separate Warning diagnostic 207 cover local session and reflector entity transitions. |
+| Peer state or diagnostic changes were invisible when local state stayed unchanged. | Track one accepted peer report and emit remote state events 110–113 and diagnostic events 201–208. Authentication/packet rejection precedes report changes. Repeated reports are suppressed. |
+| Diagnostics 2, 4, 5, 6, and 8 had no manifest mapping or events. | Report these peer reasons as Errors. Diagnostics 1, 3, and 7 are Warnings; 0 and reserved values have no standalone diagnostic event. Local optional Echo/path mechanisms remain unsupported. |
+
+State and diagnostic severity are independent. Up and AdminDown remain
+Informational, including recovery with a retained historical LocalDiag.
+Entering AdminDown emits its state event and the Warning diagnostic 7 event.
+Diagnostic 6 is Error, following the requested path-failure policy.
+`--console` retains STDOUT and optional file output without ETW registration.
+
+The administrative event-ID and file-output regressions first failed against
+the preceding code. Tests cover every ID/level mapping, manifest agreement,
+packed payload and origin fields, paired submissions/file lines, disabled file
+output, ETW failure isolation, reflector maintenance/shutdown, and recovery.
+Native UDP tests report all peer diagnostic codes while local state remains Up
+and verify local timeout, peer-down, and shutdown diagnostics.
+
+Applied the [rust-check skill](.codex/skills/rust-check/SKILL.md), the available
+[rust-security instructions](.codex/skills/rust-security/SKILL.md), and relevant
+[Rust skill rules](.codex/skills/rust-skills/SKILL.md). Event records move owned
+buffers through the existing bounded queue; synchronous ETW writes borrow those
+buffers. Peer reports use one inline Copy value, with no unbounded collection.
+The changes add no unsafe code, protocol-loop locks, or secret-bearing messages.
+The rust-security skill's referenced domain files remain absent.
+
+Validation passed: **133 tests** in each debug, optimized, and ASan suite,
+with one opt-in CIM schema test ignored; **35 session, event-payload, and S-BFD
+tests** under Miri with strict provenance and tree borrows; formatting; strict
+all-target Clippy; rustdoc with warnings and missing documentation denied; and
+the rebuilt production release's x64 PE hardening/PDB regression. The manifest
+compiled with the Windows SDK tools, and all 22 Rust descriptors match that
+output. Native test suites ran sequentially to avoid shared loopback-port
+conflicts. Documentation links and whitespace checks passed.
+
+Native emission capture exercises the production output loop but doesn't
+establish Event Viewer delivery. Installed provider registration, service
+settings, and BGP state weren't changed. The existing 256-record queue and
+500-millisecond shutdown drain limits still permit output loss when blocked.
+
+### Documentation change log
+
+Applied `technical-documentation` to the affected event references.
+**Score: 9/10 → 10/10** for the event reference: the failed fact-verification
+row is corrected, with no remaining blocking descriptions. The complete
+revised reference is in [Logs and events](docs/logging.md).
+
+The documentation changes follow these skill rules:
+
+| Change | Rule ID and name | Reason |
+| --- | --- | --- |
+| Correct AdminDown, peer-report, reflector, and dual-output descriptions | P11 — Every behavior verified in code | The event reference matches the implementation and distinguishes submissions from delivery. |
+| Document every state and diagnostic ID, level, and origin field | S6 — Tables have headers, introductions, and no empty cells | Administrators can look up event meanings and severity without reading source code. |
+| Document accepted peer state/diagnostic getters and emitter-test limits | A1 — Every public element documented | Library callers and maintainers can interpret peer reports and validation evidence. |
+
 ## RFC 5880 conformance remediation — 2026-10-08
 
 Re-read the complete [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html),

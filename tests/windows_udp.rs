@@ -276,7 +276,10 @@ fn peer_communication_notifications_cover_down_state_timeout_and_recovery_once()
         "{contents}"
     );
     assert!(
-        contents.contains("communication=stopped remote_discriminator=99"),
+        contents
+            .lines()
+            .any(|line| line.contains("communication=stopped")
+                && line.contains("remote_discriminator=99")),
         "{contents}"
     );
     assert!(contents.contains("state=Up diagnostic=None"), "{contents}");
@@ -522,8 +525,109 @@ fn state_notifications_are_authenticated_without_periodic_traffic_or_extra_polls
         ("state=Down diagnostic=DetectionExpired", 1),
         ("state=AdminDown diagnostic=AdminDown", 1),
     ] {
-        assert_eq!(contents.matches(change).count(), count, "{contents}");
+        assert_eq!(
+            contents
+                .lines()
+                .filter(|line| {
+                    [102, 103, 106]
+                        .iter()
+                        .any(|id| line.contains(&format!("event_id={id} ")))
+                        && line.contains(change)
+                })
+                .count(),
+            count,
+            "{contents}"
+        );
     }
+    for id in [201, 203, 207] {
+        let expected = format!("event_id={id} level=Warning scope=Local");
+        assert_eq!(contents.matches(&expected).count(), 1, "{contents}");
+    }
+}
+
+#[test]
+fn peer_diagnostics_and_states_are_logged_without_local_state_changes() {
+    let log_file = test_log("peer-diagnostics");
+    let mut options = options("127.0.0.100", "127.0.0.101", "multihop");
+    options.source_port = Some(55100);
+    options.log_to_file = true;
+    options.log_file_path = log_file.path().to_path_buf();
+    let peer = UdpSocket::bind("127.0.0.101:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let sender = bfd_sender("127.0.0.101");
+    let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+    let mut engine = RunningEngine::start(options);
+    let mut buffer = [0; 512];
+    peer.recv_from(&mut buffer).unwrap();
+    let mut packet = peer_packet(State::Down);
+    packet.poll = true;
+    packet.desired_min_tx_us = 100_000;
+    let mut exchange = |packet: &ControlPacket| {
+        sender
+            .send_to(&packet.encode(&auth, 0), "127.0.0.100:4784")
+            .unwrap();
+        loop {
+            let (length, _) = peer.recv_from(&mut buffer).unwrap();
+            let response = ControlPacket::decode(&buffer[..length]).unwrap();
+            if response.final_bit {
+                return response;
+            }
+        }
+    };
+    assert_eq!(exchange(&packet).state, State::Init);
+    assert_eq!(exchange(&packet).state, State::Init); // Repeated remote Down is silent.
+    packet.state = State::Init;
+    packet.your_discriminator = 7;
+    assert_eq!(exchange(&packet).state, State::Up);
+    packet.state = State::Up;
+    for diagnostic in 1..=8 {
+        packet.diagnostic = diagnostic;
+        for _ in 0..2 {
+            let response = exchange(&packet);
+            assert_eq!(response.state, State::Up);
+            assert_eq!(
+                response.diagnostic, 0,
+                "peer diagnostics never become LocalDiag"
+            );
+        }
+    }
+    for diagnostic in [0, 9, 31] {
+        packet.diagnostic = diagnostic;
+        assert_eq!(exchange(&packet).state, State::Up);
+    }
+    packet.diagnostic = 0;
+    packet.state = State::Down;
+    assert_eq!(exchange(&packet).state, State::Down);
+    packet.state = State::AdminDown;
+    assert_eq!(exchange(&packet).state, State::Down); // Remote state changes, local state doesn't.
+    engine.stop();
+    let contents = std::fs::read_to_string(log_file.path()).unwrap();
+    for (code, level) in [
+        (1, "Warning"),
+        (2, "Error"),
+        (3, "Warning"),
+        (4, "Error"),
+        (5, "Error"),
+        (6, "Error"),
+        (7, "Warning"),
+        (8, "Error"),
+    ] {
+        let expected = format!("event_id={} level={level} scope=Remote", 200 + code);
+        assert_eq!(contents.matches(&expected).count(), 1, "{contents}");
+    }
+    assert_eq!(contents.matches("event_id=111 level=Warning").count(), 2);
+    assert_eq!(
+        contents.matches("event_id=110 level=Information").count(),
+        1
+    );
+    assert_eq!(
+        contents.matches("event_id=102 level=Information").count(),
+        1
+    );
+    assert_eq!(contents.matches("event_id=103 level=Warning").count(), 1);
+    assert!(!contents.contains("event_id=200"));
+    assert!(!contents.contains("event_id=209"));
+    assert!(!contents.contains("event_id=231"));
 }
 
 #[test]

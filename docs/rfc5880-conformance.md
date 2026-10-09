@@ -26,6 +26,7 @@ implementation or its regression tests:
 | 4.1–4.4, 6.7 | Password, keyed/meticulous MD5, and keyed/meticulous SHA-1 formats | Both mandatory SHA-1 variants and all optional formats are supported. Digest fixtures verify padded binary keys and whole-packet hashes; password comparisons and digest comparisons use constant-time equality. |
 | 5, 6.4, 6.8.5, 6.8.8–6.8.10 | Optional Echo function | Echo is unsupported. Every transmitted control packet advertises zero Required Min Echo RX Interval. No Echo state or diagnostic 2 is originated. |
 | 6.1–6.2, 6.8.6 | Ordered reception and classical four-state machine | [session.rs](../src/session.rs) tests every local/remote state pair. Transport, structural, discriminator, and authentication rejection precede session mutation. Local AdminDown updates authenticated peer parameters before stopping state-machine processing. |
+| 4.1, 6.2 | Assigned diagnostic codes and all four state values in logs | [event_log.rs](../src/event_log.rs) maps local and peer states to separate Operational IDs and reports diagnostics 1–8 with origin context. Code 0 has no standalone diagnostic event. The output worker mirrors each state/diagnostic record to the enabled file. [Event IDs and severity policy](logging.md#operational-events) are service policy, not an RFC severity requirement. |
 | 6.3 | Nonzero, unique local discriminator; Your Discriminator selects a session | The runtime provisions one session per process and exclusively binds its receive socket. Known Your Discriminator must match; zero is accepted only for Down/AdminDown startup with matching path metadata. See the uniqueness and transport limits below. |
 | 6.5, 6.8.6–6.8.7 | Scheduled Poll sequence and prompt Final responses | Pending and transmitted Polls are distinct states. An unsolicited Final cannot complete an unsent Poll. Valid peer Polls receive Final with P clear, independently of periodic traffic; local AdminDown stops processing before replying, following the ordered reception procedure. |
 | 6.6, 6.8.11–6.8.14 | Optional local Demand mode; peer Demand suppression | Local Demand mode is unsupported. When both classical ends are Up and the peer advertises D, periodic traffic stops unless a Poll is pending. A Final reply doesn't complete the local Poll. S-BFD D identifies an initiator instead of enabling classical Demand mode. |
@@ -105,6 +106,15 @@ The shutdown test in [windows_udp.rs](../tests/windows_udp.rs) first failed with
 a missing second AdminDown packet, then passed with the grace period. Existing
 byte fixtures, all 16 state transitions, authentication rejection tests, and
 native Poll scheduling checks remain part of the suite.
+
+The logging regressions verify all state/diagnostic ID and level mappings against
+the SDK-compiled manifest, exact payload fields, paired ETW/file output, disabled
+file output, and continued file logging after an ETW error. The UDP regression
+accepts every assigned peer diagnostic while the local session stays Up and
+checks repeated-report suppression. Runtime tests cover reflector maintenance,
+shutdown, and Informational recovery with a retained local failure diagnostic.
+Invalid-header and authentication tests verify that rejected packets don't
+change the recorded peer state or diagnostic.
 
 For the validation commands, see [Run development checks](../CONTRIBUTING.md#run-development-checks).
 For executed checks and their limits, see the latest

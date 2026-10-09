@@ -2,6 +2,38 @@
 
 Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
 
+## State and diagnostic logging validation — 2026-10-08
+
+The [logging review](CODE_REVIEW.md#state-and-diagnostic-logging-review--2026-10-08)
+records the defects and corrections. The
+[event reference](docs/logging.md#operational-events) documents the 22 Operational
+events, including separate local/remote states and diagnostic IDs 201–208.
+State and diagnostic records share their ETW descriptor, packed payload, and
+file representation. Diagnostic 0 has no standalone event; Up and AdminDown
+state events remain Informational independently of the diagnostic level.
+
+Peer state and diagnostic getters update only after acceptance. Tracking uses
+one inline report per runtime, and record buffers move through the existing
+bounded queue. ETW borrows the packed bytes only during the synchronous call.
+No unsafe code or protocol-loop locks were added. Existing authentication tests
+verify that rejected packets don't overwrite peer state or diagnostic context.
+
+Emitter capture checks paired submissions and file output through the production
+writer, including ETW failure isolation and `LogToFile=0`. UDP tests cover all
+assigned peer codes without a local state transition; reflector tests cover
+maintenance and shutdown. Console mode continues to use STDOUT and the enabled
+file without ETW. Event Viewer delivery and installed service behavior require
+deployment validation; these tests don't change service or BGP configuration.
+
+Earlier entries describe the revisions reviewed at those times.
+
+All **133 tests** passed in each debug, optimized, and ASan suite, with one
+opt-in CIM schema test ignored. **35 tests** covering sessions, event payloads,
+and S-BFD passed under Miri with strict provenance and tree borrows. The SDK
+compiled the manifest, and all 22 Rust descriptors match its generated output.
+Formatting, strict all-target Clippy, rustdoc, documentation links, and the
+rebuilt production release's x64 PE hardening/PDB regression passed.
+
 ## RFC 5880 validation — 2026-10-08
 
 The [RFC conformance review](docs/rfc5880-conformance.md) maps the complete

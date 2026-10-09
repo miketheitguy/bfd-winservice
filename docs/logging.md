@@ -8,9 +8,9 @@ In Windows Service Control Manager (SCM) mode, the service uses Event Tracing fo
 
 | Destination | When used | Content |
 | --- | --- | --- |
-| `BFD-Service/Operational` | SCM mode, with manifest installed and channel enabled | Lifecycle, peer communication, BFD state, and authentication failures |
+| `BFD-Service/Operational` | SCM mode, with manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, and authentication failures |
 | STDOUT | `--console` | BFD log messages; no ETW registration |
-| `LogFilePath` | Either mode, with `LogToFile=1` | Append log with ISO-8601 Coordinated Universal Time (UTC) timestamps, including additional diagnostics |
+| `LogFilePath` | Either mode, with `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
 
 Ordinary send errors are logged at most once per second. Generic discard reasons require `Verbose=1` and have a separate one-second limit. These messages go to STDOUT or the configured file; they do not produce Operational events.
 
@@ -26,7 +26,7 @@ an Operational event.
 
 At shutdown, the logger allows up to 500 milliseconds for queued output to drain.
 If output remains blocked, execution ends without waiting for that writer.
-Queued lifecycle events can be lost in this case. File timestamps record the
+Queued events can be lost in this case. File timestamps record the
 time the writer writes each entry, so slow output can delay them relative to
 the underlying BFD state change.
 
@@ -95,7 +95,13 @@ To disable file output, set `LogToFile` to DWORD `0` and restart execution. See 
 
 ## Operational events
 
-In Event Viewer, open **Applications and Services Logs → BFD-Service → Operational**. The provider emits these events:
+In Event Viewer, open **Applications and Services Logs → BFD-Service → Operational**.
+The provider uses one Operational channel. State events and diagnostic events
+are separate records, with independent severity levels.
+
+### Lifecycle, communication, and state events
+
+The following events identify execution, communication, and state changes:
 
 | ID | Level | Meaning |
 | --- | --- | --- |
@@ -104,24 +110,102 @@ In Event Viewer, open **Applications and Services Logs → BFD-Service → Opera
 | 3 | Error | Configuration, initialization, or execution failed |
 | 100 | Information | Valid peer communication started or resumed |
 | 101 | Warning | No valid peer packet arrived within the detection interval |
-| 102 | Information | BFD entered Up |
-| 103 | Warning | BFD entered Down after a timeout or peer-reported Down/AdminDown |
-| 104 | Information | BFD entered Init or local AdminDown |
+| 102 | Information | Local session or reflector entity entered Up |
+| 103 | Warning | Local session entered Down after a timeout or peer-reported Down/AdminDown |
+| 104 | Information | Local session entered Init |
 | 105 | Warning | Authentication verification failed |
+| 106 | Information | Local session or reflector entity entered AdminDown |
+| 110 | Information | Peer reported AdminDown |
+| 111 | Warning | Peer reported Down |
+| 112 | Information | Peer reported Init |
+| 113 | Information | Peer reported Up |
 
-Events 100–104 include endpoint addresses, discriminators, previous/current states, diagnostic, and transmit/detection intervals in microseconds. Event 101 retains the last known remote discriminator. Events 100/101 track valid reception separately from Up: a peer sending Down or AdminDown packets is still communicating. Repeated packets or timeout checks do not duplicate these events.
+Events 100–104 and 106 include endpoint addresses, discriminators, previous and
+current local states, the local diagnostic, and transmit/detection intervals in
+microseconds. Events 110–113 carry the peer's previous and current states and
+diagnostic instead. State values follow
+[RFC 5880 section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1):
+`0` is AdminDown, `1` is Down, `2` is Init, and `3` is Up.
+
+Event 101 retains the last known remote discriminator. Events 100/101 track
+valid reception separately from Up: a peer sending Down or AdminDown packets
+is still communicating. Loss of valid reception produces warning 101. If the
+local session was Init or Up, detection expiry also produces warning 103 and
+diagnostic warning 201.
+
+The first accepted peer report and subsequent peer state changes produce
+events 110–113, even when the local state doesn't change. Repeated identical
+reports don't duplicate these events. Logging starts a fresh peer observation
+after communication expires or the peer discriminator changes. Rejected
+packets never update the recorded peer state or diagnostic.
+
+### Diagnostic events
+
+The diagnostic names follow
+[RFC 5880 section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1).
+The following severity levels are the service's logging policy:
+
+| Diagnostic code | RFC meaning | Event ID | Level |
+| --- | --- | --- | --- |
+| 0 | No Diagnostic | No diagnostic event | None |
+| 1 | Control Detection Time Expired | 201 | Warning |
+| 2 | Echo Function Failed | 202 | Error |
+| 3 | Neighbor Signaled Session Down | 203 | Warning |
+| 4 | Forwarding Plane Reset | 204 | Error |
+| 5 | Path Down | 205 | Error |
+| 6 | Concatenated Path Down | 206 | Error |
+| 7 | Administratively Down | 207 | Warning |
+| 8 | Reverse Concatenated Path Down | 208 | Error |
+
+Diagnostic events include the state-event fields and an `Origin` field:
+`0` means Local session; `1` means Remote peer. States and diagnostics describe
+that origin. `PreviousState` is the preceding state, or the reported state
+when there is no preceding peer observation or only the diagnostic changed.
+
+Entering local Down or AdminDown emits its nonzero diagnostic as a separate
+event. For example, administrative shutdown emits Informational state event
+106 and Warning diagnostic event 207. Up state events remain Informational.
+Classical recovery retains the earlier local failure diagnostic in the Up
+event payload, but doesn't re-emit that historical diagnostic as another
+Warning or Error.
+
+An accepted peer diagnostic produces an event on its first observation or
+when its code changes, even if the local or peer state stays unchanged. A
+peer's transition into Down or AdminDown also reports its nonzero diagnostic
+again for that incident. Repeated identical reports are suppressed. Diagnostic
+`0` and reserved codes `9`–`31` produce no standalone diagnostic event; state
+and communication events still occur and can include those diagnostic values.
 
 The diagnostic is the local reason: `0` initially, `1` when Init/Up detection
-expires, `3` for a peer-signaled failure, and `7` for local shutdown. Classical
-recovery retains the preceding failure reason, including in an Up event.
+expires, `3` for a peer-signaled failure, and `7` for local shutdown or reflector
+maintenance. Peer diagnostics don't replace this local reason. The service
+reports peer codes 2, 4, 5, 6, and 8 without implementing local Echo or external
+forwarding-plane/path notifications.
 See [States and diagnostics](protocol.md#states-and-diagnostics)
 for the transition rules.
 
+### Service and console output
+
+In SCM mode, the output worker submits each state or diagnostic record to ETW
+and writes its text representation to the file when `LogToFile=1`. Both outputs
+use the same event ID and severity. File entries include `event_id`, `level`,
+and `scope=Local` or `scope=Remote`, followed by the state or diagnostic context.
+Each entry starts with the writer's UTC timestamp.
+
+With `--console`, the same event text goes to STDOUT and the enabled file.
+Console mode doesn't register or write to ETW. With `LogToFile=0`, neither mode
+opens or writes `LogFilePath`.
+
 S-BFD initiators use these events for valid responses, Up, and detection expiry.
 An AdminDown response keeps communication active while the target entity is in
-maintenance. Reflectors emit lifecycle and authentication events without
-maintaining per-peer state. Live-setting reload errors appear in text logs and
+maintenance. Reflectors log local entity transitions into AdminDown and Up,
+and administrative shutdown, alongside lifecycle and authentication events.
+They remain stateless for peers and don't emit per-peer communication, state,
+or diagnostic events. A reflector's unused `PeerAddress` is the unspecified
+address for its IP family. Live-setting reload errors appear in text logs and
 leave the preceding settings active.
+
+### Authentication events and provider identity
 
 Event 105 includes the packet source address/port, configured authentication type/key ID, local discriminator, and rejection reason. It is limited to once per second per process, independently of verbose logging. Keys, passwords, digests, and packet payloads are omitted. Malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate this event.
 
@@ -130,5 +214,9 @@ The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](..
 ## Logging failures
 
 ETW registration failures are reported to STDERR before the optional file log is open. ETW write failures go to the optional text log. Neither stops BFD.
+For each queued state or diagnostic record, the worker attempts ETW output
+before file output. An ETW failure doesn't suppress the file entry; a file
+failure doesn't disable later ETW writes. Queue loss, blocked output, and
+shutdown drain limits still apply to both destinations.
 
 The logger starts before configuration is read. Its output worker registers the provider before processing queued events, allowing registry and file-log startup failures to emit event 3. Dispatcher/control-handler failures, registration failures, blocked output, queue overflow, or abrupt process termination can prevent lifecycle events. A successful ETW write does not guarantee Event Log delivery; install the manifest and keep the channel enabled.

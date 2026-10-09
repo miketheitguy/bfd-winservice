@@ -29,6 +29,19 @@ const SESSION_UP: EVENT_DESCRIPTOR = descriptor(102, 4, 2, 0x2);
 const SESSION_DOWN: EVENT_DESCRIPTOR = descriptor(103, 3, 2, 0x2);
 const SESSION_STATE_CHANGED: EVENT_DESCRIPTOR = descriptor(104, 4, 2, 0x2);
 const AUTHENTICATION_FAILED: EVENT_DESCRIPTOR = descriptor(105, 3, 2, 0x2);
+const SESSION_ADMIN_DOWN: EVENT_DESCRIPTOR = descriptor(106, 4, 2, 0x2);
+const REMOTE_ADMIN_DOWN: EVENT_DESCRIPTOR = descriptor(110, 4, 2, 0x2);
+const REMOTE_DOWN: EVENT_DESCRIPTOR = descriptor(111, 3, 2, 0x2);
+const REMOTE_INIT: EVENT_DESCRIPTOR = descriptor(112, 4, 2, 0x2);
+const REMOTE_UP: EVENT_DESCRIPTOR = descriptor(113, 4, 2, 0x2);
+const DIAGNOSTIC_DETECTION_EXPIRED: EVENT_DESCRIPTOR = descriptor(201, 3, 3, 0x4);
+const DIAGNOSTIC_ECHO_FAILED: EVENT_DESCRIPTOR = descriptor(202, 2, 3, 0x4);
+const DIAGNOSTIC_NEIGHBOR_DOWN: EVENT_DESCRIPTOR = descriptor(203, 3, 3, 0x4);
+const DIAGNOSTIC_FORWARDING_RESET: EVENT_DESCRIPTOR = descriptor(204, 2, 3, 0x4);
+const DIAGNOSTIC_PATH_DOWN: EVENT_DESCRIPTOR = descriptor(205, 2, 3, 0x4);
+const DIAGNOSTIC_CONCATENATED_PATH_DOWN: EVENT_DESCRIPTOR = descriptor(206, 2, 3, 0x4);
+const DIAGNOSTIC_ADMIN_DOWN: EVENT_DESCRIPTOR = descriptor(207, 3, 3, 0x4);
+const DIAGNOSTIC_REVERSE_CONCATENATED_PATH_DOWN: EVENT_DESCRIPTOR = descriptor(208, 2, 3, 0x4);
 
 const fn descriptor(id: u16, level: u8, task: u16, keyword: u64) -> EVENT_DESCRIPTOR {
     EVENT_DESCRIPTOR {
@@ -42,10 +55,12 @@ const fn descriptor(id: u16, level: u8, task: u16, keyword: u64) -> EVENT_DESCRI
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum SessionEvent {
     CommunicationStarted,
     CommunicationStopped,
     StateChanged,
+    PeerStateChanged,
 }
 
 impl SessionEvent {
@@ -56,9 +71,60 @@ impl SessionEvent {
             Self::StateChanged => match state {
                 State::Up => &SESSION_UP,
                 State::Down => &SESSION_DOWN,
-                State::Init | State::AdminDown => &SESSION_STATE_CHANGED,
+                State::Init => &SESSION_STATE_CHANGED,
+                State::AdminDown => &SESSION_ADMIN_DOWN,
+            },
+            Self::PeerStateChanged => match state {
+                State::AdminDown => &REMOTE_ADMIN_DOWN,
+                State::Down => &REMOTE_DOWN,
+                State::Init => &REMOTE_INIT,
+                State::Up => &REMOTE_UP,
             },
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Origin {
+    Local = 0,
+    Remote = 1,
+}
+
+fn diagnostic_descriptor(code: u8) -> Option<&'static EVENT_DESCRIPTOR> {
+    match code {
+        1 => Some(&DIAGNOSTIC_DETECTION_EXPIRED),
+        2 => Some(&DIAGNOSTIC_ECHO_FAILED),
+        3 => Some(&DIAGNOSTIC_NEIGHBOR_DOWN),
+        4 => Some(&DIAGNOSTIC_FORWARDING_RESET),
+        5 => Some(&DIAGNOSTIC_PATH_DOWN),
+        6 => Some(&DIAGNOSTIC_CONCATENATED_PATH_DOWN),
+        7 => Some(&DIAGNOSTIC_ADMIN_DOWN),
+        8 => Some(&DIAGNOSTIC_REVERSE_CONCATENATED_PATH_DOWN),
+        _ => None,
+    }
+}
+
+fn diagnostic_name(code: u8) -> &'static str {
+    match code {
+        0 => "None",
+        1 => "DetectionExpired",
+        2 => "EchoFailed",
+        3 => "NeighborDown",
+        4 => "ForwardingPlaneReset",
+        5 => "PathDown",
+        6 => "ConcatenatedPathDown",
+        7 => "AdminDown",
+        8 => "ReverseConcatenatedPathDown",
+        _ => "Reserved",
+    }
+}
+
+fn level_name(event: &EVENT_DESCRIPTOR) -> &'static str {
+    match event.Level {
+        2 => "Error",
+        3 => "Warning",
+        _ => "Information",
     }
 }
 
@@ -69,13 +135,19 @@ pub(crate) struct Provider {
 pub(crate) struct Record {
     event: &'static EVENT_DESCRIPTOR,
     payload: Vec<u8>,
+    pub(crate) text: Option<String>,
 }
 
 impl Record {
+    #[cfg(test)]
+    pub(crate) fn identity(&self) -> (u16, u8) {
+        (self.event.Id, self.event.Level)
+    }
     pub(crate) fn service_started(console: bool) -> Self {
         Self {
             event: &SERVICE_STARTED,
             payload: vec![u8::from(console)],
+            text: None,
         }
     }
     pub(crate) fn service_stopped(console: bool, exit_code: u32) -> Self {
@@ -84,6 +156,7 @@ impl Record {
         Self {
             event: &SERVICE_STOPPED,
             payload,
+            text: None,
         }
     }
     pub(crate) fn service_failed(console: bool, error: &str) -> Self {
@@ -92,6 +165,7 @@ impl Record {
         Self {
             event: &SERVICE_FAILED,
             payload,
+            text: None,
         }
     }
     pub(crate) fn session_event(
@@ -101,10 +175,76 @@ impl Record {
         previous: State,
         remote_discriminator: u32,
     ) -> io::Result<Self> {
+        let remote = matches!(event, SessionEvent::PeerStateChanged);
+        let state = if remote {
+            session.remote_state()
+        } else {
+            session.state()
+        };
+        let diagnostic = if remote {
+            session.remote_diagnostic()
+        } else {
+            session.diagnostic() as u8
+        };
+        let descriptor = event.descriptor(state);
+        let action = match event {
+            SessionEvent::CommunicationStarted => "communication=started ",
+            SessionEvent::CommunicationStopped => "communication=stopped ",
+            _ => "",
+        };
+        let state_label = if remote { "peer_state" } else { "state" };
+        let diagnostic_label = if remote {
+            "peer_diagnostic"
+        } else {
+            "diagnostic"
+        };
         Ok(Self {
-            event: event.descriptor(session.state()),
-            payload: session_payload(options, session, previous, remote_discriminator)?,
+            event: descriptor,
+            payload: session_payload(options, session, previous, remote_discriminator, state, diagnostic)?,
+            text: Some(format!(
+                "event_id={} level={} scope={:?} local={} peer={} {action}{state_label}={state:?} {diagnostic_label}={} previous_state={previous:?} diagnostic_code={diagnostic} local_discriminator={} remote_discriminator={remote_discriminator} tx_us={} detection_us={}",
+                descriptor.Id, level_name(descriptor),
+                if remote { Origin::Remote } else { Origin::Local }, options.local, options.peer,
+                diagnostic_name(diagnostic), session.local_discriminator(),
+                session.transmit_interval().as_micros(), session.detection_time().as_micros(),
+            )),
         })
+    }
+
+    pub(crate) fn diagnostic_event(
+        options: &Options,
+        session: &Session,
+        origin: Origin,
+        code: u8,
+        previous: State,
+    ) -> io::Result<Option<Self>> {
+        let Some(event) = diagnostic_descriptor(code) else {
+            return Ok(None);
+        };
+        let state = if origin == Origin::Remote {
+            session.remote_state()
+        } else {
+            session.state()
+        };
+        let mut payload = session_payload(
+            options,
+            session,
+            previous,
+            session.remote_discriminator(),
+            state,
+            code,
+        )?;
+        payload.push(origin as u8);
+        Ok(Some(Self {
+            event,
+            payload,
+            text: Some(format!(
+                "event_id={} level={} scope={origin:?} local={} peer={} diagnostic_code={code} diagnostic={} reported_state={state:?} previous_state={previous:?} local_discriminator={} remote_discriminator={} tx_us={} detection_us={}",
+                event.Id, level_name(event), options.local, options.peer, diagnostic_name(code),
+                session.local_discriminator(), session.remote_discriminator(),
+                session.transmit_interval().as_micros(), session.detection_time().as_micros(),
+            )),
+        }))
     }
     pub(crate) fn authentication_failed(
         options: &Options,
@@ -115,6 +255,7 @@ impl Record {
         Self {
             event: &AUTHENTICATION_FAILED,
             payload: authentication_payload(options, session.local_discriminator(), source, reason),
+            text: None,
         }
     }
 }
@@ -207,17 +348,15 @@ fn session_payload(
     session: &Session,
     previous: State,
     remote_discriminator: u32,
+    state: State,
+    diagnostic: u8,
 ) -> io::Result<Vec<u8>> {
     let mut payload = Vec::with_capacity(256);
     append_unicode(&mut payload, &options.local.to_string());
     append_unicode(&mut payload, &options.peer.to_string());
     payload.extend_from_slice(&session.local_discriminator().to_le_bytes());
     payload.extend_from_slice(&remote_discriminator.to_le_bytes());
-    payload.extend_from_slice(&[
-        previous as u8,
-        session.state() as u8,
-        session.diagnostic() as u8,
-    ]);
+    payload.extend_from_slice(&[previous as u8, state as u8, diagnostic]);
     for duration in [session.transmit_interval(), session.detection_time()] {
         let micros = u64::try_from(duration.as_micros()).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "BFD interval exceeds UInt64")
@@ -248,6 +387,86 @@ mod tests {
     use super::*;
 
     #[test]
+    fn administrative_state_has_its_own_informational_event() {
+        let event = SessionEvent::StateChanged.descriptor(State::AdminDown);
+        assert_eq!(event.Id, 106);
+        assert_eq!(event.Level, 4);
+    }
+
+    #[test]
+    fn all_state_and_diagnostic_events_use_the_requested_levels() {
+        for (state, local_id, remote_id, level) in [
+            (State::AdminDown, 106, 110, 4),
+            (State::Down, 103, 111, 3),
+            (State::Init, 104, 112, 4),
+            (State::Up, 102, 113, 4),
+        ] {
+            for (kind, id) in [
+                (SessionEvent::StateChanged, local_id),
+                (SessionEvent::PeerStateChanged, remote_id),
+            ] {
+                let event = kind.descriptor(state);
+                assert_eq!((event.Id, event.Level, event.Channel), (id, level, 16));
+            }
+        }
+        for (code, level) in [
+            (1, 3),
+            (2, 2),
+            (3, 3),
+            (4, 2),
+            (5, 2),
+            (6, 2),
+            (7, 3),
+            (8, 2),
+        ] {
+            let event = diagnostic_descriptor(code).unwrap();
+            assert_eq!(
+                (event.Id, event.Level, event.Channel),
+                (200 + u16::from(code), level, 16)
+            );
+        }
+        for code in std::iter::once(0).chain(9..=u8::MAX) {
+            assert!(diagnostic_descriptor(code).is_none());
+        }
+    }
+
+    #[test]
+    fn diagnostic_payload_appends_the_origin_and_keeps_peer_reason_separate() {
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.multihop = true;
+        options.discriminator = Some(7);
+        let auth = options.validate().unwrap();
+        let mut session = Session::new(options.clone(), auth.clone()).unwrap();
+        let mut peer = crate::packet::test_packet(State::Init);
+        peer.diagnostic = 8;
+        session
+            .receive(&peer.encode(&auth, 0), std::time::Instant::now())
+            .unwrap();
+        assert_eq!(session.diagnostic(), crate::packet::Diagnostic::None);
+        let record = Record::diagnostic_event(&options, &session, Origin::Remote, 8, State::Down)
+            .unwrap()
+            .unwrap();
+        let mut expected = session_payload(
+            &options,
+            &session,
+            State::Down,
+            session.remote_discriminator(),
+            State::Init,
+            8,
+        )
+        .unwrap();
+        expected.push(1);
+        assert_eq!(record.payload, expected);
+        assert_eq!(record.identity(), (208, 2));
+        assert!(record.text.unwrap().contains("scope=Remote"));
+        assert!(
+            Record::diagnostic_event(&options, &session, Origin::Local, 0, State::Down)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn rust_descriptors_and_guid_match_the_compiled_manifest() {
         // MC determines the Event Log channel keyword and all descriptor fields.
         // Compare against its output so a manifest change cannot silently make
@@ -265,6 +484,25 @@ mod tests {
             ("SESSION_DOWN", SESSION_DOWN),
             ("SESSION_STATE_CHANGED", SESSION_STATE_CHANGED),
             ("AUTHENTICATION_FAILED", AUTHENTICATION_FAILED),
+            ("SESSION_ADMIN_DOWN", SESSION_ADMIN_DOWN),
+            ("REMOTE_ADMIN_DOWN", REMOTE_ADMIN_DOWN),
+            ("REMOTE_DOWN", REMOTE_DOWN),
+            ("REMOTE_INIT", REMOTE_INIT),
+            ("REMOTE_UP", REMOTE_UP),
+            ("DIAGNOSTIC_DETECTION_EXPIRED", DIAGNOSTIC_DETECTION_EXPIRED),
+            ("DIAGNOSTIC_ECHO_FAILED", DIAGNOSTIC_ECHO_FAILED),
+            ("DIAGNOSTIC_NEIGHBOR_DOWN", DIAGNOSTIC_NEIGHBOR_DOWN),
+            ("DIAGNOSTIC_FORWARDING_RESET", DIAGNOSTIC_FORWARDING_RESET),
+            ("DIAGNOSTIC_PATH_DOWN", DIAGNOSTIC_PATH_DOWN),
+            (
+                "DIAGNOSTIC_CONCATENATED_PATH_DOWN",
+                DIAGNOSTIC_CONCATENATED_PATH_DOWN,
+            ),
+            ("DIAGNOSTIC_ADMIN_DOWN", DIAGNOSTIC_ADMIN_DOWN),
+            (
+                "DIAGNOSTIC_REVERSE_CONCATENATED_PATH_DOWN",
+                DIAGNOSTIC_REVERSE_CONCATENATED_PATH_DOWN,
+            ),
         ];
         assert_eq!(
             header.matches("constEVENT_DESCRIPTOR").count(),
@@ -307,7 +545,15 @@ mod tests {
         let auth = options.validate().unwrap();
         let mut session = Session::new(options.clone(), auth).unwrap();
         session.admin_down();
-        let payload = session_payload(&options, &session, State::Up, 42).unwrap();
+        let payload = session_payload(
+            &options,
+            &session,
+            State::Up,
+            42,
+            session.state(),
+            session.diagnostic() as u8,
+        )
+        .unwrap();
         let mut expected = Vec::new();
         for address in ["2001:db8::1", "2001:db8::2"] {
             for unit in address.encode_utf16().chain(Some(0)) {

@@ -25,7 +25,7 @@ transport; the service doesn't create them.
 ## Control packet format
 
 Packets use the version 1, 24-byte mandatory header from
-[RFC 5880 section 4](https://www.rfc-editor.org/rfc/rfc5880.html#section-4).
+[RFC 5880 section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1).
 The five 32-bit discriminator and interval fields use network byte order.
 `Length` includes authentication: 24 bytes without authentication, 28–43 bytes
 with a simple password, 48 bytes with MD5, or 52 bytes with SHA-1.
@@ -51,7 +51,9 @@ All roles advertise a zero Echo receive interval.
 
 ## States and diagnostics
 
-Classical BFD starts in Down. Valid packets produce these local states:
+Classical BFD starts in Down. The state machine follows
+[RFC 5880 section 6.2](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.2).
+Valid packets produce these local states:
 
 | Previous local state | Peer AdminDown | Peer Down | Peer Init | Peer Up |
 | --- | --- | --- | --- | --- |
@@ -60,14 +62,14 @@ Classical BFD starts in Down. Valid packets produce these local states:
 | Init | Down | Init | Up | Up |
 | Up | Down | Down | Up | Up |
 
-Local diagnostics use these values:
+The implementation originates these local diagnostic values in control packets:
 
 | Code | Reason | When emitted |
 | --- | --- | --- |
 | 0 | No local diagnostic | Initially; retained until a local failure or administrative stop |
 | 1 | Receive detection expired | An Init/Up session's control detection timer expires |
 | 3 | Peer signaled failure | Up receives Down, or Init/Up receives AdminDown |
-| 7 | Local administrative stop | The service shuts down |
+| 7 | Local administrative stop | The service shuts down or a reflector enters maintenance |
 
 Classical recovery retains the preceding failure diagnostic in Init and Up.
 Repeated packets that leave the state unchanged don't replace that diagnostic.
@@ -76,6 +78,14 @@ establishes directly from Down to Up, and a reflector AdminDown response can
 move Up to Down while proving continued communication.
 S-BFD clears its failure diagnostic when it transitions back to Up; RFC 7880
 leaves initiator diagnostic policy to the implementation.
+
+After validation and authentication, the session retains the peer's state and
+raw diagnostic separately from the local reason. Operational and enabled file
+logging report all four state values and assigned diagnostics 1–8, including
+peer failures that leave the local state unchanged. Up and AdminDown state
+events are Informational; Down and detection loss are Warnings. Diagnostic
+events have their own severity policy; code 0 produces no standalone diagnostic
+event. See the [event IDs and diagnostic levels](logging.md#operational-events).
 
 ## Classical session behavior
 

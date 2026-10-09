@@ -19,12 +19,16 @@
                 message="$(string.Task.ServiceLifecycle)"/>
           <task name="PeerCommunication" symbol="BFD_PEER_COMMUNICATION" value="2"
                 message="$(string.Task.PeerCommunication)"/>
+          <task name="SessionDiagnostic" symbol="BFD_SESSION_DIAGNOSTIC" value="3"
+                message="$(string.Task.SessionDiagnostic)"/>
         </tasks>
         <keywords>
           <keyword name="Service" symbol="BFD_KEYWORD_SERVICE" mask="0x1"
                    message="$(string.Keyword.Service)"/>
           <keyword name="Communication" symbol="BFD_KEYWORD_COMMUNICATION" mask="0x2"
                    message="$(string.Keyword.Communication)"/>
+          <keyword name="Diagnostics" symbol="BFD_KEYWORD_DIAGNOSTICS" mask="0x4"
+                   message="$(string.Keyword.Diagnostics)"/>
         </keywords>
         <maps>
           <valueMap name="RunMode">
@@ -40,8 +44,17 @@
           <valueMap name="BfdDiagnostic">
             <map value="0" message="$(string.Diagnostic.None)"/>
             <map value="1" message="$(string.Diagnostic.DetectionExpired)"/>
+            <map value="2" message="$(string.Diagnostic.EchoFailed)"/>
             <map value="3" message="$(string.Diagnostic.NeighborDown)"/>
+            <map value="4" message="$(string.Diagnostic.ForwardingReset)"/>
+            <map value="5" message="$(string.Diagnostic.PathDown)"/>
+            <map value="6" message="$(string.Diagnostic.ConcatenatedPathDown)"/>
             <map value="7" message="$(string.Diagnostic.AdminDown)"/>
+            <map value="8" message="$(string.Diagnostic.ReverseConcatenatedPathDown)"/>
+          </valueMap>
+          <valueMap name="DiagnosticOrigin">
+            <map value="0" message="$(string.Origin.Local)"/>
+            <map value="1" message="$(string.Origin.Remote)"/>
           </valueMap>
           <valueMap name="BfdAuthenticationType">
             <map value="0" message="$(string.Authentication.None)"/>
@@ -74,6 +87,18 @@
             <data name="Diagnostic" inType="win:UInt8" map="BfdDiagnostic"/>
             <data name="TransmitIntervalUs" inType="win:UInt64"/>
             <data name="DetectionTimeUs" inType="win:UInt64"/>
+          </template>
+          <template tid="DiagnosticData">
+            <data name="LocalAddress" inType="win:UnicodeString"/>
+            <data name="PeerAddress" inType="win:UnicodeString"/>
+            <data name="LocalDiscriminator" inType="win:UInt32"/>
+            <data name="RemoteDiscriminator" inType="win:UInt32"/>
+            <data name="PreviousState" inType="win:UInt8" map="BfdState"/>
+            <data name="State" inType="win:UInt8" map="BfdState"/>
+            <data name="Diagnostic" inType="win:UInt8" map="BfdDiagnostic"/>
+            <data name="TransmitIntervalUs" inType="win:UInt64"/>
+            <data name="DetectionTimeUs" inType="win:UInt64"/>
+            <data name="Origin" inType="win:UInt8" map="DiagnosticOrigin"/>
           </template>
           <template tid="AuthenticationFailedData">
             <data name="LocalAddress" inType="win:UnicodeString"/>
@@ -113,6 +138,45 @@
           <event value="105" version="0" symbol="AUTHENTICATION_FAILED" channel="Operational"
                  level="win:Warning" task="PeerCommunication" keywords="Communication"
                  template="AuthenticationFailedData" message="$(string.Event.AuthenticationFailed)"/>
+          <event value="106" version="0" symbol="SESSION_ADMIN_DOWN" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.SessionAdminDown)"/>
+          <event value="110" version="0" symbol="REMOTE_ADMIN_DOWN" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.RemoteAdminDown)"/>
+          <event value="111" version="0" symbol="REMOTE_DOWN" channel="Operational"
+                 level="win:Warning" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.RemoteDown)"/>
+          <event value="112" version="0" symbol="REMOTE_INIT" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.RemoteInit)"/>
+          <event value="113" version="0" symbol="REMOTE_UP" channel="Operational"
+                 level="win:Informational" task="PeerCommunication" keywords="Communication"
+                 template="SessionData" message="$(string.Event.RemoteUp)"/>
+          <event value="201" version="0" symbol="DIAGNOSTIC_DETECTION_EXPIRED" channel="Operational"
+                 level="win:Warning" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticDetectionExpired)"/>
+          <event value="202" version="0" symbol="DIAGNOSTIC_ECHO_FAILED" channel="Operational"
+                 level="win:Error" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticEchoFailed)"/>
+          <event value="203" version="0" symbol="DIAGNOSTIC_NEIGHBOR_DOWN" channel="Operational"
+                 level="win:Warning" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticNeighborDown)"/>
+          <event value="204" version="0" symbol="DIAGNOSTIC_FORWARDING_RESET" channel="Operational"
+                 level="win:Error" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticForwardingReset)"/>
+          <event value="205" version="0" symbol="DIAGNOSTIC_PATH_DOWN" channel="Operational"
+                 level="win:Error" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticPathDown)"/>
+          <event value="206" version="0" symbol="DIAGNOSTIC_CONCATENATED_PATH_DOWN" channel="Operational"
+                 level="win:Error" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticConcatenatedPathDown)"/>
+          <event value="207" version="0" symbol="DIAGNOSTIC_ADMIN_DOWN" channel="Operational"
+                 level="win:Warning" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticAdminDown)"/>
+          <event value="208" version="0" symbol="DIAGNOSTIC_REVERSE_CONCATENATED_PATH_DOWN" channel="Operational"
+                 level="win:Error" task="SessionDiagnostic" keywords="Diagnostics"
+                 template="DiagnosticData" message="$(string.Event.DiagnosticReverseConcatenatedPathDown)"/>
         </events>
       </provider>
     </events>
@@ -123,8 +187,12 @@
         <string id="Provider.Name" value="BFD-Service"/>
         <string id="Task.ServiceLifecycle" value="Service lifecycle"/>
         <string id="Task.PeerCommunication" value="BFD peer communication"/>
+        <string id="Task.SessionDiagnostic" value="BFD diagnostic"/>
         <string id="Keyword.Service" value="Service"/>
         <string id="Keyword.Communication" value="Communication"/>
+        <string id="Keyword.Diagnostics" value="Diagnostics"/>
+        <string id="Origin.Local" value="Local session"/>
+        <string id="Origin.Remote" value="Remote peer"/>
         <string id="RunMode.Service" value="Windows service"/>
         <string id="RunMode.Console" value="Console"/>
         <string id="State.AdminDown" value="AdminDown"/>
@@ -133,8 +201,13 @@
         <string id="State.Up" value="Up"/>
         <string id="Diagnostic.None" value="None"/>
         <string id="Diagnostic.DetectionExpired" value="Control Detection Time Expired"/>
+        <string id="Diagnostic.EchoFailed" value="Echo Function Failed"/>
         <string id="Diagnostic.NeighborDown" value="Neighbor Signaled Session Down"/>
+        <string id="Diagnostic.ForwardingReset" value="Forwarding Plane Reset"/>
+        <string id="Diagnostic.PathDown" value="Path Down"/>
+        <string id="Diagnostic.ConcatenatedPathDown" value="Concatenated Path Down"/>
         <string id="Diagnostic.AdminDown" value="Administratively Down"/>
+        <string id="Diagnostic.ReverseConcatenatedPathDown" value="Reverse Concatenated Path Down"/>
         <string id="Authentication.None" value="None"/>
         <string id="Authentication.SimplePassword" value="Simple Password"/>
         <string id="Authentication.KeyedMd5" value="Keyed MD5"/>
@@ -146,10 +219,23 @@
         <string id="Event.ServiceFailed" value="BFD service failed. Mode: %1. Error: %2."/>
         <string id="Event.PeerCommunicationStarted" value="Remote peer %2 started sending valid BFD control packets to %1. Local discriminator: %3. Remote discriminator: %4. State: %6."/>
         <string id="Event.PeerCommunicationStopped" value="Remote peer %2 stopped sending valid BFD control packets to %1 within the detection interval (%9 microseconds). Local discriminator: %3. Last remote discriminator: %4. State: %6."/>
-        <string id="Event.SessionUp" value="BFD session with remote peer %2 is Up. Local address: %1. Previous state: %5. Local discriminator: %3. Remote discriminator: %4."/>
+        <string id="Event.SessionUp" value="Local BFD session or reflector entity is Up. Local address: %1. Configured peer: %2. Previous state: %5. Local discriminator: %3. Remote discriminator: %4."/>
         <string id="Event.SessionDown" value="BFD session with remote peer %2 is Down. Local address: %1. Previous state: %5. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4."/>
         <string id="Event.SessionStateChanged" value="BFD session with remote peer %2 changed from %5 to %6. Local address: %1. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4."/>
         <string id="Event.AuthenticationFailed" value="BFD authentication failed for a packet from %3 to %1, configured peer %2. Authentication type: %5. Configured key ID: %6. Reason: %7. Local discriminator: %4."/>
+        <string id="Event.SessionAdminDown" value="Local BFD session or reflector entity is AdminDown. Local address: %1. Configured peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.RemoteAdminDown" value="Remote BFD peer reports AdminDown. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.RemoteDown" value="Remote BFD peer reports Down. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.RemoteInit" value="Remote BFD peer reports Init. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.RemoteUp" value="Remote BFD peer reports Up. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticDetectionExpired" value="Control Detection Time Expired. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticEchoFailed" value="Echo Function Failed. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticNeighborDown" value="Neighbor Signaled Session Down. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticForwardingReset" value="Forwarding Plane Reset. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticPathDown" value="Path Down. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticConcatenatedPathDown" value="Concatenated Path Down. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticAdminDown" value="Administratively Down. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
+        <string id="Event.DiagnosticReverseConcatenatedPathDown" value="Reverse Concatenated Path Down. Origin: %10. Local address: %1. Remote peer: %2. Previous state: %5. State: %6. Diagnostic: %7. Local discriminator: %3. Remote discriminator: %4. Transmit interval: %8 microseconds. Detection time: %9 microseconds."/>
       </stringTable>
     </resources>
   </localization>

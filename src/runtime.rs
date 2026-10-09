@@ -3,7 +3,7 @@ use crate::{
     bgp::Controller,
     config::{load_sbfd_settings, Options, SessionType, Timing, ValidatedOptions},
     error::ConfigError,
-    event_log::SessionEvent,
+    event_log::{Origin, SessionEvent},
     packet::{AuthConfig, Diagnostic, State},
     seamless::Reflector,
     session::{ReceiveError, Session, Transmission},
@@ -47,6 +47,7 @@ pub struct Engine {
     transport: Transport,
     bgp: Option<Controller>,
     reflector: Option<Reflector>,
+    last_peer_report: Option<(State, u8, u32)>,
 }
 
 impl Engine {
@@ -108,18 +109,13 @@ impl Engine {
             transport,
             bgp,
             reflector,
+            last_peer_report: None,
         })
     }
     fn state_changed(&self, previous: State, log: &mut Logger) {
-        log.log(format!(
-            "peer={} state={:?} diagnostic={:?} remote_discriminator={} tx_us={} detection_us={}",
-            self.options.peer,
-            self.session.state,
-            self.session.diagnostic,
-            self.session.remote_discriminator,
-            self.session.transmit_interval().as_micros(),
-            self.session.detection_time().as_micros()
-        ));
+        if previous == self.session.state() {
+            return;
+        }
         log.session_event(
             SessionEvent::StateChanged,
             &self.options,
@@ -127,6 +123,16 @@ impl Engine {
             previous,
             self.session.remote_discriminator,
         );
+        // Up retains historical classical diagnostics; it doesn't report a new failure.
+        if matches!(self.session.state(), State::Down | State::AdminDown) {
+            log.diagnostic_event(
+                &self.options,
+                &self.session,
+                Origin::Local,
+                self.session.diagnostic() as u8,
+                previous,
+            );
+        }
         if let Some(bgp) = &self.bgp {
             bgp.state_changed(previous, self.session.state);
         }
@@ -138,11 +144,6 @@ impl Engine {
         remote_discriminator: u32,
         log: &mut Logger,
     ) {
-        log.log(format_args!(
-            "peer={} communication={} remote_discriminator={remote_discriminator}",
-            self.options.peer,
-            if communicating { "started" } else { "stopped" },
-        ));
         log.session_event(
             if communicating {
                 SessionEvent::CommunicationStarted
@@ -154,6 +155,56 @@ impl Engine {
             previous,
             remote_discriminator,
         );
+    }
+
+    fn peer_report_changed(&mut self, log: &mut Logger) {
+        let state = self.session.remote_state();
+        let diagnostic = self.session.remote_diagnostic();
+        let discriminator = self.session.remote_discriminator();
+        let previous = self
+            .last_peer_report
+            .filter(|report| report.2 == discriminator);
+        if previous.is_none_or(|report| report.0 != state) {
+            log.session_event(
+                SessionEvent::PeerStateChanged,
+                &self.options,
+                &self.session,
+                previous.map_or(state, |report| report.0),
+                discriminator,
+            );
+        }
+        if previous.is_none_or(|report| {
+            report.1 != diagnostic
+                || report.0 != state && matches!(state, State::Down | State::AdminDown)
+        }) {
+            log.diagnostic_event(
+                &self.options,
+                &self.session,
+                Origin::Remote,
+                diagnostic,
+                previous.map_or(state, |report| report.0),
+            );
+        }
+        self.last_peer_report = Some((state, diagnostic, discriminator));
+    }
+
+    fn set_reflector_admin_down(&mut self, admin_down: bool, log: &mut Logger) {
+        let Some(reflector) = &mut self.reflector else {
+            return;
+        };
+        if self.sbfd_admin_down == admin_down {
+            return;
+        }
+        let previous = self.session.state();
+        reflector.set_admin_down(admin_down);
+        self.sbfd_admin_down = admin_down;
+        self.session.state = reflector.state();
+        self.session.diagnostic = if admin_down {
+            Diagnostic::AdminDown
+        } else {
+            Diagnostic::None
+        };
+        self.state_changed(previous, log);
     }
     fn transmit(&mut self, kind: Transmission, log: &mut Logger, last_error: &mut Option<Instant>) {
         let packet = self.session.prepare_packet(kind, Instant::now());
@@ -193,22 +244,7 @@ impl Engine {
                 self.set_timing(timing)?;
                 log.log("S-BFD timing settings reloaded");
             }
-            if let Some(reflector) = &mut self.reflector {
-                if self.sbfd_admin_down != admin_down {
-                    reflector.set_admin_down(admin_down);
-                    self.sbfd_admin_down = admin_down;
-                    self.session.state = reflector.state();
-                    self.session.diagnostic = if admin_down {
-                        Diagnostic::AdminDown
-                    } else {
-                        Diagnostic::None
-                    };
-                    log.log(format_args!(
-                        "S-BFD reflector entity state={:?}",
-                        reflector.state()
-                    ));
-                }
-            }
+            self.set_reflector_admin_down(admin_down, log);
             Ok(())
         });
         if let Err(error) = result {
@@ -329,9 +365,7 @@ impl Engine {
         };
         let previous = self.session.state;
         self.session.admin_down();
-        if self.reflector.is_none() {
-            self.state_changed(previous, log);
-        }
+        self.state_changed(previous, log);
         // BGP Stop is already queued, including after fatal transport errors.
         let announcements = self.announce_shutdown(grace, log);
         // Wait for the pending Stop attempt and propagate failure before completion.
@@ -362,11 +396,11 @@ impl Engine {
                     let interval = self.session.transmit_interval();
                     // AdminDown updates authenticated peer parameters without
                     // restarting detection or the local state machine.
-                    if let Err(error) = datagram
+                    let result = datagram
                         .validate(&self.options)
                         .map_err(ReceiveError::Packet)
-                        .and_then(|()| self.session.receive_checked(&datagram.data, now))
-                    {
+                        .and_then(|()| self.session.receive_checked(&datagram.data, now));
+                    if let Err(error) = result {
                         self.log_rejection(
                             &datagram,
                             error,
@@ -374,6 +408,8 @@ impl Engine {
                             &mut last_discard,
                             &mut last_auth_failure,
                         );
+                    } else {
+                        self.peer_report_changed(log);
                     }
                     if interval != self.session.transmit_interval() {
                         next_tx = last_tx + self.session.jittered_interval();
@@ -417,6 +453,7 @@ impl Engine {
             }
             let state_changed = self.session.expire(now);
             if communicating && !self.session.communicating() {
+                self.last_peer_report = None;
                 self.peer_communication_changed(false, previous, remote_discriminator, log);
             }
             if state_changed {
@@ -451,6 +488,7 @@ impl Engine {
                         .and_then(|()| self.session.receive_checked(&datagram.data, received_at));
                     match received {
                         Ok(result) => {
+                            self.peer_report_changed(log);
                             if !communicating && self.session.communicating() {
                                 self.peer_communication_changed(
                                     true,
@@ -542,6 +580,76 @@ mod tests {
     use super::*;
     #[cfg(not(miri))]
     use std::{fs, io::Write};
+
+    #[cfg(not(miri))]
+    #[test]
+    fn reflector_maintenance_and_shutdown_use_state_and_diagnostic_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::reflector("127.0.0.104".parse().unwrap(), 99);
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("trace.log");
+        let auth = options.validate().unwrap();
+        let mut log = Logger::open(&options).unwrap();
+        let mut engine = Engine::open(options.clone(), auth, &mut log).unwrap();
+        engine.set_reflector_admin_down(true, &mut log);
+        engine.set_reflector_admin_down(true, &mut log); // No duplicate event.
+        engine.set_reflector_admin_down(false, &mut log);
+        let (stop, receiver) = std::sync::mpsc::channel();
+        drop(stop);
+        engine.run(&receiver, &mut log).unwrap();
+        log.flush(Duration::from_secs(2)).unwrap();
+        let text = fs::read_to_string(&options.log_file_path).unwrap();
+        assert_eq!(
+            text.matches("event_id=106 level=Information").count(),
+            2,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("event_id=207 level=Warning").count(),
+            2,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("event_id=102 level=Information").count(),
+            1,
+            "{text}"
+        );
+        assert!(!text.contains("event_id=200"));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn retained_failure_diagnostic_does_not_make_recovery_a_warning() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::new(
+            "127.0.0.102".parse().unwrap(),
+            "127.0.0.103".parse().unwrap(),
+        );
+        options.multihop = true;
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("trace.log");
+        let auth = options.validate().unwrap();
+        let mut log = Logger::open(&options).unwrap();
+        let mut engine = Engine::open(options.clone(), auth, &mut log).unwrap();
+        engine.session.diagnostic = Diagnostic::DetectionExpired;
+        engine.state_changed(State::Up, &mut log);
+        engine.session.state = State::Up;
+        engine.state_changed(State::Down, &mut log);
+        engine.state_changed(State::Up, &mut log);
+        log.flush(Duration::from_secs(2)).unwrap();
+        let text = fs::read_to_string(&options.log_file_path).unwrap();
+        assert_eq!(
+            text.matches("event_id=201 level=Warning").count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("event_id=102 level=Information").count(),
+            1,
+            "{text}"
+        );
+        assert!(text.contains("state=Up diagnostic=DetectionExpired"));
+    }
 
     #[cfg(not(miri))]
     #[test]

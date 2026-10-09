@@ -140,8 +140,10 @@ The command returns without output on success. The reflector listens on
 
 Configure an initiator to target this entity and confirm that the initiator
 reaches `Up`. Reflector service startup alone doesn't verify a network path.
-Reflectors emit service lifecycle and authentication-failure events, rather
-than per-peer communication or session-state events.
+Reflectors emit service lifecycle, authentication-failure, and local entity
+state events. They remain stateless for peers and don't emit per-peer
+communication, state, or diagnostic events. See the
+[Operational event reference](logging.md#operational-events).
 
 Each reply reverses the request's discriminator pair and returns to its source
 IP address and UDP port. The reply source is the bound local address and port
@@ -242,6 +244,12 @@ reflector responds with `AdminDown`. Initiators remain in communication, enter
 `Down`, and send no faster than once per second, including after jitter.
 This state indicates entity maintenance rather than loss of reachability.
 Set the DWORD to `0` to restore `Up` replies.
+
+Entering reflector maintenance emits Informational state event 106 and Warning
+diagnostic event 207. Restoring the entity emits Informational Up event 102.
+Administrative shutdown uses the same AdminDown events if the entity wasn't
+already in maintenance. In service mode, these records go to the Operational
+channel and the file when enabled; console mode uses STDOUT and the enabled file.
 
 Library callers can use `Timing::new`, `Session::set_timing`,
 `Engine::set_timing`, and `Reflector::set_timing` without registry access.

@@ -26,6 +26,7 @@ pub struct Session {
     timing: Timing,
     auth: AuthConfig,
     remote_state: State,
+    remote_diagnostic: u8,
     remote_demand: bool,
     remote_min_rx_us: u32,
     remote_min_tx_us: u32,
@@ -160,6 +161,7 @@ impl Session {
             timing,
             auth,
             remote_state: State::Down,
+            remote_diagnostic: 0,
             remote_demand: false,
             remote_min_rx_us: 1,
             remote_min_tx_us: 1_000_000,
@@ -208,6 +210,17 @@ impl Session {
     /// Configured S-BFD discriminators remain known even when this is false.
     pub fn communicating(&self) -> bool {
         self.communicating
+    }
+
+    /// Returns the last accepted peer state; Down before any accepted packet.
+    pub fn remote_state(&self) -> State {
+        self.remote_state
+    }
+
+    /// Returns the last accepted peer diagnostic; zero before reception.
+    /// Reserved diagnostic values remain available without becoming a local reason.
+    pub fn remote_diagnostic(&self) -> u8 {
+        self.remote_diagnostic
     }
 
     /// Applies S-BFD timing settings while retaining state and discriminators.
@@ -408,6 +421,7 @@ impl Session {
         self.last_valid = Some(now);
         self.remote_discriminator = packet.my_discriminator;
         self.remote_state = packet.state;
+        self.remote_diagnostic = packet.diagnostic;
         self.remote_demand = packet.demand;
         self.remote_min_rx_us = packet.required_min_rx_us;
         self.remote_min_tx_us = packet.desired_min_tx_us;
@@ -654,6 +668,7 @@ impl Session {
         let previous = self.state;
         let old_tx = self.desired_min_tx_us();
         self.remote_state = packet.state;
+        self.remote_diagnostic = packet.diagnostic;
         self.remote_min_rx_us = packet.required_min_rx_us;
         self.remote_min_tx_us = packet.desired_min_tx_us;
         self.remote_detect_mult = packet.detect_mult;
@@ -821,6 +836,8 @@ mod tests {
                     Diagnostic::None
                 };
                 assert_eq!(session.diagnostic(), diagnostic, "{local:?} / {remote:?}");
+                assert_eq!(session.remote_state(), *remote);
+                assert_eq!(session.remote_diagnostic(), 8);
                 let data = session.packet(false);
                 assert_eq!(data[0], 0x20 | diagnostic as u8);
                 assert_eq!(data[1] >> 6, expected[i][j] as u8);
@@ -850,12 +867,15 @@ mod tests {
             session.remote_min_rx_us,
             session.remote_min_tx_us,
             session.last_received,
+            session.remote_state(),
+            session.remote_diagnostic(),
         );
         let mut invalid = test_packet(State::Down);
         invalid.poll = true;
         invalid.final_bit = true;
         invalid.required_min_rx_us = 0;
         invalid.desired_min_tx_us = 9_000_000;
+        invalid.diagnostic = 8;
         assert_eq!(
             session.receive_checked(&wire(&invalid), now + Duration::from_millis(1)),
             Err(ReceiveError::Packet(PacketError::PollAndFinal))
@@ -870,6 +890,8 @@ mod tests {
                 session.remote_min_rx_us,
                 session.remote_min_tx_us,
                 session.last_received,
+                session.remote_state(),
+                session.remote_diagnostic(),
             )
         );
     }
@@ -1112,6 +1134,7 @@ mod tests {
                     peer.poll = true;
                     peer.required_min_rx_us = 0;
                     peer.demand = true;
+                    peer.diagnostic = 8;
                     assert_eq!(
                         session.receive(&wire(&peer), now).err(),
                         Some(ReceiveError::Authentication(AuthError::Required)),
@@ -1119,6 +1142,8 @@ mod tests {
                     );
                     assert_eq!(session.state, State::Down);
                     assert_eq!(session.remote_discriminator, 0);
+                    assert_eq!(session.remote_state(), State::Down);
+                    assert_eq!(session.remote_diagnostic(), 0);
                     assert_eq!(session.last_received, None);
                     assert_eq!(session.received_auth_seq, None);
                     assert_eq!(session.periodic_enabled(), !passive);
@@ -1167,6 +1192,7 @@ mod tests {
                     peer.desired_min_tx_us = 10_000_000;
                     peer.detect_mult = 255;
                     peer.demand = true;
+                    peer.diagnostic = 8;
                     assert_eq!(
                         session
                             .receive(&wire(&peer), now + Duration::from_millis(599))
@@ -1175,6 +1201,8 @@ mod tests {
                     );
                     assert_eq!(session.state, State::Up);
                     assert_eq!(session.diagnostic, Diagnostic::None);
+                    assert_eq!(session.remote_state(), State::Init);
+                    assert_eq!(session.remote_diagnostic(), 0);
                     assert_eq!(session.remote_discriminator, 0x10203040);
                     assert!(session.polling());
                     assert!(session.periodic_enabled());

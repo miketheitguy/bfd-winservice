@@ -3,7 +3,7 @@ use super::utc_timestamp;
 use crate::{
     config::Options,
     error::AuthError,
-    event_log::{Provider, Record, SessionEvent},
+    event_log::{Origin, Provider, Record, SessionEvent},
     packet::State,
     session::Session,
 };
@@ -235,13 +235,26 @@ impl Logger {
         previous: State,
         remote_discriminator: u32,
     ) {
-        if self.console {
-            return;
-        }
         match Record::session_event(event, options, session, previous, remote_discriminator) {
             Ok(record) => self.enqueue(Command::Event(record)),
             Err(error) => self.log(format_args!(
                 "unable to prepare BFD-Service ETW event: {error}"
+            )),
+        }
+    }
+    pub(super) fn diagnostic_event(
+        &mut self,
+        options: &Options,
+        session: &Session,
+        origin: Origin,
+        code: u8,
+        previous: State,
+    ) {
+        match Record::diagnostic_event(options, session, origin, code, previous) {
+            Ok(Some(record)) => self.enqueue(Command::Event(record)),
+            Ok(None) => {}
+            Err(error) => self.log(format_args!(
+                "unable to prepare BFD-Service diagnostic event: {error}"
             )),
         }
     }
@@ -313,6 +326,19 @@ fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64
             }
         }
     };
+    write_records_with(receiver, console, dropped, |record| {
+        provider
+            .as_ref()
+            .map_or(Ok(()), |provider| provider.emit(record))
+    });
+}
+
+fn write_records_with(
+    receiver: Receiver<Command>,
+    console: bool,
+    dropped: &AtomicU64,
+    mut emit: impl FnMut(&Record) -> io::Result<()>,
+) {
     let mut file = None;
     let mut stdout_failed = false;
     let mut reported = 0;
@@ -333,8 +359,8 @@ fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64
         match command {
             Command::Text(text) => text_output(&text, console, &mut stdout_failed, &mut file),
             Command::Event(record) => {
-                if let Some(provider) = &provider {
-                    if let Err(error) = provider.emit(&record) {
+                if !console {
+                    if let Err(error) = emit(&record) {
                         text_output(
                             &format!("unable to write BFD-Service ETW event: {error}"),
                             console,
@@ -342,6 +368,9 @@ fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64
                             &mut file,
                         );
                     }
+                }
+                if let Some(text) = &record.text {
+                    text_output(text, console, &mut stdout_failed, &mut file);
                 }
             }
             Command::File(next) => file = next,
@@ -355,6 +384,145 @@ fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(miri))]
+    fn captured_logger(
+        console: bool,
+        events: Arc<Mutex<Vec<(u16, u8)>>>,
+        fail_etw: bool,
+    ) -> Logger {
+        let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
+        let (done_tx, done) = mpsc::channel();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let worker_dropped = Arc::clone(&dropped);
+        let thread = thread::spawn(move || {
+            write_records_with(receiver, console, &worker_dropped, |record| {
+                events.lock().unwrap().push(record.identity());
+                if fail_etw {
+                    Err(io::Error::other("synthetic ETW failure"))
+                } else {
+                    Ok(())
+                }
+            });
+            let _ = done_tx.send(());
+        });
+        Logger {
+            console,
+            worker: Arc::new(Worker {
+                sender: Some(sender),
+                shutdown: Mutex::new(Shutdown { done, thread }),
+                dropped,
+            }),
+        }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn state_and_diagnostic_records_reach_both_outputs_and_zero_is_silent() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::reflector("127.0.0.1".parse().unwrap(), 99);
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("trace.log");
+        let mut session = Session::from_config(options.clone().into_validated().unwrap());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut log = captured_logger(false, Arc::clone(&events), false);
+        log.open_file(&options).unwrap();
+        for state in [State::AdminDown, State::Down, State::Init, State::Up] {
+            session.state = state;
+            log.session_event(
+                SessionEvent::StateChanged,
+                &options,
+                &session,
+                State::Up,
+                42,
+            );
+        }
+        for code in 0..=9 {
+            log.diagnostic_event(&options, &session, Origin::Remote, code, State::Up);
+        }
+        log.flush(Duration::from_secs(2)).unwrap();
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 12);
+        let contents = fs::read_to_string(&options.log_file_path).unwrap();
+        assert_eq!(contents.lines().count(), 12);
+        for ((id, level), line) in events.iter().zip(contents.lines()) {
+            let level = if *level == 2 {
+                "Error"
+            } else if *level == 3 {
+                "Warning"
+            } else {
+                "Information"
+            };
+            assert!(
+                line.contains(&format!("event_id={id} level={level}")),
+                "{line}"
+            );
+            let timestamp = line.split_once(' ').unwrap().0;
+            assert_eq!(timestamp.len(), 24);
+            assert!(timestamp.ends_with('Z'));
+        }
+        assert!(!contents.contains("event_id=200"));
+        assert!(!contents.contains("diagnostic_code=0 diagnostic="));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn etw_failure_does_not_suppress_file_events_and_disabled_file_stays_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::reflector("127.0.0.1".parse().unwrap(), 99);
+        let session = Session::from_config(options.clone().into_validated().unwrap());
+        options.log_file_path = directory.path().join("new-folder/trace.log");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut log = captured_logger(false, Arc::clone(&events), true);
+        log.open_file(&options).unwrap();
+        log.session_event(
+            SessionEvent::StateChanged,
+            &options,
+            &session,
+            State::Down,
+            0,
+        );
+        log.flush(Duration::from_secs(2)).unwrap();
+        assert!(!options.log_file_path.parent().unwrap().exists());
+        options.log_to_file = true;
+        log.open_file(&options).unwrap();
+        log.session_event(
+            SessionEvent::StateChanged,
+            &options,
+            &session,
+            State::Down,
+            0,
+        );
+        log.flush(Duration::from_secs(2)).unwrap();
+        let text = fs::read_to_string(&options.log_file_path).unwrap();
+        assert!(text.contains("synthetic ETW failure"));
+        assert!(text.contains("event_id=102 level=Information"));
+        assert_eq!(*events.lock().unwrap(), [(102, 4), (102, 4)]);
+    }
+    #[cfg(not(miri))]
+    #[test]
+    fn service_state_events_also_write_the_enabled_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::new("127.0.0.1".parse().unwrap(), "127.0.0.2".parse().unwrap());
+        options.multihop = true;
+        options.discriminator = Some(7);
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("trace.log");
+        let auth = options.validate().unwrap();
+        let mut session = Session::new(options.clone(), auth).unwrap();
+        session.state = State::Up;
+        let mut logger = Logger::open(&options).unwrap();
+        logger.session_event(
+            SessionEvent::StateChanged,
+            &options,
+            &session,
+            State::Init,
+            99,
+        );
+        logger.flush(Duration::from_secs(2)).unwrap();
+        let text = fs::read_to_string(&options.log_file_path).unwrap();
+        assert!(text.contains("event_id=102 level=Information"), "{text}");
+        assert!(text.contains("state=Up"), "{text}");
+    }
     #[cfg(not(miri))]
     #[test]
     fn cloned_loggers_share_ordered_file_output_and_flush_completion() {

@@ -243,6 +243,13 @@ uses `error::PacketError`; authentication uses `error::AuthError`.
 these enums rather than comparing their display strings. Error messages omit
 keys and packet contents.
 
+`Session::remote_state()` and `remote_diagnostic()` expose the last accepted
+peer report, including reserved diagnostic values. They update only after
+packet and authentication validation. Peer diagnostics don't replace LocalDiag.
+The runtime tracks one peer report per discriminator and communication period
+to suppress repeated state and diagnostic events. See the
+[Operational event reference](docs/logging.md#operational-events).
+
 `Logger::new` returns `io::Result<Logger>`. Logger clones share one bounded output
 worker. `Logger::flush(timeout)` provides explicit completion when a caller needs
 to read the output immediately, and `Logger::dropped_records()` reports queue
@@ -346,6 +353,14 @@ Native S-BFD tests additionally check IPv4/IPv6 sockets, source-port reflection,
 return-route lookup, concurrent initiators, anycast response sources, and the
 maintenance retry minimum. They use loopback endpoints and don't establish
 interoperability with external router implementations.
+
+Logging tests compare all Rust event descriptors with the SDK-compiled manifest
+and check packed payloads. An injected emitter in the production output loop
+captures ETW submissions while the same records are written to a temporary file.
+These tests cover the severity mapping, diagnostic 0 suppression, ETW failures,
+and disabled file output. UDP and reflector tests cover accepted peer reports,
+duplicate suppression, maintenance, shutdown, and retained-diagnostic recovery.
+Emitter capture verifies the submission path, not Event Viewer delivery.
 
 Validate SCM lifecycle, Event Viewer delivery, and actual BGP Start/Stop on the target server using the [setup guide](docs/setup.md) and [BGP guide](docs/bgp.md). For BGP testing, cover initially stopped and running peers, then disconnect and restore Bidirectional Forwarding Detection (BFD) while watching the logs and BGP state.
 
