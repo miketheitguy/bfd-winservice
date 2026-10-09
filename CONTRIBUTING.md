@@ -338,10 +338,11 @@ Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 or a later SDK. WiX 7 requires explicit acceptance of its
 [Open Source Maintenance Fee EULA](https://docs.firegiant.com/wix/osmf/).
 Review the terms and any applicable maintenance fee before accepting them.
-To accept the EULA for a build, run from the repository root:
+The build script accepts the EULA by default. To build an MSI, run from the
+repository root:
 
 ```powershell
-.\scripts\Build-Msi.ps1 -AcceptWixEula
+.\scripts\Build-Msi.ps1
 ```
 
 The script builds the hardened x64 production executable with Cargo's locked
@@ -354,7 +355,7 @@ To reproduce a tagged release locally, stamp its version before building:
 
 ```powershell
 .\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0'
-.\scripts\Build-Msi.ps1 -AcceptWixEula
+.\scripts\Build-Msi.ps1
 ```
 
 The stamping script updates only the `bfd-winservice` version in `Cargo.toml`
@@ -378,9 +379,10 @@ beside the executable in the release folder; retain it with that build.
 Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
 
-If you have already recorded per-user EULA acceptance with WiX on this computer,
-you can omit `-AcceptWixEula`. The switch passes `-acceptEula wix7` to extension
-restore and package build commands without recording per-user acceptance.
+The script's `AcceptWixEula` switch defaults to true and passes
+`-acceptEula wix7` to extension restore and package build commands. Explicit
+`-AcceptWixEula` calls continue to work. Acceptance applies to these commands
+without recording per-user acceptance.
 
 The [.NET tool manifest](.config/dotnet-tools.json) pins WiX `7.0.0`; the script
 restores `WixToolset.Util.wixext` and `WixToolset.Firewall.wixext` at the same
@@ -417,9 +419,8 @@ testing installation. Branch and pull-request runs perform Rust checks without
 packaging an MSI. For a manual MSI build, select a version tag as the workflow
 ref; a manual build from a branch runs the checks only.
 
-After reviewing and accepting the WiX EULA, set the repository Actions variable
-`BFD_WIX_EULA` to `wix7`. The workflow passes `-AcceptWixEula` only when this
-variable matches; a fresh runner cannot build the MSI without acceptance.
+The workflow explicitly passes `-AcceptWixEula` for tagged MSI builds, accepting
+the WiX 7 OSMF EULA for extension restore and package compilation.
 
 Linting, tests, and production builds all use the release profile. Linting and
 tests enable unwinding for the test harness; the production build uses
@@ -473,9 +474,8 @@ To release a tested commit:
 
 1. Choose the next version tag, for example `v1.2.0`. Keep the existing tag when
    retrying a release.
-2. Commit the tested release changes. Confirm that
-   `BFD_WIX_EULA` is set to `wix7` and that the commit contains the release
-   workflow.
+2. Commit the tested release changes. Confirm that the commit contains the
+   release workflow.
 3. Create the version tag from that commit, for example:
 
    ```powershell

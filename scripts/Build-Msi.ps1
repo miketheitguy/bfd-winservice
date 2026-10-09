@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
-    [switch]$AcceptWixEula
+    # Accept the WiX 7 OSMF EULA for extension restore and package compilation.
+    [switch]$AcceptWixEula = $true
 )
 
 $ErrorActionPreference = 'Stop'

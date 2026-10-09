@@ -77,9 +77,7 @@ jobs:
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
       - name: Build hardened release executable and MSI
         if: github.ref_type == 'tag'
-        env:
-          BFD_WIX_EULA: ${{ vars.BFD_WIX_EULA }}
-        run: ./scripts/Build-Msi.ps1 -AcceptWixEula:($env:BFD_WIX_EULA -eq 'wix7')
+        run: ./scripts/Build-Msi.ps1 -AcceptWixEula
       - name: Verify production executable hardening
         if: github.ref_type == 'tag'
         run: |
