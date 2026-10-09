@@ -453,12 +453,12 @@ including when a test fails.
 
 ### Publish a GitHub release
 
-Pushing a version tag publishes a
+Pushing a version tag or manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the build, hardening, and installation checks pass. The release attaches the MSI,
 its SHA-256 checksum, WiX symbols, and matching Rust PDB, with generated release
-notes. A manual workflow run on a version tag produces Actions artifacts
-without publishing a release.
+notes. The release title includes the version tag, such as
+`BFD Windows Service v1.2.0`.
 
 Use the GitHub tag as the release version source. The first stable release is
 `v1.0.0`; increase the minor version for each subsequent release, such as

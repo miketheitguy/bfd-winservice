@@ -57,9 +57,15 @@ try {
         Assert-Installed (Test-Path -LiteralPath (Join-Path $installDirectory $name)) "Missing installed file: $name"
     }
     & (Join-Path $PSScriptRoot 'Test-ExecutableVersion.ps1') -Path $executable -ExpectedVersion $ExpectedVersion
+    # Other uninstall entries may omit DisplayName; strict mode rejects missing properties.
     $uninstallEntries = @(Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
-        Where-Object DisplayName -EQ 'BFD Windows Service')
-    Assert-Installed ($uninstallEntries.Count -eq 1 -and $uninstallEntries[0].DisplayVersion -ceq $ExpectedVersion) 'Installed DisplayVersion must match the release version.'
+        Where-Object {
+            $displayName = $_.PSObject.Properties['DisplayName']
+            $null -ne $displayName -and $displayName.Value -eq 'BFD Windows Service'
+        })
+    Assert-Installed ($uninstallEntries.Count -eq 1) 'Expected one BFD Windows Service uninstall entry.'
+    $displayVersion = $uninstallEntries[0].PSObject.Properties['DisplayVersion']
+    Assert-Installed ($null -ne $displayVersion -and $displayVersion.Value -ceq $ExpectedVersion) 'Installed DisplayVersion must match the release version.'
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
     try {
         Assert-Installed ($key.GetValueKind('Multihop') -eq 'DWord' -and $key.GetValue('Multihop') -eq 0) 'Multihop must default to DWORD 0.'
