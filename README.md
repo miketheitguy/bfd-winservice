@@ -22,7 +22,9 @@ You need:
 
 - 64-bit Windows 10 or later, or a corresponding Windows Server release, on an
   x64 processor.
-- An x64 MSI from the **Build Windows MSI** workflow, or matching
+- An x64 MSI from
+  [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
+  or matching
   `bfd-winservice.exe`, `BFD-Service.man`, and
   `Initialize-Logging.ps1` files supplied by your service maintainer.
 - Administrator PowerShell access to create the service and its registry settings.

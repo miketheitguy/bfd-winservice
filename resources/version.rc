@@ -1,0 +1,29 @@
+LANGUAGE 0x09, 0x01
+
+1 VERSIONINFO
+ FILEVERSION BFD_FILE_VERSION
+ PRODUCTVERSION BFD_FILE_VERSION
+ FILEFLAGSMASK 0x3fL // VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS 0x40004L // VOS_NT_WINDOWS32
+ FILETYPE 0x1L // VFT_APP
+ FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "BFD Windows Service\0"
+            VALUE "FileDescription", "BFD Windows Service\0"
+            VALUE "FileVersion", BFD_VERSION_TEXT
+            VALUE "InternalName", "bfd-winservice\0"
+            VALUE "OriginalFilename", "bfd-winservice.exe\0"
+            VALUE "ProductName", "BFD Windows Service\0"
+            VALUE "ProductVersion", BFD_VERSION_TEXT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

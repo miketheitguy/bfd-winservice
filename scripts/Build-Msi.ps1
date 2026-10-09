@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$AcceptWixEula
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,7 +11,7 @@ $repositoryRoot = Split-Path $PSScriptRoot -Parent
 $previousRollForward = $env:DOTNET_ROLL_FORWARD
 Push-Location $repositoryRoot
 try {
-    # WiX 5 targets .NET 6; allow the supported SDK's runtime (for example, .NET 8).
+    # WiX 7 targets .NET 8; allow a later installed runtime.
     $env:DOTNET_ROLL_FORWARD = 'Major'
     $metadataText = & cargo metadata --locked --no-deps --format-version 1
     if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
@@ -35,22 +36,29 @@ try {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw "Release executable not found: $executable"
     }
+    & (Join-Path $PSScriptRoot 'Test-ExecutableVersion.ps1') -Path $executable -ExpectedVersion $version
     & dotnet tool restore --tool-manifest .config/dotnet-tools.json
     if ($LASTEXITCODE -ne 0) { throw 'WiX tool restore failed.' }
     $toolManifest = Get-Content .config/dotnet-tools.json -Raw | ConvertFrom-Json
+    $eulaArguments = @()
+    if ($AcceptWixEula) {
+        $eulaArguments = @('-acceptEula', 'wix7')
+    }
     foreach ($extension in @('WixToolset.Util.wixext', 'WixToolset.Firewall.wixext')) {
-        & dotnet tool run wix -- extension add "$extension/$($toolManifest.tools.wix.version)"
+        & dotnet tool run wix -- extension add "$extension/$($toolManifest.tools.wix.version)" @eulaArguments
         if ($LASTEXITCODE -ne 0) { throw "WiX extension restore failed: $extension" }
     }
     $outputDirectory = Join-Path $repositoryRoot 'target\installer'
     New-Item -ItemType Directory -Path $outputDirectory -Force
     $msi = Join-Path $outputDirectory "BfdWinService-$version-x64.msi"
     & dotnet tool run wix -- build installer/Package.wxs -arch x64 `
+        @eulaArguments `
         -d "RepositoryRoot=$repositoryRoot" -d "ProductVersion=$version" `
-        -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+        -ext "WixToolset.Util.wixext/$($toolManifest.tools.wix.version)" `
+        -ext "WixToolset.Firewall.wixext/$($toolManifest.tools.wix.version)" `
         -intermediatefolder (Join-Path $outputDirectory 'intermediate') -out $msi
     if ($LASTEXITCODE -ne 0) { throw 'WiX MSI build failed.' }
-    & (Join-Path $PSScriptRoot 'Test-Msi.ps1') -Path $msi
+    & (Join-Path $PSScriptRoot 'Test-Msi.ps1') -Path $msi -ExpectedVersion $version
     $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $(Split-Path $msi -Leaf)" | Set-Content -LiteralPath "$msi.sha256" -Encoding ascii
     Write-Output "MSI: $msi"

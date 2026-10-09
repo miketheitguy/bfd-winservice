@@ -30,7 +30,8 @@ A successful build creates
 `target\x86_64-pc-windows-msvc\release\bfd-winservice.exe`. The help lists
 `--console`, `--help`, and `--version`; session settings come from the registry.
 Event Tracing for Windows (ETW) metadata and English messages are embedded during
-the build using the SDK's `mc.exe` and `rc.exe`.
+the build using the SDK's `mc.exe` and `rc.exe`. Windows file properties also
+contain file and product versions generated from `Cargo.toml`.
 
 Use Developer PowerShell if the MSVC linker is unavailable on `PATH`. The build finds the manifest tools on `PATH` or in the installed Windows 10/11 SDK. For a custom SDK location, set `BFD_MC_PATH` and `BFD_RC_PATH` to the absolute tool paths.
 
@@ -296,10 +297,13 @@ follow that guide.
 ## Build an MSI
 
 Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-or a later SDK, then run from the repository root:
+or a later SDK. WiX 7 requires explicit acceptance of its
+[Open Source Maintenance Fee EULA](https://docs.firegiant.com/wix/osmf/).
+Review the terms and any applicable maintenance fee before accepting them.
+To accept the EULA for a build, run from the repository root:
 
 ```powershell
-.\scripts\Build-Msi.ps1
+.\scripts\Build-Msi.ps1 -AcceptWixEula
 ```
 
 The script builds the hardened x64 production executable with Cargo's locked
@@ -308,6 +312,10 @@ tables (including per-machine scope and required administrator privileges), and
 writes a SHA-256 checksum. Successful output ends with the MSI path.
 The package version comes from `Cargo.toml` and must contain three numeric
 fields within Windows Installer's `255.255.65535` version limits.
+Before packaging, the script checks the executable's `--version` output and
+Windows file and product versions against the Cargo version. It also checks the
+MSI's `ProductVersion` and packaged executable version. `-SkipBuild` rejects an
+executable from another version; rebuild it before packaging.
 
 Output files appear in `target\installer`:
 
@@ -317,18 +325,24 @@ Output files appear in `target\installer`:
 | `BfdWinService-VERSION-x64.msi.sha256` | SHA-256 checksum of that MSI |
 | `BfdWinService-VERSION-x64.wixpdb` | WiX symbols for package diagnostics |
 
-`VERSION` is the Cargo package version, such as `0.1.0`. The Rust PDB remains
+`VERSION` is the Cargo package version, such as `1.0.0`. The Rust PDB remains
 beside the executable in the release folder; retain it with that build.
 Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
 
-The [.NET tool manifest](.config/dotnet-tools.json) pins WiX `5.0.2`; the script
+If you have already recorded per-user EULA acceptance with WiX on this computer,
+you can omit `-AcceptWixEula`. The switch passes `-acceptEula wix7` to extension
+restore and package build commands without recording per-user acceptance.
+
+The [.NET tool manifest](.config/dotnet-tools.json) pins WiX `7.0.0`; the script
 restores `WixToolset.Util.wixext` and `WixToolset.Firewall.wixext` at the same
-version into the ignored `.wix` cache. Administrators don't need .NET or WiX
+version into the ignored `.wix` cache and loads those exact versions for the
+build. Administrators don't need .NET or WiX
 to install the resulting MSI. The package is unsigned; signing isn't configured
 in this workflow.
 
-The [package definition](installer/Package.wxs) follows the WiX schema and uses
+The [package definition](installer/Package.wxs) uses the `v4` XML schema
+namespace, which WiX 7 retains, and uses
 [ServiceInstall](https://docs.firegiant.com/wix/schema/wxs/serviceinstall/),
 [ServiceControl](https://docs.firegiant.com/wix/schema/wxs/servicecontrol/),
 [EventManifest](https://docs.firegiant.com/wix/schema/util/eventmanifest/), and
@@ -343,10 +357,14 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 
 The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
 to `main`, tags matching `v*`, pull requests, and manual dispatch. A tag must
-match the Cargo version, such as `v0.1.0`. The workflow uses an x64
+match the Cargo version, such as `v1.0.0`. The workflow uses an x64
 `windows-2025` runner, reads `rust-toolchain.toml`, checks formatting and Clippy,
 runs optimized tests, and builds the production MSI. It also verifies the
 production executable's hardening.
+
+After reviewing and accepting the WiX EULA, set the repository Actions variable
+`BFD_WIX_EULA` to `wix7`. The workflow passes `-AcceptWixEula` only when this
+variable matches; a fresh runner cannot build the MSI without acceptance.
 
 Linting, tests, and production builds all use the release profile. Linting and
 tests enable unwinding for the test harness; the production build uses
@@ -358,11 +376,13 @@ installation, actual service configuration, registry types, firewall rules,
 rendered Operational events, disabled/enabled file output, repair without
 resetting settings, and uninstall while retaining generated logs. It provisions
 loopback addresses and SEHOP before starting the service. It doesn't run on
-developer machines. Build-time table validation is read-only and can run locally:
+developer machines. It also checks the installed executable's versions and the
+version shown in Windows installed-app settings. Build-time table validation is
+read-only and can run locally:
 
 ```powershell
 .\scripts\Test-Msi.ps1 `
-    -Path '.\target\installer\BfdWinService-0.1.0-x64.msi'
+    -Path '.\target\installer\BfdWinService-1.0.0-x64.msi'
 ```
 
 Adjust the filename for the package version. Confirm that validation reports
@@ -372,7 +392,62 @@ firewall rules, and manifest lifecycle.
 After a successful workflow run, download the `BfdWinService-x64-COMMIT_SHA`
 artifact. It contains the MSI, its checksum, WiX symbols, and matching Rust PDB.
 `COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
-including when a test fails. Workflow generation doesn't publish a GitHub release.
+including when a test fails.
+
+### Publish a GitHub release
+
+Pushing a version tag publishes a
+[GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
+the build, hardening, and installation checks pass. The release attaches the MSI,
+its SHA-256 checksum, WiX symbols, and matching Rust PDB, with generated release
+notes. Branch pushes, pull requests, and manual workflow runs produce Actions
+artifacts without publishing releases.
+
+Use `Cargo.toml` as the version source. The first stable release is `1.0.0`;
+increase the minor version for each subsequent release, such as `1.1.0` and
+`1.2.0`, with patch version `0`. The executable's `--version` output, Windows
+file and product version strings, MSI `ProductVersion`, and installed-app
+`DisplayVersion` use that version. Windows numeric file and product versions
+append a fourth field of `0`, such as `1.0.0.0`. Use the matching tag `v1.0.0`,
+`v1.1.0`, or `v1.2.0`; the workflow rejects a tag that differs from the Cargo
+version before running the build checks.
+
+To release a tested commit:
+
+1. Set the version in `Cargo.toml` to `1.0.0` for the first release, or increase
+   the minor version for a new release. Keep the existing version when retrying
+   a release.
+2. Refresh the package version in `Cargo.lock` without changing dependencies:
+
+   ```powershell
+   cargo update --offline -p bfd-winservice
+   ```
+
+   This command uses the dependency versions already cached from the tested
+   build. Confirm that only the `bfd-winservice` package version changes.
+3. Commit the version files and other release changes. Confirm that
+   `BFD_WIX_EULA` is set to `wix7` and that the commit contains the release
+   workflow.
+4. Create the version tag from that commit, for example:
+
+   ```powershell
+   git tag -a v1.0.0 -m "BFD Windows Service v1.0.0"
+   ```
+
+5. Push that tag:
+
+   ```powershell
+   git push origin v1.0.0
+   ```
+
+6. Wait for **Build Windows MSI** to succeed, then open the repository's
+   **Releases** page. Confirm that the version's **Assets** include
+   `BfdWinService-1.0.0-x64.msi` and its `.sha256` file.
+
+Replace `1.0.0` with the Cargo package version. Only the release job receives
+`contents: write`; the build job retains read-only repository access. Rerunning
+the release job completes a draft or adds missing assets to an existing release.
+It preserves assets already attached to a published release.
 
 ## Run development checks
 

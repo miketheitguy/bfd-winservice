@@ -1,7 +1,10 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Path)
+param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][string]$ExpectedVersion
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -53,6 +56,10 @@ try {
     foreach ($name in @('bfd-winservice.exe','BFD-Service.man','Initialize-Logging.ps1')) {
         Assert-Installed (Test-Path -LiteralPath (Join-Path $installDirectory $name)) "Missing installed file: $name"
     }
+    & (Join-Path $PSScriptRoot 'Test-ExecutableVersion.ps1') -Path $executable -ExpectedVersion $ExpectedVersion
+    $uninstallEntries = @(Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+        Where-Object DisplayName -EQ 'BFD Windows Service')
+    Assert-Installed ($uninstallEntries.Count -eq 1 -and $uninstallEntries[0].DisplayVersion -ceq $ExpectedVersion) 'Installed DisplayVersion must match the release version.'
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
     try {
         Assert-Installed ($key.GetValueKind('Multihop') -eq 'DWord' -and $key.GetValue('Multihop') -eq 0) 'Multihop must default to DWORD 0.'
@@ -112,7 +119,7 @@ try {
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     Assert-Installed ($text -match '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z .*event_id=106 level=Information') 'Missing UTC file event after repair.'
-    Write-Output 'Installation, configuration, firewall, rendered ETW, file logging, and repair checks passed.'
+    Write-Output 'Installation, version, configuration, firewall, rendered ETW, file logging, and repair checks passed.'
 }
 finally {
     if ($installed) { Invoke-Msi '/x' 'uninstall.log' }

@@ -18,6 +18,8 @@ jobs:
   build-msi:
     runs-on: windows-2025
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     defaults:
       run:
         shell: pwsh
@@ -36,6 +38,19 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Load the repository Rust toolchain
         run: rustup show
+      - name: Read release version
+        id: version
+        run: |
+          $metadataJson = & cargo metadata --locked --no-deps --format-version 1
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
+          $metadata = $metadataJson | ConvertFrom-Json
+          $package = @($metadata.packages | Where-Object name -EQ 'bfd-winservice')[0]
+          $version = $package.version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Releases require a three-part numeric version.' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$version") {
+            throw "The release tag must match the Cargo version: v$version"
+          }
+          "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
       - name: Check Rust formatting
         run: cargo fmt --check
       - name: Check Rust lints in release mode
@@ -62,17 +77,21 @@ jobs:
           "BFD_HARDENING_TEST_EXE=$($hardeningTests[0])" |
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
       - name: Build hardened release executable and MSI
-        run: ./scripts/Build-Msi.ps1
+        env:
+          BFD_WIX_EULA: ${{ vars.BFD_WIX_EULA }}
+        run: ./scripts/Build-Msi.ps1 -AcceptWixEula:($env:BFD_WIX_EULA -eq 'wix7')
       - name: Verify production executable hardening
         run: |
           $env:BFD_HARDENING_EXE = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/bfd-winservice.exe').Path
           & $env:BFD_HARDENING_TEST_EXE
           if ($LASTEXITCODE -ne 0) { throw 'Release executable hardening validation failed.' }
       - name: Test MSI installation and removal
+        env:
+          BFD_RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           $msi = @(Get-ChildItem -LiteralPath target/installer -Filter '*.msi')
           if ($msi.Count -ne 1) { throw 'Expected one MSI artifact.' }
-          ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName
+          ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
       - name: Upload MSI and matching symbols
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -92,3 +111,76 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
           path: target/installer/*.log
+
+  publish-release:
+    needs: build-msi
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download validated MSI and matching symbols
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: BfdWinService-x64-${{ github.sha }}
+          path: release-assets
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.build-msi.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw 'Release tags must use vMAJOR.MINOR.PATCH.'
+          }
+          $version = $env:RELEASE_VERSION
+          if ($tag -cne "v$version") { throw 'Release tag does not match the validated package version.' }
+          $msi = "release-assets/installer/BfdWinService-$version-x64.msi"
+          $assets = @(
+            $msi,
+            "$msi.sha256",
+            "release-assets/installer/BfdWinService-$version-x64.wixpdb",
+            'release-assets/x86_64-pc-windows-msvc/release/bfd_winservice.pdb'
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Release asset not found: $asset"
+            }
+          }
+          $checksum = (Get-Content -LiteralPath "$msi.sha256" -Raw).Trim()
+          $expectedChecksum = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($checksum -cne "$expectedChecksum  $(Split-Path $msi -Leaf)") {
+            throw 'Release MSI checksum does not match its checksum file.'
+          }
+          $releaseJson = & gh release view $tag --json isDraft,assets 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            & gh release create $tag @assets --verify-tag `
+              --title "BFD Windows Service $tag" --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed.' }
+          } else {
+            $release = $releaseJson | ConvertFrom-Json
+            if ($release.isDraft) {
+              & gh release upload $tag @assets --clobber
+              if ($LASTEXITCODE -ne 0) { throw 'Draft release asset upload failed.' }
+              & gh release edit $tag --draft=false
+              if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed.' }
+            } else {
+              $publishedNames = @($release.assets | ForEach-Object name)
+              $missingAssets = @($assets | Where-Object {
+                (Split-Path $_ -Leaf) -notin $publishedNames
+              })
+              if ($missingAssets.Count -gt 0) {
+                & gh release upload $tag @missingAssets
+                if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }
+              } else {
+                Write-Output "Release $tag already contains all assets."
+              }
+            }
+          }

@@ -1,6 +1,9 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Path)
+param(
+    [Parameter(Mandatory)][string]$Path,
+    [string]$ExpectedVersion
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -50,6 +53,12 @@ try {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($summary)
     }
     $properties = @(Get-MsiRows 'SELECT `Property`, `Value` FROM `Property`' @('Name','Value'))
+    $productVersions = @($properties | Where-Object Name -EQ 'ProductVersion')
+    Assert-Package ($productVersions.Count -eq 1 -and $productVersions[0].Value -match '^\d+\.\d+\.\d+$') 'Expected one three-part ProductVersion.'
+    $productVersion = $productVersions[0].Value
+    if ($ExpectedVersion) {
+        Assert-Package ($productVersion -ceq $ExpectedVersion) "ProductVersion must match $ExpectedVersion."
+    }
     $allUsers = @($properties | Where-Object Name -EQ 'ALLUSERS')
     Assert-Package ($allUsers.Count -eq 1 -and $allUsers[0].Value -eq '1') 'Package must require per-machine installation (ALLUSERS=1).'
     Assert-Package (@($properties | Where-Object Name -EQ 'Privileged').Count -eq 0) 'Windows Installer must determine installation privileges.'
@@ -70,11 +79,13 @@ try {
     Assert-Package ([string]::IsNullOrEmpty($service.Arguments)) 'Service command line must have no console or configuration arguments.'
     $controls = @(Get-MsiRows 'SELECT `Event`, `Wait` FROM `ServiceControl`' @('Event','Wait'))
     Assert-Package ($controls.Count -eq 1 -and $controls[0].Event -eq '162' -and $controls[0].Wait -eq '1') 'Service must stop on install/removal, uninstall cleanly, and await cleanup.'
-    $files = @(Get-MsiRows 'SELECT `File`, `FileName`, `Component_` FROM `File`' @('Id','Name','Component'))
+    $files = @(Get-MsiRows 'SELECT `File`, `FileName`, `Component_`, `Version` FROM `File`' @('Id','Name','Component','Version'))
     Assert-Package ($files.Count -eq 3) 'Expected the executable, manifest, and logging script.'
     foreach ($name in @('bfd-winservice.exe','BFD-Service.man','Initialize-Logging.ps1')) {
         Assert-Package (@($files | Where-Object { ($_.Name -split '\|')[-1] -eq $name }).Count -eq 1) "Missing payload: $name"
     }
+    $serviceFiles = @($files | Where-Object Id -EQ 'ServiceExe')
+    Assert-Package ($serviceFiles.Count -eq 1 -and $serviceFiles[0].Version -ceq "$productVersion.0") 'Packaged executable version must match ProductVersion with a zero fourth field.'
     $components = @(Get-MsiRows 'SELECT `Component`, `Attributes`, `KeyPath` FROM `Component`' @('Id','Attributes','KeyPath'))
     foreach ($component in $components) {
         Assert-Package (([int]$component.Attributes -band 256) -ne 0) "Non-x64 component: $($component.Id)"
@@ -117,7 +128,7 @@ try {
     foreach ($name in @('Wix4RegisterEventManifest_X64','Wix4UnregisterEventManifest_X64','Wix4RollbackRegisterEventManifest_X64','Wix4RollbackUnregisterEventManifest_X64','Wix5SchedFirewallExceptionsInstall_X64','Wix5SchedFirewallExceptionsUninstall_X64','Wix5RollbackFirewallExceptionsInstall_X64','Wix5RollbackFirewallExceptionsUninstall_X64')) {
         Assert-Package (@($actions | Where-Object Name -EQ $name).Count -eq 1) "Missing transactional x64 action: $name"
     }
-    Write-Output "Validated x64 MSI elevation, service, payload, registry defaults, firewall rules, and manifest lifecycle: $resolvedPath"
+    Write-Output "Validated x64 MSI version $productVersion, elevation, service, payload, registry defaults, firewall rules, and manifest lifecycle: $resolvedPath"
 }
 finally {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)

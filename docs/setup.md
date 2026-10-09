@@ -13,7 +13,8 @@ a stateless responder, use [Configure Seamless BFD](seamless.md).
 
 Prepare the following:
 
-- Obtain the x64 MSI from a successful **Build Windows MSI** workflow run,
+- Obtain the x64 MSI from
+  [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
   or matching `bfd-winservice.exe`, `BFD-Service.man`, and
   `Initialize-Logging.ps1` files from your service maintainer.
 - Use 64-bit Windows 10 or later, or a corresponding Windows Server release,
@@ -60,8 +61,13 @@ The MSI installs the following resources for all users:
 
 ### 1. Install the package
 
-Download the `BfdWinService-x64-COMMIT_SHA` artifact from a successful workflow
-run and extract its contents. In **PowerShell as Administrator**, install the MSI:
+Download `BfdWinService-VERSION-x64.msi` and its `.sha256` file from the version's
+**Assets** on
+[GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
+`VERSION` is the release's numeric version. For builds from a branch or pull
+request, download and extract the `BfdWinService-x64-COMMIT_SHA` Actions artifact;
+`COMMIT_SHA` identifies the source commit. In **PowerShell as Administrator**,
+install the MSI:
 
 ```powershell
 $msi = (Resolve-Path 'MSI_PATH').Path
@@ -80,9 +86,8 @@ Get-WinEvent -ListProvider 'BFD-Service'
 Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
-Replace `MSI_PATH` with the extracted `.msi` path, such as
-`C:\Temp\BfdWinService-0.1.0-x64.msi`. `COMMIT_SHA` identifies the source revision
-in the workflow artifact name. Successful installation reports a **Stopped**,
+Replace `MSI_PATH` with the local `.msi` path, such as
+`C:\Temp\BfdWinService-1.0.0-x64.msi`. Successful installation reports a **Stopped**,
 **Automatic** service and the registered provider/channel. Exit code `3010`
 means installation succeeded and Windows requests a restart.
 

@@ -1,10 +1,12 @@
-//! Enforce the Windows build policy and embed ETW metadata/messages.
+//! Enforce the Windows build policy and embed version and ETW resources.
 #![forbid(unsafe_code)]
 use std::{env, error::Error, fs, io, path::PathBuf, process::Command};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=events/BFD-Service.man");
+    println!("cargo:rerun-if-changed=resources/version.rc");
     for variable in [
         "CARGO_ENCODED_RUSTFLAGS",
         "BFD_MC_PATH",
@@ -58,17 +60,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         .args(["-h", ".", "-r", "."])
         .arg(&manifest)
         .current_dir(&out))?;
-    let resource = out.join("BFD-Service.res");
-    run(Command::new(sdk_tool("rc.exe", "BFD_RC_PATH")?)
-        .arg("/nologo")
-        .arg("/fo")
-        .arg(&resource)
-        .arg("BFD-Service.rc")
-        .current_dir(&out))?;
-    println!(
-        "cargo:rustc-link-arg-bin=bfd-winservice={}",
-        resource.display()
-    );
+    let version = env::var("CARGO_PKG_VERSION")?;
+    let major = env::var("CARGO_PKG_VERSION_MAJOR")?.parse::<u16>()?;
+    let minor = env::var("CARGO_PKG_VERSION_MINOR")?.parse::<u16>()?;
+    let patch = env::var("CARGO_PKG_VERSION_PATCH")?.parse::<u16>()?;
+    fs::write(
+        out.join("BFD-Version.rc"),
+        format!(
+            "#define BFD_FILE_VERSION {major},{minor},{patch},0\n\
+             #define BFD_VERSION_TEXT \"{version}\\0\"\n{}",
+            include_str!("resources/version.rc")
+        ),
+    )?;
+    let resource_compiler = sdk_tool("rc.exe", "BFD_RC_PATH")?;
+    for name in ["BFD-Service", "BFD-Version"] {
+        let resource = out.join(format!("{name}.res"));
+        run(Command::new(&resource_compiler)
+            .arg("/nologo")
+            .arg("/fo")
+            .arg(&resource)
+            .arg(format!("{name}.rc"))
+            .current_dir(&out))?;
+        println!(
+            "cargo:rustc-link-arg-bin=bfd-winservice={}",
+            resource.display()
+        );
+    }
     Ok(())
 }
 
