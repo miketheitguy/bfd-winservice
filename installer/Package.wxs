@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package Name="BFD Windows Service" Manufacturer="BFD Windows Service"
+           Version="$(var.ProductVersion)" Language="1033" Scope="perMachine"
+           UpgradeCode="F044EF3A-595B-4870-A9E0-96C1D315B073" InstallerVersion="500">
+    <MajorUpgrade Schedule="afterInstallExecute" AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer BFD Windows Service is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="BFD_WINDOWS_BUILD">
+      <RegistrySearch Id="WindowsBuildSearch" Root="HKLM" Bitness="always64"
+                      Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+                      Name="CurrentBuildNumber" Type="raw" />
+    </Property>
+    <util:QueryNativeMachine />
+    <Launch Condition="Privileged"
+            Message="Administrator privileges are required to install or maintain BFD Windows Service. Run the installer as an administrator." />
+    <Launch Condition="Installed OR (VersionNT64 AND BFD_WINDOWS_BUILD &gt;= 10240 AND (WIX_NATIVE_MACHINE = 34404 OR NOT WIX_NATIVE_MACHINE))"
+            Message="BFD Windows Service requires x64 Windows 10 or Windows Server 2016 or later." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="BfdWinService">
+        <Component Id="ServiceComponent" Bitness="always64">
+          <File Id="ServiceExe" Source="$(var.RepositoryRoot)\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe"
+                KeyPath="yes" />
+          <ServiceInstall Id="InstallBfdService" Name="BfdWinService"
+                          DisplayName="BFD Windows Service"
+                          Description="Monitors a configured peer with Bidirectional Forwarding Detection."
+                          Type="ownProcess" Start="auto" Account="LocalSystem"
+                          ErrorControl="normal" Vital="yes" />
+          <!-- Configuration and SEHOP policy are provisioned before the first start. -->
+          <ServiceControl Id="ControlBfdService" Name="BfdWinService"
+                          Stop="both" Remove="uninstall" Wait="yes" />
+          <firewall:FirewallException Id="ControlInbound" Name="BfdWinService - control inbound"
+                    Description="Classical BFD and S-BFD reflector requests."
+                    File="ServiceExe" Protocol="udp" Port="3784,4784,7784" Action="allow" Enabled="yes"
+                    RemotePort="49152-65535" Profile="all" Scope="any" IgnoreFailure="no" />
+          <firewall:FirewallException Id="SbfdReplyInbound" Name="BfdWinService - S-BFD replies inbound"
+                    Description="S-BFD responses to the initiator source port."
+                    File="ServiceExe" Protocol="udp" Port="49152-65535" Action="allow" Enabled="yes"
+                    RemotePort="7784" Profile="all" Scope="any" IgnoreFailure="no" />
+          <firewall:FirewallException Id="ProbeOutbound" Name="BfdWinService - probes outbound"
+                    Description="Classical BFD packets and S-BFD initiator requests."
+                    File="ServiceExe" Protocol="udp" Port="49152-65535" Action="allow" Enabled="yes"
+                    RemotePort="3784,4784,7784" Outbound="yes"
+                    Profile="all" Scope="any" IgnoreFailure="no" />
+          <firewall:FirewallException Id="SbfdReplyOutbound" Name="BfdWinService - S-BFD replies outbound"
+                    Description="S-BFD reflector responses to initiators."
+                    File="ServiceExe" Protocol="udp" Port="7784" Action="allow" Enabled="yes"
+                    RemotePort="49152-65535" Outbound="yes"
+                    Profile="all" Scope="any" IgnoreFailure="no" />
+        </Component>
+        <Component Id="ManifestComponent" Bitness="always64">
+          <File Id="EventManifest" Source="$(var.RepositoryRoot)\events\BFD-Service.man" KeyPath="yes">
+            <util:EventManifest MessageFile="[#ServiceExe]" ResourceFile="[#ServiceExe]" />
+          </File>
+        </Component>
+        <Component Id="LoggingScriptComponent" Bitness="always64">
+          <File Source="$(var.RepositoryRoot)\scripts\Initialize-Logging.ps1" KeyPath="yes" />
+        </Component>
+        <!-- Separate key paths prevent repair from resetting administrator settings. -->
+        <Component Id="MultihopDefault" Bitness="always64" NeverOverwrite="yes">
+          <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
+                         Name="Multihop" Type="integer" Value="0" KeyPath="yes" />
+        </Component>
+        <Component Id="LogToFileDefault" Bitness="always64" NeverOverwrite="yes">
+          <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
+                         Name="LogToFile" Type="integer" Value="0" KeyPath="yes" />
+        </Component>
+        <Component Id="LogFilePathDefault" Bitness="always64" NeverOverwrite="yes">
+          <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
+                         Name="LogFilePath" Type="string" Value="[LOGFOLDER]trace.log" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="LOGFOLDER" Name="BfdWinService">
+        <Component Id="LogDirectoryComponent" Guid="1C76D609-E33A-4A9D-A2DB-B97E78153312" Bitness="always64">
+          <CreateFolder />
+          <!-- Remove only an empty folder; user-generated logs are retained. -->
+          <RemoveFolder Id="RemoveLogDirectory" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="ServiceFeature" Title="BFD Windows Service" Level="1">
+      <ComponentRef Id="ServiceComponent" />
+      <ComponentRef Id="ManifestComponent" />
+      <ComponentRef Id="LoggingScriptComponent" />
+      <ComponentRef Id="MultihopDefault" />
+      <ComponentRef Id="LogToFileDefault" />
+      <ComponentRef Id="LogFilePathDefault" />
+      <ComponentRef Id="LogDirectoryComponent" />
+    </Feature>
+  </Package>
+</Wix>

@@ -20,7 +20,9 @@ The transport profiles use these destination ports and received time-to-live (TT
 All outgoing packets use TTL/hop limit 255. Classical sessions and S-BFD
 initiators use a stable source port in 49152–65535. Reflectors reply from port
 7784 to the request's source port. Configure firewall rules for the chosen
-transport; the service doesn't create them.
+transport. The service doesn't create them; the
+[MSI installs executable-specific rules](setup.md#msi-firewall-rules) for all
+supported roles. Manual installations need equivalent firewall provisioning.
 
 ## Control packet format
 

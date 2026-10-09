@@ -3,6 +3,8 @@
 This guide is for Windows systems administrators provisioning a fresh
 Bidirectional Forwarding Detection (BFD) Windows service installation or a
 foreground console session. The service monitors one configured local/peer pair.
+Use [Install with an MSI](#install-with-an-msi) for the package produced by
+GitHub Actions, or follow the file-copy and service-creation procedure on this page.
 
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
@@ -11,8 +13,9 @@ a stateless responder, use [Configure Seamless BFD](seamless.md).
 
 Prepare the following:
 
-- Obtain `bfd-winservice.exe`, `BFD-Service.man`, and
-  `Initialize-Logging.ps1` from the same version of the service.
+- Obtain the x64 MSI from a successful **Build Windows MSI** workflow run,
+  or matching `bfd-winservice.exe`, `BFD-Service.man`, and
+  `Initialize-Logging.ps1` files from your service maintainer.
 - Use 64-bit Windows 10 or later, or a corresponding Windows Server release,
   on an x64 processor.
 - Open **PowerShell as Administrator**. Use the same
@@ -20,7 +23,8 @@ Prepare the following:
 - Choose distinct unicast `Local` and `Peer` IP literals of the same address
   family. Configure the remote peer with these addresses reversed.
 - Allow the [required network traffic](protocol.md). The service doesn't create
-  firewall rules or discover peers.
+  firewall rules or discover peers. The MSI installs the rules described in
+  [MSI firewall rules](#msi-firewall-rules).
 
 Find the interface that owns your local address:
 
@@ -31,6 +35,114 @@ Get-NetIPAddress |
 
 Find your local address in the output and use its nonzero interface index for
 the default single-hop session.
+
+## Install with an MSI
+
+Installation, repair, and removal require administrator privileges. The MSI
+requests elevation for its per-machine installation and rejects installation
+sessions without the required privileges. Run command-line installation from
+**PowerShell as Administrator**.
+
+The MSI installs the following resources for all users:
+
+- The executable, manifest, and logging script in
+  `C:\Program Files\BfdWinService`.
+- The `BfdWinService` service with display name **BFD Windows Service**,
+  the LocalSystem account, and **Automatic** startup. The MSI leaves it stopped;
+  configure it before starting the service or restarting Windows.
+- The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
+  with message and resource paths pointing to the installed executable.
+- The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
+  `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
+  Windows layout. The logging path uses the machine's ProgramData location.
+- The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
+- Four executable-specific UDP firewall rules for classical and Seamless BFD.
+
+### 1. Install the package
+
+Download the `BfdWinService-x64-COMMIT_SHA` artifact from a successful workflow
+run and extract its contents. In **PowerShell as Administrator**, install the MSI:
+
+```powershell
+$msi = (Resolve-Path 'MSI_PATH').Path
+$log = Join-Path $env:TEMP 'BfdWinService-install.log'
+$arguments = @(
+    '/i', ('"' + $msi + '"'), '/qn', '/norestart',
+    '/L*v', ('"' + $log + '"')
+)
+$result = Start-Process -FilePath msiexec.exe -ArgumentList $arguments `
+    -WindowStyle Hidden -Wait -PassThru
+if ($result.ExitCode -notin @(0, 3010)) {
+    throw "MSI installation failed; inspect $log"
+}
+Get-Service BfdWinService | Select-Object Name, Status, StartType
+Get-WinEvent -ListProvider 'BFD-Service'
+Get-WinEvent -ListLog 'BFD-Service/Operational'
+```
+
+Replace `MSI_PATH` with the extracted `.msi` path, such as
+`C:\Temp\BfdWinService-0.1.0-x64.msi`. `COMMIT_SHA` identifies the source revision
+in the workflow artifact name. Successful installation reports a **Stopped**,
+**Automatic** service and the registered provider/channel. Exit code `3010`
+means installation succeeded and Windows requests a restart.
+
+### 2. Configure and start the session
+
+Before the first start, complete these steps:
+
+1. [Enable SEHOP for the executable](#enable-sehop-for-the-executable).
+   The MSI doesn't change Windows Exploit Protection policy.
+2. [Configure the session](#2-configure-the-session), including the required
+   addresses and interface index. The MSI already provisions logging defaults;
+   omit the `Initialize-Logging.ps1` invocation if you want to retain them.
+3. [Start the service](#4-start-the-service) and
+   [verify startup](#5-verify-startup).
+4. Configure the remote peer and [verify peer communication](#6-verify-peer-communication).
+
+The MSI registers the manifest automatically. Use the session and logging
+references to configure authentication, multihop, S-BFD, or file output.
+
+### MSI firewall rules
+
+All rules allow UDP for the installed executable on Domain, Private, and Public
+profiles. Remote addresses are unrestricted so multihop, anycast, and
+point-to-point configurations can use their configured peers. The rules have
+these port restrictions:
+
+| Rule | Direction | Local ports | Remote ports |
+| --- | --- | --- | --- |
+| `BfdWinService - control inbound` | Inbound | 3784, 4784, 7784 | 49152–65535 |
+| `BfdWinService - S-BFD replies inbound` | Inbound | 49152–65535 | 7784 |
+| `BfdWinService - probes outbound` | Outbound | 49152–65535 | 3784, 4784, 7784 |
+| `BfdWinService - S-BFD replies outbound` | Outbound | 7784 | 49152–65535 |
+
+The high-port inbound rule is required for S-BFD initiators because replies
+return to their source port. No TCP or BFD Echo rule is installed. Network
+firewalls and organizational policy still control effective access.
+
+To inspect the installed rules, run:
+
+```powershell
+Get-NetFirewallRule |
+    Where-Object DisplayName -Like 'BfdWinService - *' |
+    Select-Object DisplayName, Direction, Enabled, Profile
+```
+
+Confirm that the four rules are enabled. To inspect ports, pipe the matching
+rules to `Get-NetFirewallPortFilter`.
+
+### Remove an MSI installation
+
+In Windows **Installed apps** or **Programs and Features**, select
+**BFD Windows Service** and choose **Uninstall**. Windows Installer stops the
+service, removes its registration and installed files, unregisters the event
+manifest, and removes its four firewall rules. User-generated log files remain.
+It removes the ProgramData folder only when the folder is empty.
+
+Confirm that `Get-Service BfdWinService` no longer finds the service and that
+the provider and firewall-rule queries no longer find the installed entries.
+Use Windows Installer to remove an MSI installation so its ownership records
+remain consistent.
 
 ## Prepare installation files
 
@@ -293,6 +405,9 @@ The output file contains console messages with Unix-millisecond timestamps.
 This shell redirection is separate from the `LogToFile` setting.
 
 ## Remove the service and manifest
+
+For an MSI installation, use [Remove an MSI installation](#remove-an-msi-installation).
+The following procedure removes a manually created service.
 
 Use **PowerShell as Administrator** with the installed manifest path.
 

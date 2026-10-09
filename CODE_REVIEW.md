@@ -2,6 +2,55 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## MSI packaging review — 2026-10-08
+
+Added the [Build Windows MSI workflow](.github/workflows/build-msi.yml),
+[WiX package](installer/Package.wxs), and
+[local build script](scripts/Build-Msi.ps1). The x64, per-machine MSI installs
+the documented Automatic LocalSystem service without starting it, registers
+the event manifest with installed resource paths, creates the ProgramData
+folder, and provisions the single-hop/file-logging defaults. Operators provision
+addresses and the documented SEHOP policy before starting the service.
+
+Four executable-specific UDP rules cover classical control traffic, S-BFD
+requests, replies to initiators' high source ports, and reflector responses.
+The native WiX extensions provide installation, rollback, and removal actions.
+Each registry default has a separate never-overwrite component so repair can
+preserve administrator settings. Uninstall removes an empty log directory but
+retains generated files. WiX and extensions are pinned to version 5.0.2;
+GitHub actions use verified commit IDs and a read-only contents permission.
+
+Local validation passed: production release build, WiX compilation, read-only
+MSI table assertions for architecture, payload, service account/start type,
+registry types/defaults, manifest resource resolution, firewall ports/directions,
+and transactional action presence; checksum verification; production executable
+hardening regression; actionlint; PowerShell syntax checks; documentation links;
+and whitespace checks. No Rust source changed, so protocol suites weren't rerun.
+
+The [installation test](scripts/Test-MsiInstall.ps1) runs only on a disposable
+GitHub-hosted runner and exercises install, rendered ETW delivery, configured
+service execution, file logging, repair, and uninstall. That test and the
+complete GitHub workflow haven't been executed in this local session. Target
+service, Event Log, and firewall configuration weren't changed locally. The
+package is unsigned. See [Build an MSI](CONTRIBUTING.md#build-an-msi) and
+[Install with an MSI](docs/setup.md#install-with-an-msi).
+
+Applied the `technical-documentation` skill to the setup, README, network,
+and build references. **Score: 9/10 → 10/10** for the changed documentation
+sections: file-only installation guidance is extended with the package procedure,
+and installer behavior is verified against authoring and MSI tables. The revised
+documents are linked in this record.
+
+### Documentation change log
+
+The documentation changes follow these skill rules:
+
+| Change | Rule ID and name | Reason |
+| --- | --- | --- |
+| Add package installation, required provisioning, verification, and removal steps | P1 — Numbered, single-action procedures | Administrators can complete installation without creating duplicate service or provider registrations. |
+| Document actual firewall ports, resource paths, registry defaults, and stopped Automatic service | P11 — Every behavior verified in code | The administrator reference matches the compiled package and explains which settings remain operator tasks. |
+| Keep MSI build tooling and workflow details in the developer guide | R2 — Document type matches the reader's task (inferred taxonomy) | Systems administrators can install the package without build instructions. |
+
 ## State and diagnostic logging review — 2026-10-08
 
 Reviewed state changes against

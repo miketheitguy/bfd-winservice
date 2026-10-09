@@ -1,0 +1,94 @@
+name: Build Windows MSI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msi-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-msi:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install .NET SDK for WiX
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Load the repository Rust toolchain
+        run: rustup show
+      - name: Check Rust formatting
+        run: cargo fmt --check
+      - name: Check Rust lints in release mode
+        env:
+          # Match the optimized test harness when checking all targets.
+          CARGO_PROFILE_RELEASE_PANIC: unwind
+        run: cargo clippy --locked --release --all-targets -- -D warnings
+      - name: Run optimized tests
+        run: |
+          cargo test-release
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized tests failed.' }
+          $hardeningTests = @(
+            cargo test-release --no-run --test windows_hardening --message-format=json |
+              ForEach-Object { $_ | ConvertFrom-Json } |
+              Where-Object {
+                $_.reason -eq 'compiler-artifact' -and
+                $_.target.name -eq 'windows_hardening' -and $_.executable
+              } |
+              Select-Object -ExpandProperty executable
+          )
+          if ($LASTEXITCODE -ne 0 -or $hardeningTests.Count -ne 1) {
+            throw 'Expected one compiled release hardening test executable.'
+          }
+          "BFD_HARDENING_TEST_EXE=$($hardeningTests[0])" |
+            Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+      - name: Build hardened release executable and MSI
+        run: ./scripts/Build-Msi.ps1
+      - name: Verify production executable hardening
+        run: |
+          $env:BFD_HARDENING_EXE = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/bfd-winservice.exe').Path
+          & $env:BFD_HARDENING_TEST_EXE
+          if ($LASTEXITCODE -ne 0) { throw 'Release executable hardening validation failed.' }
+      - name: Test MSI installation and removal
+        run: |
+          $msi = @(Get-ChildItem -LiteralPath target/installer -Filter '*.msi')
+          if ($msi.Count -ne 1) { throw 'Expected one MSI artifact.' }
+          ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName
+      - name: Upload MSI and matching symbols
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: BfdWinService-x64-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            target/installer/*.msi
+            target/installer/*.msi.sha256
+            target/installer/*.wixpdb
+            target/x86_64-pc-windows-msvc/release/bfd_winservice.pdb
+      - name: Upload installer test logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MSI-test-logs-${{ github.sha }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: target/installer/*.log

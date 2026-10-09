@@ -22,7 +22,8 @@ You need:
 
 - 64-bit Windows 10 or later, or a corresponding Windows Server release, on an
   x64 processor.
-- Matching `bfd-winservice.exe`, `BFD-Service.man`, and
+- An x64 MSI from the **Build Windows MSI** workflow, or matching
+  `bfd-winservice.exe`, `BFD-Service.man`, and
   `Initialize-Logging.ps1` files supplied by your service maintainer.
 - Administrator PowerShell access to create the service and its registry settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
@@ -32,16 +33,20 @@ You need:
 
 Use **PowerShell as Administrator** for installation and configuration.
 
-### 1. Copy the installation files
+### 1. Install the service
 
-Follow [Prepare installation files](docs/setup.md#prepare-installation-files)
-to copy the supplied files to `C:\Program Files\BfdWinService` or your chosen
-installation folder.
+Follow [Install with an MSI](docs/setup.md#install-with-an-msi) to install the
+files and Automatic service, register the Operational provider, and create
+firewall rules. The service remains stopped for configuration.
+
+For supplied loose files, follow the manual installation procedure in
+[Set up a BFD session](docs/setup.md).
 
 ### 2. Configure a fresh installation
 
-Complete steps 1–3 in [Set up a BFD session](docs/setup.md#install-the-windows-service)
-to create the service, provision its registry values, and register its Operational log.
+Follow [Configure the session](docs/setup.md#2-configure-the-session) to provision
+the required registry values. Before the first start,
+[enable SEHOP](docs/setup.md#enable-sehop-for-the-executable) for the executable.
 
 The default transport is single-hop. File output defaults to disabled; its
 configured path is `C:\ProgramData\BfdWinService\trace.log`.

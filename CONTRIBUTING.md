@@ -293,6 +293,87 @@ Deliver the folder's contents with the [setup guide](docs/setup.md).
 Administrators don't need Rust, the MSVC toolchain, or the Windows SDK to
 follow that guide.
 
+## Build an MSI
+
+Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+or a later SDK, then run from the repository root:
+
+```powershell
+.\scripts\Build-Msi.ps1
+```
+
+The script builds the hardened x64 production executable with Cargo's locked
+dependencies, restores WiX and its extensions, compiles the MSI, validates its
+tables (including per-machine scope and required administrator privileges), and
+writes a SHA-256 checksum. Successful output ends with the MSI path.
+The package version comes from `Cargo.toml` and must contain three numeric
+fields within Windows Installer's `255.255.65535` version limits.
+
+Output files appear in `target\installer`:
+
+| File | Purpose |
+| --- | --- |
+| `BfdWinService-VERSION-x64.msi` | Installer with embedded payload cabinet |
+| `BfdWinService-VERSION-x64.msi.sha256` | SHA-256 checksum of that MSI |
+| `BfdWinService-VERSION-x64.wixpdb` | WiX symbols for package diagnostics |
+
+`VERSION` is the Cargo package version, such as `0.1.0`. The Rust PDB remains
+beside the executable in the release folder; retain it with that build.
+Use `-SkipBuild` when changing installer authoring after already building the
+matching production executable. The normal command always rebuilds the executable.
+
+The [.NET tool manifest](.config/dotnet-tools.json) pins WiX `5.0.2`; the script
+restores `WixToolset.Util.wixext` and `WixToolset.Firewall.wixext` at the same
+version into the ignored `.wix` cache. Administrators don't need .NET or WiX
+to install the resulting MSI. The package is unsigned; signing isn't configured
+in this workflow.
+
+The [package definition](installer/Package.wxs) follows the WiX schema and uses
+[ServiceInstall](https://docs.firegiant.com/wix/schema/wxs/serviceinstall/),
+[ServiceControl](https://docs.firegiant.com/wix/schema/wxs/servicecontrol/),
+[EventManifest](https://docs.firegiant.com/wix/schema/util/eventmanifest/), and
+[FirewallException](https://docs.firegiant.com/wix/schema/firewall/firewallexception/).
+WiX handles manifest/firewall installation, rollback, and removal through its
+native extension actions. Resource paths resolve to the installed executable.
+Separate registry-value components preserve administrator values during repair.
+The installed service is Automatic and remains stopped for address configuration
+and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-with-an-msi).
+
+### Build with GitHub Actions
+
+The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
+to `main`, tags matching `v*`, pull requests, and manual dispatch. A tag must
+match the Cargo version, such as `v0.1.0`. The workflow uses an x64
+`windows-2025` runner, reads `rust-toolchain.toml`, checks formatting and Clippy,
+runs optimized tests, and builds the production MSI. It also verifies the
+production executable's hardening.
+
+Linting, tests, and production builds all use the release profile. Linting and
+tests enable unwinding for the test harness; the production build uses
+`panic = "abort"`. The final hardening check reuses the compiled release test
+executable so it doesn't rebuild the packaged service or its matching PDB.
+
+The installation test runs only on a GitHub-hosted runner. It checks fresh
+installation, actual service configuration, registry types, firewall rules,
+rendered Operational events, disabled/enabled file output, repair without
+resetting settings, and uninstall while retaining generated logs. It provisions
+loopback addresses and SEHOP before starting the service. It doesn't run on
+developer machines. Build-time table validation is read-only and can run locally:
+
+```powershell
+.\scripts\Test-Msi.ps1 `
+    -Path '.\target\installer\BfdWinService-0.1.0-x64.msi'
+```
+
+Adjust the filename for the package version. Confirm that validation reports
+the x64 package's elevation requirement, service, payload, registry defaults,
+firewall rules, and manifest lifecycle.
+
+After a successful workflow run, download the `BfdWinService-x64-COMMIT_SHA`
+artifact. It contains the MSI, its checksum, WiX symbols, and matching Rust PDB.
+`COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
+including when a test fails. Workflow generation doesn't publish a GitHub release.
+
 ## Run development checks
 
 Run these checks before committing Rust changes:

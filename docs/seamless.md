@@ -13,8 +13,8 @@ describes the use cases and requirements.
 
 Prepare these prerequisites:
 
-- Prepare the supplied executable, manifest, and logging script using
-  [Prepare installation files](setup.md#prepare-installation-files).
+- Install the [MSI package](setup.md#install-with-an-msi), or prepare supplied
+  loose files using [Prepare installation files](setup.md#prepare-installation-files).
 - Follow [Enable SEHOP for the executable](setup.md#enable-sehop-for-the-executable)
   for both service and console execution.
 - Open **PowerShell as Administrator**. These examples use
@@ -26,9 +26,12 @@ Prepare these prerequisites:
 - Allow initiator traffic to User Datagram Protocol (UDP) port `7784`, and
   replies from `7784` to each initiator's selected source port.
 
-For Windows service execution, follow [Create the service](setup.md#1-create-the-service)
-and [Register the Operational log](setup.md#3-register-the-operational-log).
-Then configure one of the roles in this guide. Each service process runs one role.
+For Windows service execution, the MSI creates the service and registers the
+Operational log. With supplied loose files, follow
+[Create the service](setup.md#1-create-the-service) and
+[Register the Operational log](setup.md#3-register-the-operational-log).
+Then configure one of the roles in this guide before starting the service.
+Each service process runs one role.
 
 ## Configure an initiator
 
