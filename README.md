@@ -5,6 +5,9 @@ peer with Bidirectional Forwarding Detection (BFD). Follow this guide to install
 and configure the service. Optional Border Gateway Protocol (BGP)
 control starts and stops a configured Windows BGP peer as BFD state changes.
 
+The BFD service runs as LocalService. A separate LocalSystem broker manages BGP
+through a local pipe restricted to the BFD service identity.
+
 For probes that establish without a discriminator handshake, configure an
 IPv4/IPv6 [Seamless BFD initiator or reflector](docs/seamless.md).
 
@@ -13,6 +16,7 @@ The service uses these Windows names:
 | Name | Value |
 | --- | --- |
 | Windows service | `BfdWinService` |
+| BGP management service | `BfdBgpBroker` |
 | Event provider | `BFD-Service` |
 | Event Log channel | `BFD-Service/Operational` |
 
@@ -41,8 +45,8 @@ Follow [Install with an MSI](docs/setup.md#install-with-an-msi) to install the
 files and Automatic service, register the Operational provider, and create
 firewall rules. The service remains stopped for configuration.
 
-For supplied loose files, follow the manual installation procedure in
-[Set up a BFD session](docs/setup.md).
+Supplied loose files support [foreground console execution](docs/setup.md#run-in-a-console).
+Use the MSI for service execution, BGP management, and COM registration.
 
 ### 2. Configure a fresh installation
 
@@ -100,6 +104,7 @@ Use these guides for the next task:
 | Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](docs/seamless.md) |
 | Enable file output or interpret Operational events | [Logs and events](docs/logging.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
+| Query the live session state from a monitoring client | [Query the current BFD state through COM](docs/com.md) |
 | Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
 | Review RFC 5880 requirements, coverage, and implementation limits | [RFC 5880 conformance review](docs/rfc5880-conformance.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |

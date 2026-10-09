@@ -33,6 +33,29 @@ pub(crate) fn load_sbfd_settings(options: &Options) -> io::Result<(Timing, bool)
     Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY).sbfd_settings(options)
 }
 
+/// The privileged broker reads its target from protected HKLM configuration,
+/// never from an IPC message. It does not need BFD addresses or authentication keys.
+pub(crate) fn load_bgp_target() -> io::Result<Option<(String, Option<String>)>> {
+    bgp_target(&Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY))
+}
+
+fn bgp_target(registry: &Registry) -> io::Result<Option<(String, Option<String>)>> {
+    let peer = registry.string("BgpPeerName")?;
+    let domain = registry.string("BgpRoutingDomain")?;
+    for (name, value) in [("BgpPeerName", &peer), ("BgpRoutingDomain", &domain)] {
+        if value
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty() || value.contains('\0'))
+        {
+            return Err(invalid(name, "must be a nonempty name"));
+        }
+    }
+    if domain.is_some() && peer.is_none() {
+        return Err(invalid("BgpRoutingDomain", "requires BgpPeerName"));
+    }
+    Ok(peer.map(|peer| (peer, domain)))
+}
+
 struct Registry {
     // A borrowed predefined key (or test fixture handle); never owned/closed.
     root: HKEY,
@@ -366,6 +389,31 @@ mod tests {
                     eprintln!("registry fixture cleanup failed: close={closed}, delete={deleted}");
                 }
             }
+        }
+
+        #[test]
+        fn broker_target_does_not_read_bfd_addresses_or_authentication() {
+            let fixture = Fixture::new();
+            let registry = Registry::new(fixture.key, "");
+            assert_eq!(bgp_target(&registry).unwrap(), None);
+            fixture.string("AuthKey", "\u{0}");
+            fixture.dword("Local", 1);
+            fixture.string("BgpPeerName", "Site 🦀");
+            assert_eq!(
+                bgp_target(&registry).unwrap(),
+                Some(("Site 🦀".into(), None))
+            );
+            fixture.string("BgpRoutingDomain", "Tenant");
+            assert_eq!(
+                bgp_target(&registry).unwrap(),
+                Some(("Site 🦀".into(), Some("Tenant".into())))
+            );
+            fixture.remove("BgpPeerName");
+            assert!(bgp_target(&registry).is_err());
+            fixture.string("BgpPeerName", " ");
+            assert!(bgp_target(&registry).is_err());
+            fixture.dword("BgpPeerName", 1);
+            assert!(bgp_target(&registry).is_err());
         }
 
         #[test]

@@ -1,6 +1,6 @@
-//! Local BGP control through Windows Management Infrastructure, off the BFD thread.
+//! Bounded BGP control through the authenticated local broker, off the BFD thread.
 
-mod mi;
+pub(crate) mod ipc;
 
 use crate::{config::Options, packet::State, runtime::Logger};
 use std::{
@@ -12,7 +12,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Method {
+pub(crate) enum Method {
     Get,
     Start,
     Stop,
@@ -44,10 +44,12 @@ struct Pending {
     methods: VecDeque<Method>,
     closed: bool,
     established: bool,
+    desired: Option<Method>,
 }
 
 impl Pending {
     fn push(&mut self, method: Method) {
+        self.desired = Some(method);
         if method == Method::Stop {
             // Down/AdminDown discard queued recovery. An already issued provider
             // call completes before the worker processes this Stop.
@@ -80,14 +82,20 @@ impl Controller {
         let Some(peer) = options.bgp_peer_name.clone() else {
             return Ok(None);
         };
-        let domain = options.bgp_routing_domain.clone();
+        if options.console {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "BGP control requires the installed BfdWinService service identity",
+            ));
+        }
         let mut log = logger.clone();
         let mailbox = Mailbox::default();
         let worker_mailbox = Arc::clone(&mailbox);
         let worker = thread::Builder::new()
-            .name("bgp-mi".into())
+            .name("bgp-ipc".into())
             .spawn(move || {
-                match mi::started(&peer, domain.as_deref(), &log) {
+                let client = std::cell::RefCell::new(ipc::Client::new());
+                match client.borrow_mut().started() {
                     Ok(started) => {
                         log.log(format!("BGP peer={peer:?} startup started={started}; BFD handshake begins without changing BGP"));
                     }
@@ -95,11 +103,16 @@ impl Controller {
                         log.log(format!("BGP peer={peer:?} startup status check failed: {error}; will recheck when BFD reaches Up"));
                     }
                 }
-                work(&worker_mailbox, |method| {
-                    let result = reconcile(method,
-                        || mi::started(&peer, domain.as_deref(), &log),
-                        |method| mi::invoke(&peer, domain.as_deref(), method, &log),
+                work_with_health(&worker_mailbox, |method| {
+                    let mut result = reconcile(method,
+                        || client.borrow_mut().started(),
+                        |method| client.borrow_mut().invoke(method),
                         || start_is_current(&worker_mailbox));
+                    // Claim a running peer without restarting it, so the broker
+                    // knows to Stop it if this managed connection disappears.
+                    if method == Method::Start && matches!(result, Ok(false)) && start_is_current(&worker_mailbox) {
+                        result = client.borrow_mut().invoke(Method::Start).map(|()| false);
+                    }
                     match &result {
                         Ok(true) => log.log(format!(
                             "BGP peer={peer:?} method={} succeeded",
@@ -112,7 +125,7 @@ impl Controller {
                         )),
                     }
                     result.map(|_| ())
-                })
+                }, || client.borrow_mut().maintain())
             })?;
         Ok(Some(Self {
             mailbox,
@@ -197,16 +210,37 @@ fn start_is_current(mailbox: &Mailbox) -> bool {
     !pending.closed && pending.methods.is_empty()
 }
 
+#[cfg(test)]
 fn work(mailbox: &Mailbox, mut invoke: impl FnMut(Method) -> io::Result<()>) -> io::Result<()> {
+    work_with_health(mailbox, &mut invoke, || Ok(false))
+}
+
+fn work_with_health(
+    mailbox: &Mailbox,
+    mut invoke: impl FnMut(Method) -> io::Result<()>,
+    mut health: impl FnMut() -> io::Result<bool>,
+) -> io::Result<()> {
     let (mutex, ready) = &**mailbox;
     let mut last_failure = None;
     loop {
         let method = {
             let mut pending = mutex.lock().unwrap_or_else(|error| error.into_inner());
             while pending.methods.is_empty() && !pending.closed {
-                pending = ready
-                    .wait(pending)
+                let (next, timeout) = ready
+                    .wait_timeout(pending, Duration::from_secs(1))
                     .unwrap_or_else(|error| error.into_inner());
+                pending = next;
+                if timeout.timed_out() && pending.methods.is_empty() && !pending.closed {
+                    // Pipe health checks and reconnects never hold the engine's lock.
+                    drop(pending);
+                    let reconnected = health();
+                    pending = mutex.lock().unwrap_or_else(|error| error.into_inner());
+                    if matches!(reconnected, Ok(true)) && !pending.closed {
+                        if let Some(desired) = pending.desired {
+                            pending.push(desired);
+                        }
+                    }
+                }
             }
             let Some(method) = pending.methods.pop_front() else {
                 return last_failure.map_or(Ok(()), Err);
@@ -249,6 +283,92 @@ impl Drop for Controller {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn reconnection_reapplies_up_but_never_mutates_during_cold_start() {
+        for established in [false, true] {
+            let mailbox = Mailbox::default();
+            if established {
+                mailbox.0.lock().unwrap().push(Method::Start);
+            }
+            let mut calls = Vec::new();
+            work_with_health(
+                &mailbox,
+                |method| {
+                    calls.push(method);
+                    if calls.len() == 2 {
+                        mailbox.0.lock().unwrap().closed = true;
+                    }
+                    Ok(())
+                },
+                || {
+                    let mut pending = mailbox
+                        .0
+                        .try_lock()
+                        .expect("health check must not hold engine lock");
+                    if !established {
+                        pending.closed = true;
+                    }
+                    Ok(true)
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                calls,
+                if established {
+                    vec![Method::Start, Method::Start]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn down_during_reconnect_supersedes_up_without_blocking_the_mailbox() {
+        let mailbox = Mailbox::default();
+        mailbox.0.lock().unwrap().push(Method::Start);
+        let (called, calls) = mpsc::channel();
+        let (checking, checks) = mpsc::channel();
+        let (release, blocked) = mpsc::channel();
+        thread::scope(|scope| {
+            let worker_mailbox = &mailbox;
+            let worker = scope.spawn(move || {
+                work_with_health(
+                    worker_mailbox,
+                    |method| {
+                        called.send(method).unwrap();
+                        if method == Method::Stop {
+                            worker_mailbox.0.lock().unwrap().closed = true;
+                        }
+                        Ok(())
+                    },
+                    || {
+                        checking.send(()).unwrap();
+                        blocked.recv_timeout(Duration::from_secs(3)).unwrap();
+                        Ok(true)
+                    },
+                )
+            });
+            assert_eq!(
+                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                Method::Start
+            );
+            checks.recv_timeout(Duration::from_secs(3)).unwrap();
+            mailbox
+                .0
+                .try_lock()
+                .expect("reconnect blocked the engine")
+                .push(Method::Stop);
+            release.send(()).unwrap();
+            assert_eq!(
+                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                Method::Stop
+            );
+            worker.join().unwrap().unwrap();
+            assert!(calls.try_recv().is_err());
+        });
+    }
 
     #[test]
     fn startup_handshake_preserves_bgp_until_bfd_first_establishes() {

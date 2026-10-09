@@ -18,8 +18,11 @@ use std::{
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetSystemTime};
 
 mod logging;
+pub(crate) mod state;
 pub use crate::transport::StopSignal;
 pub use logging::Logger;
+pub use state::StateObserver;
+use state::StatePublisher;
 
 #[derive(Clone, Copy)]
 enum StopRequest<'a> {
@@ -67,6 +70,9 @@ fn utc_timestamp(text: &mut String) {
 
 /// One validated session, its UDP sockets, and any configured BGP worker.
 pub struct Engine {
+    // Drop the publication before sockets/providers so retained readers cannot
+    // report a live state while an engine that never ran is being torn down.
+    state_publisher: StatePublisher,
     options: ValidatedOptions,
     timing: Timing,
     sbfd_admin_down: bool,
@@ -129,6 +135,7 @@ impl Engine {
             session.local_discriminator, session.state()
         ));
         Ok(Self {
+            state_publisher: StatePublisher::new(session.state()),
             timing: options.timing(),
             sbfd_admin_down: options.sbfd_admin_down,
             options,
@@ -139,10 +146,16 @@ impl Engine {
             last_peer_report: None,
         })
     }
+    /// Returns a shared, read-only view of the current local BFD state.
+    pub fn state_observer(&self) -> StateObserver {
+        self.state_publisher.observer()
+    }
+
     fn state_changed(&self, previous: State, log: &mut Logger) {
         if previous == self.session.state() {
             return;
         }
+        self.state_publisher.publish(self.session.state());
         log.session_event(
             SessionEvent::StateChanged,
             &self.options,
@@ -416,6 +429,7 @@ impl Engine {
         let announcements = self.announce_shutdown(grace, log);
         // Wait for the pending Stop attempt and propagate failure before completion.
         let shutdown = self.bgp.take().map_or(Ok(()), Controller::shutdown);
+        self.state_publisher.close();
         result.and(announcements).and(shutdown)
     }
 
@@ -643,12 +657,17 @@ mod tests {
         let auth = options.validate().unwrap();
         let mut log = Logger::open(&options).unwrap();
         let mut engine = Engine::open(options.clone(), auth, &mut log).unwrap();
+        let observer = engine.state_observer();
+        assert_eq!(observer.current(), Some(State::Up));
         engine.set_reflector_admin_down(true, &mut log);
+        assert_eq!(observer.current(), Some(State::AdminDown));
         engine.set_reflector_admin_down(true, &mut log); // No duplicate event.
         engine.set_reflector_admin_down(false, &mut log);
+        assert_eq!(observer.current(), Some(State::Up));
         let (stop, receiver) = std::sync::mpsc::channel();
         drop(stop);
         engine.run(&receiver, &mut log).unwrap();
+        assert_eq!(observer.current(), None);
         log.flush(Duration::from_secs(2)).unwrap();
         let text = fs::read_to_string(&options.log_file_path).unwrap();
         assert_eq!(

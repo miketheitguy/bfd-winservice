@@ -1,4 +1,5 @@
 use bfd_winservice::{
+    com::ComServer,
     config::{load_registry, SERVICE_NAME},
     runtime::{Engine, Logger, StopSignal},
 };
@@ -77,9 +78,14 @@ fn run_service() -> Result<(), Box<dyn Error>> {
         }
     };
     let result = (|| -> Result<(), Box<dyn Error>> {
+        // The dedicated COM thread acknowledges process security initialization
+        // before Engine construction can start any background management providers.
+        let mut com = ComServer::initialize()?;
+        bfd_winservice::bgp_broker::verify_connection()?;
         let options = load_registry(false)?;
         log.open_file(&options)?;
         let mut engine = Engine::from_config(options, &mut log)?;
+        com.register(engine.state_observer())?;
         let started = {
             let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
             reporter.set(ServiceState::Running, ServiceExitCode::Win32(0))?;
@@ -124,6 +130,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             }
             result
         })?;
+        com.shutdown()?;
         Ok(())
     })();
     if let Err(error) = &result {
@@ -201,10 +208,8 @@ fn status(state: ServiceState, exit_code: ServiceExitCode, checkpoint: u32) -> S
         },
         exit_code,
         checkpoint: if pending { checkpoint } else { 0 },
-        wait_hint: if state == ServiceState::StopPending {
+        wait_hint: if pending {
             Duration::from_secs(30)
-        } else if pending {
-            Duration::from_secs(5)
         } else {
             Duration::ZERO
         },

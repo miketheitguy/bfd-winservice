@@ -295,11 +295,36 @@ to read the output immediately, and `Logger::dropped_records()` reports queue
 loss. Do not call `flush` from the protocol timer loop. See
 [log destinations and queue limits](docs/logging.md#log-destinations).
 
+## Query live state through COM
+
+The service exposes a read-only Automation interface using Microsoft's official
+`windows` crate. [Query the current BFD state through COM](docs/com.md) describes
+the ProgID, dispatch members, state codes, lifecycle, and client examples.
+The MSI registers the class and its service activation settings.
+
+The engine publishes state changes through one shared atomic value. COM clients
+never borrow or lock the session. A dedicated `bfd-com` MTA thread initializes
+process security and registers a multiple-use class factory. The supervisor waits
+for security initialization before opening background providers, then joins the
+COM thread after the BFD worker finishes. That thread revokes the class and
+uninitializes COM; startup errors trigger the same cleanup. Console mode does not
+host the class.
+
+The Rust suite tests late-bound Windows PowerShell 5.1, PowerShell 7 (when
+installed), and C# queries in a separate process
+without installing a service or writing COM registry keys. It checks that retained
+objects observe transitions and return a disconnected error after the engine exits.
+The tests also check apartment isolation, rejection of preexisting process
+security, and class revocation after explicit shutdown or Drop.
+The release workflow also runs the read-only native MI provider regression under
+the COM security defaults to check compatibility with BGP management access.
+
 ## Prepare installation files
 
 Give administrators these files from the same source revision:
 
 - `bfd-winservice.exe`: the release executable.
+- `bfd-bgp-broker.exe`: the privileged BGP broker, installed by the MSI.
 - `BFD-Service.man`: the Event Log provider manifest.
 - `Initialize-Logging.ps1`: the script that provisions logging defaults.
 
@@ -310,6 +335,9 @@ $deploymentDirectory = Join-Path $PWD 'target\deployment'
 New-Item -ItemType Directory -Path $deploymentDirectory -Force
 Copy-Item `
     -LiteralPath '.\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe' `
+    -Destination $deploymentDirectory
+Copy-Item `
+    -LiteralPath '.\target\x86_64-pc-windows-msvc\release\bfd-bgp-broker.exe' `
     -Destination $deploymentDirectory
 Copy-Item -LiteralPath '.\events\BFD-Service.man' `
     -Destination $deploymentDirectory
@@ -324,6 +352,7 @@ PowerShell displays the deployment folder and these filenames:
 Name
 ----
 BFD-Service.man
+bfd-bgp-broker.exe
 bfd-winservice.exe
 Initialize-Logging.ps1
 ```
@@ -331,6 +360,15 @@ Initialize-Logging.ps1
 Deliver the folder's contents with the [setup guide](docs/setup.md).
 Administrators don't need Rust, the MSVC toolchain, or the Windows SDK to
 follow that guide.
+
+Loose files support console execution. Use the MSI for SCM execution: it
+provisions the LocalService BFD process, demand-start LocalSystem broker, enabled
+service SIDs, service dependency, and scoped registry/file/log ACLs. Native MI
+code is confined to `src/bgp_broker/mi.rs`; the BFD worker uses `src/bgp/ipc.rs`.
+Broker operations accept only fixed Get/Start/Stop frames and load their target
+from protected configuration. Protocol, authorization, reconnect, disconnect
+cleanup, and overlapped-I/O cancellation tests use temporary pipes and fake
+provider operations, with no service installation or BGP changes.
 
 ## Build an MSI
 
@@ -345,7 +383,7 @@ repository root:
 .\scripts\Build-Msi.ps1
 ```
 
-The script builds the hardened x64 production executable with Cargo's locked
+The script builds both hardened x64 production executables with Cargo's locked
 dependencies, restores WiX and its extensions, compiles the MSI, validates its
 tables (including per-machine scope and required administrator privileges), and
 writes a SHA-256 checksum. Successful output ends with the MSI path.
@@ -366,6 +404,9 @@ Windows file and product versions against the Cargo version. It also checks the
 MSI's `ProductVersion` and packaged executable version. `-SkipBuild` rejects an
 executable from another version; rebuild it before packaging.
 
+Both executables use the same Cargo version and receive separate filename and
+description resources. Tagged Actions builds stamp both from the GitHub tag.
+
 Output files appear in `target\installer`:
 
 | File | Purpose |
@@ -376,6 +417,7 @@ Output files appear in `target\installer`:
 
 `VERSION` is the build's package version, such as `1.2.0`. The Rust PDB remains
 beside the executable in the release folder; retain it with that build.
+The broker's matching `bfd_bgp_broker.pdb` is generated and published too.
 Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
 
@@ -400,6 +442,12 @@ namespace, which WiX 7 retains, and uses
 WiX handles manifest/firewall installation, rollback, and removal through its
 native extension actions. Resource paths resolve to the installed executable.
 Separate registry-value components preserve administrator values during repair.
+Fixed-target native SCM custom actions provision accounts and service SID types.
+They snapshot previous built-in account/SID settings in the protected installation
+directory, restore them during MSI rollback, and remove the snapshot on commit.
+WiX documents limitations in the native MSI service-configuration action; these
+settings therefore use explicit SCM calls instead of `MsiServiceConfig` authoring.
+See [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/wxs/serviceconfig/).
 The installed service is Automatic and remains stopped for address configuration
 and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-with-an-msi).
 
@@ -431,11 +479,22 @@ executable so it doesn't rebuild the packaged service or its matching PDB.
 The installation test runs only on a GitHub-hosted runner. It checks fresh
 installation, actual service configuration, registry types, firewall rules,
 rendered Operational events, disabled/enabled file output, repair without
-resetting settings, and uninstall while retaining generated logs. It provisions
+resetting settings, COM queries and activation of a stopped service, and uninstall
+while removing COM registration and retaining generated logs. It provisions
 loopback addresses and SEHOP before starting the service. It doesn't run on
 developer machines. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is
-read-only and can run locally:
+read-only and can run locally.
+
+The tests check both service accounts and SIDs, broker startup authorization
+from the actual LocalService token, denial of unrelated pipe clients, both
+executable versions, SCM recovery after a broker crash, and log writes through
+the BFD service SID.
+`Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
+copy to exercise fresh-install and existing LocalSystem-account rollback. It
+runs only on a disposable GitHub-hosted runner.
+
+To inspect the package without installing it, run:
 
 ```powershell
 .\scripts\Test-Msi.ps1 `
@@ -447,7 +506,7 @@ the x64 package's elevation requirement, service, payload, registry defaults,
 firewall rules, and manifest lifecycle.
 
 After a successful tag build, download the `BfdWinService-x64-COMMIT_SHA`
-artifact. It contains the MSI, its checksum, WiX symbols, and matching Rust PDB.
+artifact. It contains the MSI, its checksum, WiX symbols, and both matching Rust PDBs.
 `COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
 including when a test fails.
 
@@ -456,7 +515,7 @@ including when a test fails.
 Pushing a version tag or manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the build, hardening, and installation checks pass. The release attaches the MSI,
-its SHA-256 checksum, WiX symbols, and matching Rust PDB, with generated release
+its SHA-256 checksum, WiX symbols, and both matching Rust PDBs, with generated release
 notes. The release title includes the version tag, such as
 `BFD Windows Service v1.2.0`.
 
@@ -515,7 +574,10 @@ Confirm that the commands complete without errors. The documentation check also 
 
 Configuration validation and protocol modules are portable. Registry loading, User Datagram Protocol (UDP) transport, ETW, native Management Infrastructure (MI), and Windows Service Control Manager (SCM) integration require Windows. IPv4 time-to-live (TTL) metadata requires `IP_RECVTTL` support.
 
-Native tests use temporary `HKEY_CURRENT_USER` (HKCU) registry keys, local MI fixtures, and loopback UDP sockets. They do not change installed service settings or Border Gateway Protocol (BGP) peers. The read-only Common Information Model (CIM) schema test requires namespace access and is opt-in. Run it separately:
+Native tests use temporary `HKEY_CURRENT_USER` (HKCU) registry keys, named pipes,
+local MI fixtures, and loopback UDP sockets. They do not change installed service
+settings or Border Gateway Protocol (BGP) peers. The read-only Common Information
+Model (CIM) schema test requires namespace access and is opt-in. Run it separately:
 
 ```powershell
 cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
@@ -530,7 +592,7 @@ rustup component add miri
 cargo +nightly miri test --locked --lib -- --test-threads=1
 ```
 
-Miri checks the portable logic and synthetic ancillary-data parser. Native Winsock, MI, registry, ETW, and subprocess tests are excluded. To check the parser with both strict provenance and tree borrows, run:
+Miri checks the portable logic and synthetic ancillary-data parser. Native Winsock, MI, registry, named-pipe, ETW, and subprocess tests are excluded. To check the parser with both strict provenance and tree borrows, run:
 
 ```powershell
 $env:MIRIFLAGS = '-Zmiri-strict-provenance -Zmiri-tree-borrows'

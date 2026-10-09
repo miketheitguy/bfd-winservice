@@ -5,7 +5,7 @@
 use bfd_winservice::{
     config::{Mode, Options},
     packet::{AuthConfig, AuthType, ControlPacket, State},
-    runtime::{Engine, Logger, StopSignal},
+    runtime::{Engine, Logger, StateObserver, StopSignal},
     transport::{Datagram, Transport},
 };
 use std::{
@@ -58,6 +58,7 @@ fn loopback_interface(options: &Options) -> u32 {
 }
 
 struct RunningEngine {
+    state: StateObserver,
     stop: StopSignal,
     worker: Option<thread::JoinHandle<io::Result<()>>>,
 }
@@ -78,6 +79,7 @@ impl RunningEngine {
         let stop = StopSignal::new().unwrap();
         let receiver = stop.clone();
         Self {
+            state: engine.state_observer(),
             stop,
             worker: Some(thread::spawn(move || engine.run_until(&receiver, &mut log))),
         }
@@ -345,6 +347,7 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
     // Multihop must accept packets with a TTL below 255.
     sender.set_ttl(64).unwrap();
     let mut engine = RunningEngine::start(options);
+    assert_eq!(engine.state.current(), Some(State::Down));
     let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
     let mut buffer = [0; 512];
     let (length, source) = peer.recv_from(&mut buffer).unwrap();
@@ -375,6 +378,7 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
         ControlPacket::decode(&buffer[..length]).unwrap().state,
         State::Init
     );
+    assert_eq!(engine.state.current(), Some(State::Init));
     packet.state = State::Init;
     packet.your_discriminator = 7;
     sender
@@ -383,6 +387,7 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
     let (length, _) = peer.recv_from(&mut buffer).unwrap();
     let up = ControlPacket::decode(&buffer[..length]).unwrap();
     assert_eq!(up.state, State::Up);
+    assert_eq!(engine.state.current(), Some(State::Up));
     assert!(
         !up.poll && !up.final_bit,
         "state notification is separate from Poll"
@@ -416,6 +421,7 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
         let (length, _) = peer.recv_from(&mut buffer).unwrap();
         let packet = ControlPacket::decode(&buffer[..length]).unwrap();
         if packet.state == State::Down {
+            assert_eq!(engine.state.current(), Some(State::Down));
             assert_eq!(packet.diagnostic, 1);
             assert_eq!(packet.your_discriminator, 0);
             break;
@@ -423,6 +429,7 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
         assert!(Instant::now() < deadline, "session did not time out");
     }
     engine.stop();
+    assert_eq!(engine.state.current(), None);
     loop {
         let (length, _) = peer.recv_from(&mut buffer).unwrap();
         let packet = ControlPacket::decode(&buffer[..length]).unwrap();

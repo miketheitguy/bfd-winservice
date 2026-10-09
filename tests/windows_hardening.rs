@@ -11,7 +11,12 @@ fn service_executable_is_x64_with_required_windows_mitigations() {
     let executable = std::env::var_os("BFD_HARDENING_EXE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_bfd-winservice")));
-    let image = fs::read(&executable).expect("Cargo must produce the service executable");
+    assert_executable(&executable);
+    assert_executable(&executable.with_file_name("bfd-bgp-broker.exe"));
+}
+
+fn assert_executable(executable: &std::path::Path) {
+    let image = fs::read(executable).expect("Cargo must produce the service executable");
     assert_eq!(&image[..2], b"MZ");
     let pe = usize::try_from(dword(&image, 0x3c)).expect("PE offset fits usize");
     assert_eq!(&image[pe..pe + 4], b"PE\0\0");
@@ -107,7 +112,13 @@ fn service_executable_is_x64_with_required_windows_mitigations() {
     });
     assert!(cet_compatible, "image must be CET shadow-stack compatible");
 
-    let pdb = fs::read(executable.with_file_name("bfd_winservice.pdb"))
+    let pdb_name = executable
+        .file_stem()
+        .expect("executable name")
+        .to_string_lossy()
+        .replace('-', "_")
+        + ".pdb";
+    let pdb = fs::read(executable.with_file_name(pdb_name))
         .expect("full debug symbols must be generated alongside the executable");
     assert_eq!(
         &pdb[..32],

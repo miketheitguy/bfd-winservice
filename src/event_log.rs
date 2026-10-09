@@ -23,6 +23,8 @@ const OPERATIONAL_KEYWORD: u64 = 0x8000_0000_0000_0000;
 const SERVICE_STARTED: EVENT_DESCRIPTOR = descriptor(1, 4, 1, 0x1);
 const SERVICE_STOPPED: EVENT_DESCRIPTOR = descriptor(2, 4, 1, 0x1);
 const SERVICE_FAILED: EVENT_DESCRIPTOR = descriptor(3, 2, 1, 0x1);
+const BROKER_INFORMATION: EVENT_DESCRIPTOR = descriptor(300, 4, 4, 0x4);
+const BROKER_ERROR: EVENT_DESCRIPTOR = descriptor(301, 2, 4, 0x4);
 const PEER_COMMUNICATION_STARTED: EVENT_DESCRIPTOR = descriptor(100, 4, 2, 0x2);
 const PEER_COMMUNICATION_STOPPED: EVENT_DESCRIPTOR = descriptor(101, 3, 2, 0x2);
 const SESSION_UP: EVENT_DESCRIPTOR = descriptor(102, 4, 2, 0x2);
@@ -139,6 +141,24 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    pub(crate) fn broker_message(message: &str, failure: bool) -> Self {
+        let event = if failure {
+            &BROKER_ERROR
+        } else {
+            &BROKER_INFORMATION
+        };
+        let mut payload = Vec::new();
+        append_unicode(&mut payload, message);
+        Self {
+            event,
+            payload,
+            text: Some(format!(
+                "event_id={} level={} {message}",
+                event.Id,
+                level_name(event)
+            )),
+        }
+    }
     #[cfg(test)]
     pub(crate) fn identity(&self) -> (u16, u8) {
         (self.event.Id, self.event.Level)
@@ -478,6 +498,8 @@ mod tests {
             ("SERVICE_STARTED", SERVICE_STARTED),
             ("SERVICE_STOPPED", SERVICE_STOPPED),
             ("SERVICE_FAILED", SERVICE_FAILED),
+            ("BROKER_INFORMATION", BROKER_INFORMATION),
+            ("BROKER_ERROR", BROKER_ERROR),
             ("PEER_COMMUNICATION_STARTED", PEER_COMMUNICATION_STARTED),
             ("PEER_COMMUNICATION_STOPPED", PEER_COMMUNICATION_STOPPED),
             ("SESSION_UP", SESSION_UP),
@@ -532,6 +554,20 @@ mod tests {
             header.contains(&compact(&declaration)),
             "MC provider GUID differs"
         );
+    }
+
+    #[test]
+    fn broker_diagnostic_has_utf16_payload_and_distinct_event_severity() {
+        for failure in [false, true] {
+            let record = Record::broker_message("Site 🦀: stopped", failure);
+            let expected: Vec<_> = "Site 🦀: stopped"
+                .encode_utf16()
+                .chain(Some(0))
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            assert_eq!(record.payload, expected);
+            assert_eq!(record.identity(), if failure { (301, 2) } else { (300, 4) });
+        }
     }
 
     #[test]

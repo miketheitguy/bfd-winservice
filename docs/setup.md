@@ -4,7 +4,8 @@ This guide is for Windows systems administrators provisioning a fresh
 Bidirectional Forwarding Detection (BFD) Windows service installation or a
 foreground console session. The service monitors one configured local/peer pair.
 Use [Install with an MSI](#install-with-an-msi) for the package produced by
-GitHub Actions, or follow the file-copy and service-creation procedure on this page.
+GitHub Actions. Loose files support foreground console execution; SCM operation
+requires the MSI to provision both services and their security settings.
 
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
@@ -46,18 +47,29 @@ sessions without the required privileges. Run command-line installation from
 
 The MSI installs the following resources for all users:
 
-- The executable, manifest, and logging script in
+- Both executables, the manifest, and logging script in
   `C:\Program Files\BfdWinService`.
 - The `BfdWinService` service with display name **BFD Windows Service**,
-  the LocalSystem account, and **Automatic** startup. The MSI leaves it stopped;
+  the LocalService account, and **Automatic** startup. The MSI leaves it stopped;
   configure it before starting the service or restarting Windows.
+- The `BfdBgpBroker` service with **Manual** startup and the LocalSystem account.
+  BFD depends on the broker, so starting BFD starts the broker even when BGP
+  control is disabled. Both services have their own enabled service SID.
+  SCM restarts the broker after a crash with a five-second delay.
 - The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
   with message and resource paths pointing to the installed executable.
 - The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
   `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
   Windows layout. The logging path uses the machine's ProgramData location.
 - The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
+  Only the BFD service SID receives Modify access; shared LocalService processes
+  receive no write grant. The Parameters key permits reads only by SYSTEM,
+  administrators, and that service SID. Installed code and COM registration
+  remain writable only by SYSTEM and administrators.
 - Four executable-specific UDP firewall rules for classical and Seamless BFD.
+- The read-only `BfdWinService.SessionState` COM Automation class and the
+  `RpcSs` service dependency. [Query the current BFD state through COM](com.md)
+  after configuring the service; activating the class starts a stopped service.
 
 ### 1. Install the package
 
@@ -140,12 +152,12 @@ rules to `Get-NetFirewallPortFilter`.
 ### Remove an MSI installation
 
 In Windows **Installed apps** or **Programs and Features**, select
-**BFD Windows Service** and choose **Uninstall**. Windows Installer stops the
-service, removes its registration and installed files, unregisters the event
+**BFD Windows Service** and choose **Uninstall**. Windows Installer stops BFD and
+the broker, removes both service registrations and installed files, unregisters the event
 manifest, and removes its four firewall rules. User-generated log files remain.
 It removes the ProgramData folder only when the folder is empty.
 
-Confirm that `Get-Service BfdWinService` no longer finds the service and that
+Confirm that `Get-Service BfdWinService,BfdBgpBroker` no longer finds the services and that
 the provider and firewall-rule queries no longer find the installed entries.
 Use Windows Installer to remove an MSI installation so its ownership records
 remain consistent.
@@ -178,16 +190,17 @@ event messages from it.
 ## Enable SEHOP for the executable
 
 In **PowerShell as Administrator**, enable Structured Exception Handling
-Overwrite Protection (SEHOP) for the installed executable:
+Overwrite Protection (SEHOP) for both installed executables:
 
 ```powershell
 Set-ProcessMitigation -Name bfd-winservice.exe -Enable SEHOP
+Set-ProcessMitigation -Name bfd-bgp-broker.exe -Enable SEHOP
 Get-ProcessMitigation -Name bfd-winservice.exe |
     Select-Object -ExpandProperty SEHOP
 ```
 
 Confirm that `Enable` is `ON`. This Windows Exploit Protection policy applies
-to subsequent service and console processes named `bfd-winservice.exe` on this
+to subsequent processes named `bfd-winservice.exe` and `bfd-bgp-broker.exe` on this
 machine. If a process is already running, restart it to apply the policy.
 
 SEHOP is a [Windows process mitigation](https://learn.microsoft.com/en-us/powershell/module/processmitigations/set-processmitigation?view=windowsserver2025-ps),
@@ -202,21 +215,26 @@ Windows and hardware support; see [Build security](../CONTRIBUTING.md#build-secu
 Before creating or starting the service, complete
 [Enable SEHOP for the executable](#enable-sehop-for-the-executable).
 
-### 1. Create the service
+### 1. Install the services
 
-Create a service with the quoted absolute executable path:
+Follow [Install with an MSI](#install-with-an-msi) to create both services with
+their accounts, service SIDs, dependencies, protected ACLs, and COM registration.
+The installer migrates an existing built-in service account to LocalService and
+restores its previous account/SID settings if the transaction rolls back. Custom
+service accounts are rejected because their passwords cannot be restored safely.
+Do not create just the BFD service with `New-Service`: startup requires an
+authenticated connection to the separately provisioned broker.
+
+Set the installed paths for the remaining commands:
 
 ```powershell
+$installDirectory = Join-Path $env:ProgramFiles 'BfdWinService'
 $exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
-$binaryPath = '"' + $exe + '"'
-New-Service -Name BfdWinService -BinaryPathName $binaryPath `
-    -DisplayName 'BFD Windows Service' -StartupType Automatic
 ```
 
-PowerShell displays the new service with status `Stopped`. All session settings
-belong in its Parameters registry key; the executable path contains the binary
-path only. `Automatic` starts the service when Windows starts; finish the
-configuration and manifest registration before starting the service.
+All session settings belong in the BFD Parameters registry key. `Automatic`
+starts BFD and its broker dependency when Windows starts; finish configuration
+before starting the service. The MSI already registers the event manifest.
 
 ### 2. Configure the session
 
@@ -337,6 +355,7 @@ A successful first handshake produces entries such as:
 Event `1` confirms engine startup. Event `100` confirms valid peer communication;
 event `102` confirms BFD reached `Up`. Service startup alone doesn't establish
 peer communication. For other events, see [Logs and events](logging.md).
+For an MSI installation, you can also [query the current state through COM](com.md).
 
 ### 7. Optional: Stop the service
 
@@ -357,6 +376,9 @@ See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 ## Run in a console
 
 Console execution reads the same Parameters registry values as service execution.
+Run it as Administrator when using the MSI-protected key. Console mode does not
+host COM or authorize BGP operations; leave `BgpPeerName` and `BgpRoutingDomain`
+unset for foreground execution.
 
 ### 1. Configure the registry values
 
@@ -413,7 +435,7 @@ This shell redirection is separate from the `LogToFile` setting.
 ## Remove the service and manifest
 
 For an MSI installation, use [Remove an MSI installation](#remove-an-msi-installation).
-The following procedure removes a manually created service.
+The following procedure removes services from a legacy manual installation.
 
 Use **PowerShell as Administrator** with the installed manifest path.
 
@@ -423,6 +445,7 @@ Finish service cleanup before removing its registration:
 
 ```powershell
 Stop-Service BfdWinService
+Stop-Service BfdBgpBroker -ErrorAction SilentlyContinue
 ```
 
 Confirm `Get-Service BfdWinService` reports `Stopped` before continuing.
@@ -449,6 +472,9 @@ Remove the stopped service from SCM:
 
 ```powershell
 sc.exe delete BfdWinService
+if (Get-Service BfdBgpBroker -ErrorAction SilentlyContinue) {
+    sc.exe delete BfdBgpBroker
+}
 ```
 
 The command reports successful deletion. After SCM completes deletion,

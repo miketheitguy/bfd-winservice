@@ -49,6 +49,8 @@ jobs:
         run: rustup show
       - name: Check release version stamping
         run: ./scripts/Test-ReleaseVersion.ps1
+      - name: Check installer ACL validation
+        run: ./scripts/Test-RestrictedAcl.ps1
       - name: Check Rust formatting
         run: cargo fmt --check
       - name: Check Rust lints in release mode
@@ -74,6 +76,10 @@ jobs:
           }
           "BFD_HARDENING_TEST_EXE=$($hardeningTests[0])" |
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+      - name: Check native MI with COM security
+        run: |
+          cargo test-release --lib bgp_broker::mi::tests::native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { throw 'Native MI compatibility with COM security failed.' }
       - name: Build hardened release executable and MSI
         if: github.ref_type == 'tag'
         run: ./scripts/Build-Msi.ps1 -AcceptWixEula
@@ -83,13 +89,14 @@ jobs:
           $env:BFD_HARDENING_EXE = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/bfd-winservice.exe').Path
           & $env:BFD_HARDENING_TEST_EXE
           if ($LASTEXITCODE -ne 0) { throw 'Release executable hardening validation failed.' }
-      - name: Test MSI installation and removal
+      - name: Test MSI rollback, installation, and removal
         if: github.ref_type == 'tag'
         env:
           BFD_RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           $msi = @(Get-ChildItem -LiteralPath target/installer -Filter '*.msi')
           if ($msi.Count -ne 1) { throw 'Expected one MSI artifact.' }
+          ./scripts/Test-MsiRollback.ps1 -Path $msi[0].FullName
           ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
       - name: Upload MSI and matching symbols
         if: github.ref_type == 'tag'
@@ -103,6 +110,7 @@ jobs:
             target/installer/*.msi.sha256
             target/installer/*.wixpdb
             target/x86_64-pc-windows-msvc/release/bfd_winservice.pdb
+            target/x86_64-pc-windows-msvc/release/bfd_bgp_broker.pdb
       - name: Upload installer test logs
         if: always() && github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -147,7 +155,8 @@ jobs:
             $msi,
             "$msi.sha256",
             "release-assets/installer/BfdWinService-$version-x64.wixpdb",
-            'release-assets/x86_64-pc-windows-msvc/release/bfd_winservice.pdb'
+            'release-assets/x86_64-pc-windows-msvc/release/bfd_winservice.pdb',
+            'release-assets/x86_64-pc-windows-msvc/release/bfd_bgp_broker.pdb'
           )
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {

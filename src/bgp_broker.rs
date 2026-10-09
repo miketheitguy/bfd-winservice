@@ -1,0 +1,411 @@
+//! Privileged, fixed-target BGP management hosted by BfdBgpBroker.
+//! This service has no UDP listener or public COM class factory.
+mod install;
+mod mi;
+mod service;
+
+use crate::{
+    bgp::{
+        ipc::{self, Frame, Listener},
+        Method,
+    },
+    config::load_bgp_target,
+    runtime::{Logger, StopSignal},
+};
+use std::io;
+
+/// Verify the installed broker's identity and the BFD service's pipe authorization.
+/// Provider errors do not prevent BFD startup; transport/authentication errors do.
+///
+/// # Errors
+/// Returns authentication, protocol, or connection errors after a bounded retry.
+pub fn verify_connection() -> io::Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        match ipc::Client::new().probe() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if matches!(error.raw_os_error(), Some(2 | 231))
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(100))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Dispatch the broker's fixed installer commands or enter its SCM service.
+///
+/// # Errors
+/// Returns command-line, installer-provisioning, or SCM errors.
+pub fn run() -> io::Result<()> {
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    match arguments.as_slice() {
+        [] => service::run(),
+        [argument] if argument == "--version" => {
+            println!("bfd-bgp-broker {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        [argument] if argument == "--prepare-install" => install::prepare(),
+        [argument] if argument == "--configure-install" => install::configure(),
+        [argument] if argument == "--rollback-install" => install::rollback(),
+        [argument] if argument == "--commit-install" => install::commit(),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsupported BGP broker arguments",
+        )),
+    }
+}
+
+struct Target {
+    peer: String,
+    domain: Option<String>,
+}
+impl Target {
+    fn load() -> io::Result<Option<Self>> {
+        load_bgp_target().map(|target| target.map(|(peer, domain)| Self { peer, domain }))
+    }
+    fn execute(&self, method: Method, log: &Logger) -> io::Result<u32> {
+        match method {
+            Method::Get => mi::started(&self.peer, self.domain.as_deref(), log).map(u32::from),
+            Method::Start => {
+                if mi::started(&self.peer, self.domain.as_deref(), log)? {
+                    return Ok(0);
+                }
+                mi::invoke(&self.peer, self.domain.as_deref(), method, log).map(|()| 1)
+            }
+            Method::Stop => mi::invoke(&self.peer, self.domain.as_deref(), method, log).map(|()| 0),
+        }
+    }
+}
+
+fn serve(
+    listener: &Listener,
+    target: Option<&Target>,
+    stop: &StopSignal,
+    log: &mut Logger,
+) -> io::Result<()> {
+    serve_with_backend(listener, target.is_some(), stop, log, |method, log| {
+        let target = target.ok_or_else(|| io::Error::other("BGP is not configured"))?;
+        let result = target.execute(method, log);
+        if method != Method::Get || result.is_err() {
+            log.broker_message(
+                format_args!(
+                    "BGP broker peer={:?} method={} result={result:?}",
+                    target.peer,
+                    method.name()
+                ),
+                result.is_err(),
+            );
+        }
+        result
+    })
+}
+
+fn serve_with_backend(
+    listener: &Listener,
+    configured: bool,
+    stop: &StopSignal,
+    log: &mut Logger,
+    mut execute: impl FnMut(Method, &mut Logger) -> io::Result<u32>,
+) -> io::Result<()> {
+    let mut cleanup_pending = false;
+    while !stop.is_requested() {
+        // Do not accept a new owner while a disconnected owner's Stop is unresolved.
+        if cleanup_pending {
+            match execute(Method::Stop, log) {
+                Ok(_) => cleanup_pending = false,
+                Err(error) => {
+                    log.broker_message(
+                        format_args!("BGP broker disconnected-client Stop retry failed: {error}"),
+                        true,
+                    );
+                    for _ in 0..10 {
+                        if stop.is_requested() {
+                            return Err(error);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    continue;
+                }
+            }
+        }
+        if let Err(error) = listener.accept(stop) {
+            if stop.is_requested() {
+                break;
+            }
+            return Err(error);
+        }
+        let mut sequence = 0;
+        let mut managed = false;
+        let result = (|| -> io::Result<()> {
+            while !stop.is_requested() {
+                let request = listener.request(sequence, stop)?;
+                sequence = request.sequence;
+                let mut response = Frame {
+                    method: request.method,
+                    sequence,
+                    status: 0,
+                    value: 0,
+                };
+                if configured {
+                    // Even a failed Start may have taken effect remotely. Once a
+                    // mutation is attempted, disconnection requires a Stop attempt.
+                    managed |= request.method != Method::Get;
+                    match execute(request.method, log) {
+                        Ok(value) => {
+                            response.value = value;
+                            if request.method == Method::Stop {
+                                managed = false;
+                            }
+                        }
+                        Err(error) => {
+                            response.status = error
+                                .raw_os_error()
+                                .and_then(|code| u32::try_from(code).ok())
+                                .filter(|code| *code != 0)
+                                .unwrap_or(31);
+                        }
+                    }
+                } else {
+                    response.status = ipc::NOT_CONFIGURED;
+                }
+                listener.respond(response, stop)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if !stop.is_requested()
+                && !matches!(
+                    error.kind(),
+                    io::ErrorKind::BrokenPipe | io::ErrorKind::UnexpectedEof
+                )
+            {
+                log.broker_message(
+                    format_args!("BGP broker client disconnected: {error}"),
+                    true,
+                );
+            }
+        }
+        // Identification was reverted before reaching this privileged policy action.
+        // Query-only/cold-start connections never change the peer on disconnect.
+        if managed {
+            if let Err(error) = execute(Method::Stop, log) {
+                log.broker_message(
+                    format_args!("BGP broker disconnected-client Stop failed: {error}"),
+                    true,
+                );
+                listener.disconnect();
+                if stop.is_requested() {
+                    return Err(error);
+                }
+                cleanup_pending = true;
+            }
+        }
+        listener.disconnect();
+    }
+    if cleanup_pending {
+        execute(Method::Stop, log)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+    use ipc::fixtures;
+    use std::{sync::mpsc, thread, time::Duration};
+
+    #[test]
+    fn query_only_and_unconfigured_connections_never_mutate_on_disconnect() {
+        for configured in [false, true] {
+            let (listener, name) = fixtures::listener("S-1-1-0");
+            let stop = StopSignal::new().unwrap();
+            let (called, calls) = mpsc::channel();
+            thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    let mut log = Logger::new(true).unwrap();
+                    serve_with_backend(&listener, configured, &stop, &mut log, |method, _| {
+                        called.send(method).unwrap();
+                        Ok(1)
+                    })
+                });
+                let _cleanup = fixtures::StopOnDrop(stop.clone());
+                let client = fixtures::connect_pipe(&name);
+                let response = fixtures::request(&client, Method::Get, 1).unwrap();
+                assert_eq!(
+                    response.status,
+                    if configured { 0 } else { ipc::NOT_CONFIGURED }
+                );
+                if configured {
+                    assert_eq!(
+                        calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                        Method::Get
+                    );
+                }
+                drop(client);
+                stop.signal().unwrap();
+                server.join().unwrap().unwrap();
+                assert!(calls.try_recv().is_err());
+            });
+        }
+    }
+
+    #[test]
+    fn failed_start_disconnect_retries_stop_before_a_new_client_can_query() {
+        let (listener, name) = fixtures::listener("S-1-1-0");
+        let stop = StopSignal::new().unwrap();
+        let (called, calls) = mpsc::channel();
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut log = Logger::new(true).unwrap();
+                let mut stops = 0;
+                serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
+                    called.send(method).unwrap();
+                    match method {
+                        Method::Start => Err(io::Error::from_raw_os_error(5)),
+                        Method::Stop => {
+                            stops += 1;
+                            if stops == 1 {
+                                Err(io::Error::other("temporary Stop failure"))
+                            } else {
+                                Ok(0)
+                            }
+                        }
+                        Method::Get => Ok(0),
+                    }
+                })
+            });
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let client = fixtures::connect_pipe(&name);
+            assert_eq!(
+                fixtures::request(&client, Method::Start, 1).unwrap().status,
+                5
+            );
+            assert_eq!(
+                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                Method::Start
+            );
+            drop(client);
+            for _ in 0..2 {
+                assert_eq!(
+                    calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                    Method::Stop
+                );
+            }
+            let recovered = fixtures::connect_pipe(&name);
+            assert_eq!(
+                fixtures::request(&recovered, Method::Get, 1)
+                    .unwrap()
+                    .status,
+                0
+            );
+            assert_eq!(
+                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                Method::Get
+            );
+            stop.signal().unwrap();
+            server.join().unwrap().unwrap();
+            assert!(calls.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn replay_is_rejected_before_backend_and_managed_disconnect_stops_peer() {
+        let (listener, name) = fixtures::listener("S-1-1-0");
+        let stop = StopSignal::new().unwrap();
+        let (called, calls) = mpsc::channel();
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut log = Logger::new(true).unwrap();
+                serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
+                    called.send(method).unwrap();
+                    Ok(0)
+                })
+            });
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let client = fixtures::connect_pipe(&name);
+            fixtures::request(&client, Method::Start, 1).unwrap();
+            assert_eq!(
+                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                Method::Start
+            );
+            assert!(fixtures::request(&client, Method::Get, 1).is_err());
+            assert_eq!(
+                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                Method::Stop
+            );
+            stop.signal().unwrap();
+            server.join().unwrap().unwrap();
+            assert!(calls.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn successful_stop_clears_disconnect_cleanup_and_shutdown_failure_is_reported() {
+        for final_stop_fails in [false, true] {
+            let (listener, name) = fixtures::listener("S-1-1-0");
+            let stop = StopSignal::new().unwrap();
+            let (called, calls) = mpsc::channel();
+            thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    let mut log = Logger::new(true).unwrap();
+                    serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
+                        called.send(method).unwrap();
+                        if method == Method::Stop && final_stop_fails {
+                            Err(io::Error::from_raw_os_error(5))
+                        } else {
+                            Ok(0)
+                        }
+                    })
+                });
+                let _cleanup = fixtures::StopOnDrop(stop.clone());
+                let client = fixtures::connect_pipe(&name);
+                fixtures::request(&client, Method::Start, 1).unwrap();
+                assert_eq!(
+                    calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                    Method::Start
+                );
+                if !final_stop_fails {
+                    fixtures::request(&client, Method::Stop, 2).unwrap();
+                    assert_eq!(
+                        calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                        Method::Stop
+                    );
+                }
+                stop.signal().unwrap();
+                let result = server.join().unwrap();
+                if final_stop_fails {
+                    assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
+                    assert_eq!(
+                        calls.recv_timeout(Duration::from_secs(3)).unwrap(),
+                        Method::Stop
+                    );
+                } else {
+                    result.unwrap();
+                }
+                assert!(calls.try_recv().is_err());
+            });
+        }
+    }
+
+    #[test]
+    fn unauthorized_request_never_reaches_backend() {
+        let (listener, name) = fixtures::listener(ipc::SERVICE_SID);
+        let stop = StopSignal::new().unwrap();
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut log = Logger::new(true).unwrap();
+                serve_with_backend(&listener, true, &stop, &mut log, |_, _| {
+                    panic!("unauthorized provider operation")
+                })
+            });
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let client = fixtures::connect_pipe(&name);
+            assert!(fixtures::request(&client, Method::Start, 1).is_err());
+            stop.signal().unwrap();
+            server.join().unwrap().unwrap();
+        });
+    }
+}

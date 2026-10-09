@@ -2,7 +2,7 @@
 //! and stateless S-BFD reflection.
 //!
 //! On Windows, runtime and transport provide UDP execution; the executable also
-//! supports SCM operation and optional native MI control of a local BGP peer.
+//! supports LocalService SCM operation and optional BGP control through a separate broker.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 pub mod config;
 #[forbid(unsafe_code)]
@@ -16,6 +16,10 @@ pub mod session;
 
 #[cfg(windows)]
 mod bgp;
+#[cfg(windows)]
+pub mod bgp_broker;
+#[cfg(windows)]
+pub mod com;
 #[cfg(windows)]
 mod event_log;
 #[cfg(windows)]

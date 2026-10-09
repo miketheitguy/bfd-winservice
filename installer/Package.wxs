@@ -2,6 +2,14 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
      xmlns:firewall="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <!-- Protected ACLs also secure pre-existing objects with permissive inheritance.
+       Only SYSTEM and administrators may modify the installed code or registration. -->
+  <?define BfdServiceSid = "S-1-5-80-1071555646-3639003188-2623042311-1024194528-3093158512" ?>
+  <?define FileSecurity = "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)(A;;FRFX;;;$(var.BfdServiceSid))" ?>
+  <?define DirectorySecurity = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OICI;FRFX;;;$(var.BfdServiceSid))" ?>
+  <?define RegistrySecurity = "O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;KR;;;$(var.BfdServiceSid))" ?>
+  <?define ParametersSecurity = "O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;$(var.BfdServiceSid))" ?>
+  <?define LogSecurity = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OICI;0x1301bf;;;$(var.BfdServiceSid))" ?>
   <Package Name="BFD Windows Service" Manufacturer="BFD Windows Service"
            Version="$(var.ProductVersion)" Language="1033" Scope="perMachine"
            UpgradeCode="F044EF3A-595B-4870-A9E0-96C1D315B073" InstallerVersion="500">
@@ -21,14 +29,25 @@
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="BfdWinService">
+        <Component Id="InstallDirectoryComponent" Guid="6B020FE8-D545-47E2-844E-A6E49DF8E371" Bitness="always64">
+          <CreateFolder>
+            <PermissionEx Id="InstallDirectorySecurity" Sddl="$(var.DirectorySecurity)" />
+          </CreateFolder>
+          <RemoveFolder Id="RemoveInstallDirectory" On="uninstall" />
+        </Component>
         <Component Id="ServiceComponent" Bitness="always64">
           <File Id="ServiceExe" Source="$(var.RepositoryRoot)\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe"
-                KeyPath="yes" />
+                KeyPath="yes">
+            <PermissionEx Id="ServiceExeSecurity" Sddl="$(var.FileSecurity)" />
+          </File>
           <ServiceInstall Id="InstallBfdService" Name="BfdWinService"
                           DisplayName="BFD Windows Service"
                           Description="Monitors a configured peer with Bidirectional Forwarding Detection."
-                          Type="ownProcess" Start="auto" Account="LocalSystem"
-                          ErrorControl="normal" Vital="yes" />
+                          Type="ownProcess" Start="auto" Account="NT AUTHORITY\LocalService"
+                          ErrorControl="normal" Vital="yes">
+            <ServiceDependency Id="RpcSs" />
+            <ServiceDependency Id="BfdBgpBroker" />
+          </ServiceInstall>
           <!-- Configuration and SEHOP policy are provisioned before the first start. -->
           <ServiceControl Id="ControlBfdService" Name="BfdWinService"
                           Stop="both" Remove="uninstall" Wait="yes" />
@@ -51,13 +70,64 @@
                     RemotePort="49152-65535" Outbound="yes"
                     Profile="all" Scope="any" IgnoreFailure="no" />
         </Component>
+        <Component Id="BrokerComponent" Bitness="always64">
+          <File Id="BrokerExe" Source="$(var.RepositoryRoot)\target\x86_64-pc-windows-msvc\release\bfd-bgp-broker.exe" KeyPath="yes">
+            <PermissionEx Id="BrokerExeSecurity" Sddl="$(var.FileSecurity)" />
+          </File>
+          <ServiceInstall Id="InstallBgpBroker" Name="BfdBgpBroker" DisplayName="BFD BGP Management Broker"
+                          Description="Controls the configured BGP peer through an authenticated local pipe."
+                          Type="ownProcess" Start="demand" Account="LocalSystem" ErrorControl="normal" Vital="yes">
+            <ServiceDependency Id="RpcSs" />
+            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                                ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
+          </ServiceInstall>
+          <ServiceControl Id="ControlBgpBroker" Name="BfdBgpBroker" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+        <Component Id="ComRegistrationComponent" Bitness="always64">
+          <RegistryValue Id="ComClassDescription" Root="HKLM" Key="SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}"
+                         Type="string" Value="BFD session state" KeyPath="yes">
+            <PermissionEx Id="ComClassSecurity" Sddl="$(var.RegistrySecurity)" />
+          </RegistryValue>
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}"
+                         Name="AppID" Type="string" Value="{EBF04871-D193-4CDF-ABBC-DCD7D220224B}" />
+          <RegistryValue Id="ComClassProgId" Root="HKLM" Key="SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}\ProgID"
+                         Type="string" Value="BfdWinService.SessionState">
+            <PermissionEx Id="ComClassProgIdSecurity" Sddl="$(var.RegistrySecurity)" />
+          </RegistryValue>
+          <RegistryValue Id="ComProgIdDescription" Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.SessionState"
+                         Type="string" Value="BFD session state">
+            <PermissionEx Id="ComProgIdSecurity" Sddl="$(var.RegistrySecurity)" />
+          </RegistryValue>
+          <RegistryValue Id="ComProgIdClass" Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.SessionState\CLSID"
+                         Type="string" Value="{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}">
+            <PermissionEx Id="ComProgIdClassSecurity" Sddl="$(var.RegistrySecurity)" />
+          </RegistryValue>
+          <RegistryValue Id="ComAppDescription" Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
+                         Type="string" Value="BFD Windows Service">
+            <PermissionEx Id="ComAppSecurity" Sddl="$(var.RegistrySecurity)" />
+          </RegistryValue>
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
+                         Name="LocalService" Type="string" Value="BfdWinService" />
+          <RegistryValue Id="ComExeAppId" Root="HKLM" Key="SOFTWARE\Classes\AppID\bfd-winservice.exe"
+                         Name="AppID" Type="string" Value="{EBF04871-D193-4CDF-ABBC-DCD7D220224B}">
+            <PermissionEx Id="ComExeAppSecurity" Sddl="$(var.RegistrySecurity)" />
+          </RegistryValue>
+          <!-- O:SYG:SYD:(A;;0xb;;;SY)(A;;0xb;;;BA)(A;;0xb;;;AU):
+               SYSTEM, administrators, authenticated users; local launch/activation only. -->
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
+                         Name="LaunchPermission" Type="binary"
+                         Value="010004801400000020000000000000002C0000000101000000000005120000000101000000000005120000000200480003000000000014000B000000010100000000000512000000000018000B00000001020000000000052000000020020000000014000B00000001010000000000050B000000" />
+        </Component>
         <Component Id="ManifestComponent" Bitness="always64">
           <File Id="EventManifest" Source="$(var.RepositoryRoot)\events\BFD-Service.man" KeyPath="yes">
+            <PermissionEx Id="EventManifestSecurity" Sddl="$(var.FileSecurity)" />
             <util:EventManifest MessageFile="[#ServiceExe]" ResourceFile="[#ServiceExe]" />
           </File>
         </Component>
         <Component Id="LoggingScriptComponent" Bitness="always64">
-          <File Source="$(var.RepositoryRoot)\scripts\Initialize-Logging.ps1" KeyPath="yes" />
+          <File Source="$(var.RepositoryRoot)\scripts\Initialize-Logging.ps1" KeyPath="yes">
+            <PermissionEx Id="LoggingScriptSecurity" Sddl="$(var.FileSecurity)" />
+          </File>
         </Component>
         <!-- Separate key paths prevent repair from resetting administrator settings. -->
         <Component Id="MultihopDefault" Bitness="always64" NeverOverwrite="yes">
@@ -65,8 +135,16 @@
                          Name="Multihop" Type="integer" Value="0" KeyPath="yes" />
         </Component>
         <Component Id="LogToFileDefault" Bitness="always64" NeverOverwrite="yes">
-          <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
+          <RegistryValue Id="LogToFileDefaultValue" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
                          Name="LogToFile" Type="integer" Value="0" KeyPath="yes" />
+        </Component>
+        <!-- A separate repairable component secures existing Parameters keys even
+             when NeverOverwrite preserves all administrator-selected defaults. -->
+        <Component Id="ParametersSecurityComponent" Bitness="always64">
+          <RegistryValue Id="ParametersPolicyValue" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
+                         Name="_InstallerPolicy" Type="integer" Value="1" KeyPath="yes">
+            <PermissionEx Id="ParametersSecurity" Sddl="$(var.ParametersSecurity)" />
+          </RegistryValue>
         </Component>
         <Component Id="LogFilePathDefault" Bitness="always64" NeverOverwrite="yes">
           <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
@@ -77,18 +155,36 @@
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="LOGFOLDER" Name="BfdWinService">
         <Component Id="LogDirectoryComponent" Guid="1C76D609-E33A-4A9D-A2DB-B97E78153312" Bitness="always64">
-          <CreateFolder />
+          <CreateFolder>
+            <PermissionEx Id="LogDirectorySecurity" Sddl="$(var.LogSecurity)" />
+          </CreateFolder>
           <!-- Remove only an empty folder; user-generated logs are retained. -->
           <RemoveFolder Id="RemoveLogDirectory" On="uninstall" />
         </Component>
       </Directory>
     </StandardDirectory>
+    <!-- Fixed-target native SCM actions avoid the documented MsiConfigureServices
+         limitation. Snapshot before installation; restore accounts/SIDs on rollback. -->
+    <CustomAction Id="PrepareServicePolicy" FileRef="BrokerExe" ExeCommand="--prepare-install" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="RollbackServicePolicy" FileRef="BrokerExe" ExeCommand="--rollback-install" Execute="rollback" Impersonate="no" Return="ignore" />
+    <CustomAction Id="ConfigureServicePolicy" FileRef="BrokerExe" ExeCommand="--configure-install" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="CommitServicePolicy" FileRef="BrokerExe" ExeCommand="--commit-install" Execute="commit" Impersonate="no" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="RollbackServicePolicy" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="PrepareServicePolicy" After="RollbackServicePolicy" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="ConfigureServicePolicy" After="InstallServices" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="CommitServicePolicy" After="ConfigureServicePolicy" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
     <Feature Id="ServiceFeature" Title="BFD Windows Service" Level="1">
+      <ComponentRef Id="InstallDirectoryComponent" />
       <ComponentRef Id="ServiceComponent" />
+      <ComponentRef Id="BrokerComponent" />
+      <ComponentRef Id="ComRegistrationComponent" />
       <ComponentRef Id="ManifestComponent" />
       <ComponentRef Id="LoggingScriptComponent" />
       <ComponentRef Id="MultihopDefault" />
       <ComponentRef Id="LogToFileDefault" />
+      <ComponentRef Id="ParametersSecurityComponent" />
       <ComponentRef Id="LogFilePathDefault" />
       <ComponentRef Id="LogDirectoryComponent" />
     </Feature>

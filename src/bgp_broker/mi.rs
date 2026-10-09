@@ -35,6 +35,8 @@ type NewDestination =
     unsafe extern "system" fn(*mut MI_Application, *mut MI_DestinationOptions) -> MI_Result;
 type DestinationSetString =
     unsafe extern "system" fn(*mut MI_DestinationOptions, *const u16, *const u16, u32) -> MI_Result;
+type DestinationSetNumber =
+    unsafe extern "system" fn(*mut MI_DestinationOptions, *const u16, u32, u32) -> MI_Result;
 type DestinationDelete = unsafe extern "system" fn(*mut MI_DestinationOptions);
 type SessionClose = unsafe extern "system" fn(
     *mut MI_Session,
@@ -171,6 +173,21 @@ impl Application {
         };
         check(result, "create MI destination options")?;
         let mut destination = DestinationOptions(destination);
+        // Local providers need IMPERSONATE to manage BGP. Scope this grant to
+        // this destination instead of raising the process-wide COM default.
+        // Equivalent to SDK MI_DestinationOptions_SetImpersonationType.
+        // SAFETY: live destination options, exact SetNumber ABI from mi.h,
+        // and a static terminated option name; no delegation or remote target.
+        let result = unsafe {
+            let set: DestinationSetNumber = transmute((*destination.0.ft).SetNumber);
+            set(
+                &mut destination.0,
+                w!("__MI_DESTINATIONOPTIONS_IMPERSONATION_TYPE"),
+                MI_DestinationOptions_ImpersonationType_Impersonate as u32,
+                0,
+            )
+        };
+        check(result, "set local MI impersonation level")?;
         // Values qualifiers are localized. Request English so status labels
         // have the same meaning even on a server with a different UI language.
         for name in [
@@ -498,7 +515,7 @@ impl Drop for Operation {
 
 fn cleanup(result: MI_Result, context: &str, log: &Logger) {
     if let Err(error) = check(result, context) {
-        log.clone().log(error);
+        log.clone().broker_message(error, true);
     }
 }
 
@@ -889,6 +906,9 @@ mod tests {
     #[test]
     #[ignore = "requires access to Windows CIM namespaces; run explicitly outside a restricted sandbox"]
     fn native_mi_reads_enum_qualifiers_from_local_class_schema() {
+        // The service initializes process-wide COM security before native MI.
+        // Exercise a real provider under those defaults without changing BGP.
+        let _com = crate::com::ComServer::initialize().unwrap();
         let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         let mut session = application.session().unwrap();
         let mut options = application.options().unwrap();

@@ -196,6 +196,11 @@ impl Logger {
         let _ = write!(&mut text, "{message}");
         self.enqueue(Command::Text(text.0));
     }
+    pub(crate) fn broker_message(&mut self, message: impl Display, failure: bool) {
+        let mut text = BoundedText(String::new());
+        let _ = write!(&mut text, "{message}");
+        self.enqueue(Command::Event(Record::broker_message(&text.0, failure)));
+    }
     /// Queues successful engine startup.
     pub fn service_started(&mut self) {
         self.log(format_args!(

@@ -37,7 +37,9 @@ try {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw "Release executable not found: $executable"
     }
-    & (Join-Path $PSScriptRoot 'Test-ExecutableVersion.ps1') -Path $executable -ExpectedVersion $version
+    foreach ($name in @('bfd-winservice','bfd-bgp-broker')) {
+        & (Join-Path $PSScriptRoot 'Test-ExecutableVersion.ps1') -Path (Join-Path (Split-Path $executable -Parent) "$name.exe") -ExpectedVersion $version -ExpectedName $name
+    }
     & dotnet tool restore --tool-manifest .config/dotnet-tools.json
     if ($LASTEXITCODE -ne 0) { throw 'WiX tool restore failed.' }
     $toolManifest = Get-Content .config/dotnet-tools.json -Raw | ConvertFrom-Json

@@ -21,6 +21,8 @@
                 message="$(string.Task.PeerCommunication)"/>
           <task name="SessionDiagnostic" symbol="BFD_SESSION_DIAGNOSTIC" value="3"
                 message="$(string.Task.SessionDiagnostic)"/>
+          <task name="BgpManagement" symbol="BFD_BGP_MANAGEMENT" value="4"
+                message="$(string.Task.BgpManagement)"/>
         </tasks>
         <keywords>
           <keyword name="Service" symbol="BFD_KEYWORD_SERVICE" mask="0x1"
@@ -66,6 +68,9 @@
           </valueMap>
         </maps>
         <templates>
+          <template tid="BrokerMessageData">
+            <data name="Message" inType="win:UnicodeString"/>
+          </template>
           <template tid="ServiceStartedData">
             <data name="Mode" inType="win:UInt8" map="RunMode"/>
           </template>
@@ -111,6 +116,12 @@
           </template>
         </templates>
         <events>
+          <event value="300" version="0" symbol="BROKER_INFORMATION" channel="Operational"
+                 level="win:Informational" task="BgpManagement" keywords="Diagnostics"
+                 template="BrokerMessageData" message="$(string.Event.BrokerMessage)"/>
+          <event value="301" version="0" symbol="BROKER_ERROR" channel="Operational"
+                 level="win:Error" task="BgpManagement" keywords="Diagnostics"
+                 template="BrokerMessageData" message="$(string.Event.BrokerMessage)"/>
           <event value="1" version="0" symbol="SERVICE_STARTED" channel="Operational"
                  level="win:Informational" task="ServiceLifecycle" keywords="Service"
                  template="ServiceStartedData" message="$(string.Event.ServiceStarted)"/>
@@ -215,6 +226,8 @@
         <string id="Authentication.KeyedSha1" value="Keyed SHA1"/>
         <string id="Authentication.MeticulousSha1" value="Meticulous Keyed SHA1"/>
         <string id="Event.ServiceStarted" value="BFD service started. Mode: %1."/>
+        <string id="Task.BgpManagement" value="BGP management"/>
+        <string id="Event.BrokerMessage" value="BFD BGP broker: %1"/>
         <string id="Event.ServiceStopped" value="BFD service stopped. Mode: %1. Exit code: %2."/>
         <string id="Event.ServiceFailed" value="BFD service failed. Mode: %1. Error: %2."/>
         <string id="Event.PeerCommunicationStarted" value="Remote peer %2 started sending valid BFD control packets to %1. Local discriminator: %3. Remote discriminator: %4. State: %6."/>

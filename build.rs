@@ -35,27 +35,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     let major = env::var("CARGO_PKG_VERSION_MAJOR")?.parse::<u16>()?;
     let minor = env::var("CARGO_PKG_VERSION_MINOR")?.parse::<u16>()?;
     let patch = env::var("CARGO_PKG_VERSION_PATCH")?.parse::<u16>()?;
-    fs::write(
-        out.join("BFD-Version.rc"),
-        format!(
-            "#define BFD_FILE_VERSION {major},{minor},{patch},0\n\
-             #define BFD_VERSION_TEXT \"{version}\\0\"\n{}",
-            include_str!("resources/version.rc")
-        ),
-    )?;
     let resource_compiler = sdk_tool("rc.exe", "BFD_RC_PATH")?;
-    for name in ["BFD-Service", "BFD-Version"] {
-        let resource = out.join(format!("{name}.res"));
+    let events = out.join("BFD-Service.res");
+    run(Command::new(&resource_compiler)
+        .arg("/nologo")
+        .arg("/fo")
+        .arg(&events)
+        .arg("BFD-Service.rc")
+        .current_dir(&out))?;
+    for (binary, description) in [
+        ("bfd-winservice", "BFD Windows Service"),
+        ("bfd-bgp-broker", "BFD BGP Management Broker"),
+    ] {
+        fs::write(
+            out.join(format!("{binary}-Version.rc")),
+            format!(
+                "#define BFD_FILE_VERSION {major},{minor},{patch},0\n\
+             #define BFD_VERSION_TEXT \"{version}\\0\"\n\
+             #define BFD_FILE_DESCRIPTION \"{description}\\0\"\n\
+             #define BFD_INTERNAL_NAME \"{binary}\\0\"\n\
+             #define BFD_ORIGINAL_FILENAME \"{binary}.exe\\0\"\n{}",
+                include_str!("resources/version.rc")
+            ),
+        )?;
+        let resource = out.join(format!("{binary}-Version.res"));
         run(Command::new(&resource_compiler)
             .arg("/nologo")
             .arg("/fo")
             .arg(&resource)
-            .arg(format!("{name}.rc"))
+            .arg(format!("{binary}-Version.rc"))
             .current_dir(&out))?;
-        println!(
-            "cargo:rustc-link-arg-bin=bfd-winservice={}",
-            resource.display()
-        );
+        println!("cargo:rustc-link-arg-bin={binary}={}", resource.display());
+        println!("cargo:rustc-link-arg-bin={binary}={}", events.display());
     }
     Ok(())
 }

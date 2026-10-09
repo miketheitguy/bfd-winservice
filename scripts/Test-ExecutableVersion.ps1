@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Path,
-    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$ExpectedVersion
+    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$ExpectedVersion,
+    [ValidateSet('bfd-winservice','bfd-bgp-broker')][string]$ExpectedName = 'bfd-winservice'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +19,7 @@ if ($fileVersion -cne "$ExpectedVersion.0" -or $productVersion -cne "$ExpectedVe
     throw "Executable numeric versions must match $ExpectedVersion.0: $resolvedPath"
 }
 $reportedVersion = @(& $resolvedPath --version)
-if ($LASTEXITCODE -ne 0 -or $reportedVersion.Count -ne 1 -or $reportedVersion[0] -cne "bfd-winservice $ExpectedVersion") {
-    throw "Executable --version must report bfd-winservice $ExpectedVersion."
+if ($LASTEXITCODE -ne 0 -or $reportedVersion.Count -ne 1 -or $reportedVersion[0] -cne "$ExpectedName $ExpectedVersion") {
+    throw "Executable --version must report $ExpectedName $ExpectedVersion."
 }
 Write-Output "Validated executable version ${ExpectedVersion}: $resolvedPath"

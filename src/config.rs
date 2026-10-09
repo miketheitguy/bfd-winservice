@@ -15,6 +15,8 @@ use crate::packet::{AuthConfig, AuthType};
 #[cfg(windows)]
 mod registry;
 #[cfg(windows)]
+pub(crate) use registry::load_bgp_target;
+#[cfg(windows)]
 pub use registry::load_registry;
 #[cfg(windows)]
 pub(crate) use registry::load_sbfd_settings;

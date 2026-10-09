@@ -14,6 +14,11 @@ The program reads this key without creating or modifying it. Missing optional va
 - **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
 - **Apply changes:** restart to reload startup settings. S-BFD timing and maintenance settings reload once per second; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
+The MSI protects this key: SYSTEM and administrators have full control, and the
+enabled BFD service SID has read access. Console configuration therefore requires
+an administrator account. The BGP broker reads only the configured BGP target;
+restart both services after changing either BGP value.
+
 Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
 
 ## Addresses and transport

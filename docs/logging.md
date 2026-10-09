@@ -67,6 +67,12 @@ If `LogToFile` is absent or `0`, file output is disabled: the logger does not op
 
 With `LogToFile=1`, the logger creates missing parent folders, including `C:\ProgramData\BfdWinService` for the default path, and appends to the file. Existing contents are preserved. The execution account needs permission to create the folders and write the file. Failure to create a folder or open the file fails startup.
 
+The MSI grants Modify on its ProgramData log folder to
+`NT SERVICE\BfdWinService`. The BFD service runs as LocalService; custom log
+locations need a corresponding service SID grant. Grant access to the specific
+service rather than the shared LocalService account. The broker writes its own
+diagnostics through ETW and does not open `LogFilePath`.
+
 Each file line starts with the current UTC time in `YYYY-MM-DDTHH:mm:ss.sssZ` format. The trailing `Z` identifies UTC, and the fractional seconds provide millisecond precision. Multiline messages include the same entry timestamp on every line. For example:
 
 ```text
@@ -106,6 +112,10 @@ To disable file output, set `LogToFile` to DWORD `0` and restart execution. See 
 In Event Viewer, open **Applications and Services Logs → BFD-Service → Operational**.
 The provider uses one Operational channel. State events and diagnostic events
 are separate records, with independent severity levels.
+
+The BGP broker uses this channel for event **300** (Information: readiness and
+management results) and **301** (Error: startup, authorization, or provider
+failure). These messages include the configured peer and operation when available.
 
 ### Lifecycle, communication, and state events
 
