@@ -14,6 +14,10 @@ its role marker, stateless reflector, and state machine differ as specified in
 [Configure Seamless BFD](seamless.md). The implementation doesn't provide every
 optional RFC 5880 mode or forwarding-plane integration.
 
+For the combined RFC 5880, RFC 7419, and RFC 7880 test matrix, the latest
+congestion-control correction, and validation limits, see
+[RFC conformance tests](rfc-conformance.md).
+
 ## Requirement mapping
 
 The following table groups related RFC requirements. Paths identify the
@@ -39,7 +43,7 @@ implementation or its regression tests:
 | 6.8.15, 6.8.17 | Forwarding-plane reset and concatenated-path signals | No external reset or concatenated-path notification API is implemented. C remains clear. Diagnostics 4, 5, 6, and 8 aren't originated; received diagnostic values are preserved as peer information rather than copied to LocalDiag. |
 | 6.8.16 | Administrative shutdown and continued announcements | Shutdown sets AdminDown/diagnostic 7 and never stops BGP; per RFC 5882 sections 3.2 and 4.1, either end's AdminDown withdraws a Stop that BFD imposed. A communicating classical session repeats permitted announcements for the longer Detection Time, bounded by `MaxShutdownAnnounceMs`. Truncation is a documented deviation and logs a warning. Native regressions check repeated announcements, the grace period, and the configured limit. |
 | 6.8.18 | Retain RX limits while peers communicate; release stale suppression | Peer required RX is retained until a detection time passes without valid packets, then resets to 1. Active probing resumes after an expired zero-RX advertisement; passive sessions still require a learned discriminator. |
-| 7 | Multihop congestion control and time-critical scheduling | Unanswered classical multihop discovery and detection loss double the desired interval up to 30 seconds, or the preceding negotiated interval when longer. Valid reception clears backoff. The runtime handles one datagram per pass, keeping timers and Stop processing responsive under floods. Single-hop retains the startup floor without exponential backoff. |
+| 7 | Multihop congestion control and time-critical scheduling | Unanswered classical multihop discovery and detection loss double the desired interval. The cap is the greater of 30 seconds and twice the base including the preceding negotiated interval, bounded by the wire format. Valid reception clears backoff. The runtime handles one datagram per pass, keeping timers and Stop processing responsive under floods. Single-hop retains the startup floor without exponential backoff. |
 | 8–9 | Assigned authentication/diagnostic values; replay and spoofing considerations | Wire values follow the RFC. Both SHA-1 variants are available; keys accept ASCII and hexadecimal provisioning. Sequence windows, random initial sequences, and transport source/TTL/interface checks reduce spoofing and replay exposure. No confidentiality is provided. |
 | Appendix A | Non-normative version 0 compatibility | Only version 1 is supported; version 0 is rejected without automatic downgrade. |
 

@@ -621,6 +621,8 @@ These tests cover diagnostic retention, AdminDown validity clocks, stale zero-RX
 limits, Poll acknowledgement, live TX increases, and multihop backoff. For the
 requirements and native shutdown coverage, see the
 [RFC 5880 conformance review](docs/rfc5880-conformance.md).
+For the expanded RFC 5880, RFC 7419, and RFC 7880 suites and their validation
+limits, see [RFC conformance tests](docs/rfc-conformance.md).
 
 Native S-BFD tests additionally check IPv4/IPv6 sockets, source-port reflection,
 return-route lookup, concurrent initiators, anycast response sources, and the

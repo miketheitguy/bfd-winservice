@@ -14,9 +14,9 @@ use crate::{
     packet::{AuthConfig, AuthType, ControlPacket, Diagnostic, State},
 };
 
-/// Congestion backoff stops doubling at 30 seconds, so a recovered path is
-/// probed, and BGP control can resume, within one interval. A slower base
-/// interval, such as a peer's advertised receive limit, remains the floor.
+/// Ordinary congestion backoff stops doubling at 30 seconds. For a slower
+/// negotiated base, allow one doubling so loss still reduces traffic (RFC 5880
+/// section 7 and RFC 7880 section 8.2), bounded by the u32 wire interval.
 const MAX_BACKOFF_TX_US: u32 = 30_000_000;
 
 /// One validated classical or S-BFD initiator session, driven by its caller.
@@ -268,7 +268,8 @@ impl Session {
 
     /// Returns the Up rate, or the greater of the startup and Up rates otherwise.
     /// S-BFD and unanswered classical multihop probes double their interval up
-    /// to 30 seconds, or to the base interval when that is already longer.
+    /// to the greater of 30 seconds and twice the base interval, bounded by
+    /// the wire format's maximum interval.
     pub fn desired_min_tx_us(&self) -> u32 {
         let interval = if self.state == State::Up {
             self.timing.min_tx_us
@@ -285,8 +286,9 @@ impl Session {
             } else {
                 interval.max(self.remote_min_rx_us)
             };
+            let limit = MAX_BACKOFF_TX_US.max(base.saturating_mul(2));
             base.saturating_mul(1u32 << self.congestion_backoff.min(31))
-                .min(base.max(MAX_BACKOFF_TX_US))
+                .min(limit)
         } else {
             interval
         }
@@ -733,26 +735,33 @@ mod tests {
 
     #[test]
     fn unsent_packets_do_not_advance_sequences_or_acknowledge_polls() {
-        let mut session = session();
-        session.auth = AuthConfig::new(AuthType::MeticulousMd5, 0, b"secret".to_vec()).unwrap();
-        session.transmit_auth_seq = u32::MAX;
-        session.poll = Poll::Pending(None);
-        let now = Instant::now();
-        for _ in 0..100 {
+        for kind in [
+            AuthType::KeyedMd5,
+            AuthType::MeticulousMd5,
+            AuthType::KeyedSha1,
+            AuthType::MeticulousSha1,
+        ] {
+            let mut session = session();
+            session.auth = AuthConfig::new(kind, 0, b"secret".to_vec()).unwrap();
+            session.transmit_auth_seq = u32::MAX;
+            session.poll = Poll::Pending(None);
+            let now = Instant::now();
+            for _ in 0..100 {
+                let packet = session.prepare_packet(Transmission::Periodic, now);
+                assert_eq!(
+                    session.auth.verify(&packet.data, None).unwrap(),
+                    Some(u32::MAX)
+                );
+            }
+            session.poll.receive(true);
+            assert_eq!(session.poll, Poll::Pending(None));
+            assert!(session.first_transmitted.is_none());
             let packet = session.prepare_packet(Transmission::Periodic, now);
-            assert_eq!(
-                session.auth.verify(&packet.data, None).unwrap(),
-                Some(u32::MAX)
-            );
+            session.record_transmission(&packet);
+            assert_eq!(session.poll, Poll::Sent(None));
+            let packet = session.prepare_packet(Transmission::Periodic, now);
+            assert_eq!(session.auth.verify(&packet.data, None).unwrap(), Some(0));
         }
-        session.poll.receive(true);
-        assert_eq!(session.poll, Poll::Pending(None));
-        assert!(session.first_transmitted.is_none());
-        let packet = session.prepare_packet(Transmission::Periodic, now);
-        session.record_transmission(&packet);
-        assert_eq!(session.poll, Poll::Sent(None));
-        let packet = session.prepare_packet(Transmission::Periodic, now);
-        assert_eq!(session.auth.verify(&packet.data, None).unwrap(), Some(0));
     }
 
     #[test]
@@ -850,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn congestion_backoff_stops_at_thirty_seconds_unless_the_base_is_slower() {
+    fn congestion_backoff_stops_at_thirty_seconds_or_twice_a_slower_base() {
         let mut options = (*session().options).clone();
         options.mode = Mode::SingleHop;
         options.multihop = false;
@@ -878,7 +887,7 @@ mod tests {
         classical.receive(&wire(&peer), now).unwrap();
         assert_eq!(classical.transmit_interval(), Duration::from_secs(60));
         assert!(classical.expire(now + classical.detection_time()));
-        assert_eq!(classical.transmit_interval(), Duration::from_secs(60));
+        assert_eq!(classical.transmit_interval(), Duration::from_secs(120));
     }
 
     fn session() -> Session {

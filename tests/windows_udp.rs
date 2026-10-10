@@ -827,6 +827,66 @@ fn peer_polls_do_not_starve_the_local_periodic_poll_sequence() {
 }
 
 #[test]
+fn peer_receive_interval_changes_reschedule_native_transmission_from_the_last_send() {
+    // RFC 5880 section 6.8.3: a reduced RX limit must take effect immediately
+    // relative to the previous transmission, rather than the packet's receipt.
+    let mut config = options("127.0.0.140", "127.0.0.141", "multihop");
+    config.max_shutdown_announce_ms = 1;
+    let auth = config.validate().unwrap();
+    let peer = UdpSocket::bind("127.0.0.141:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let sender = bfd_sender("127.0.0.141");
+    let mut engine = RunningEngine::start(config);
+    let mut buffer = [0; 256];
+    peer.recv_from(&mut buffer).unwrap();
+    let mut packet = peer_packet(State::Init);
+    packet.detect_mult = 100;
+    packet.required_min_rx_us = 1_000_000;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.140:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    assert_eq!(
+        ControlPacket::decode(&buffer[..length]).unwrap().state,
+        State::Up
+    );
+    packet.state = State::Up;
+    packet.desired_min_tx_us = 100_000;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.140:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    assert!(ControlPacket::decode(&buffer[..length]).unwrap().poll);
+    thread::sleep(Duration::from_millis(150));
+    packet.required_min_rx_us = 100_000;
+    packet.final_bit = true;
+    let reduced_at = Instant::now();
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.140:4784")
+        .unwrap();
+    let (length, _) = peer.recv_from(&mut buffer).unwrap();
+    let last_send = Instant::now();
+    assert!(
+        reduced_at.elapsed() < Duration::from_millis(400),
+        "RX decrease retained the old schedule"
+    );
+    assert!(!ControlPacket::decode(&buffer[..length]).unwrap().final_bit);
+    // A subsequent increase must cancel that fast periodic schedule. Allow
+    // scheduling tolerance without accepting an unchanged 75–100 ms schedule.
+    packet.required_min_rx_us = 1_000_000;
+    packet.final_bit = false;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.140:4784")
+        .unwrap();
+    peer.recv_from(&mut buffer).unwrap();
+    assert!(
+        last_send.elapsed() >= Duration::from_millis(650),
+        "RX increase kept transmitting at the fast rate"
+    );
+    engine.stop();
+}
+
+#[test]
 fn point_to_point_bootstrap_and_source_changes_keep_the_configured_destination() {
     let mut options = options("127.0.0.40", "127.0.0.41", "single-hop");
     let initial_sender = bfd_sender("127.0.0.42");

@@ -232,9 +232,10 @@ Detection time = local DetectMult × probe interval + local MinRxUs
 
 Outside `Up`, the initial desired interval is `max(StartupTxUs, MinTxUs)`.
 After missing responses, the initiator doubles its probing interval to reduce
-traffic, up to 30 seconds, so a recovered reflector is probed again, and BGP
-control can resume, within one interval. A reflector's longer advertised receive
-interval remains the floor. A valid response clears this backoff.
+traffic. Backoff stops at the greater of 30 seconds and twice the base interval,
+where the base includes the reflector's advertised receive limit. The wire
+format's maximum interval bounds this calculation. A slow reflector therefore
+still receives fewer probes after loss. A valid response clears this backoff.
 Poll/Final exchanges acknowledge interval changes without adding an `Init` phase.
 When `MinTxUs` increases in Up, probes advertise the requested value but continue
 at the preceding local TX rate until the Poll receives a Final. The probe and

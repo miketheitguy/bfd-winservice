@@ -2,6 +2,38 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## RFC 5880 / RFC 7419 / RFC 7880 validation — 2026-10-09
+
+Reviewed the published base BFD, common interval, and S-BFD specifications,
+including RFC 5880's verified authentication errata. The requirement-to-test
+mapping and implementation limits are in [RFC conformance tests](docs/rfc-conformance.md).
+
+Added 22 regression tests across the RFC suites and native UDP tests. Coverage
+includes asymmetric timing and exact expiry, all common interval pairs, all
+255 multipliers, circular authentication windows for all four keyed types,
+every individual authenticated bit tamper, incomplete authentication sections,
+sequence resynchronization, S-BFD role markers and stateless reflection,
+simultaneous Polls, reordered/consumed/expired reply sequences, large RTT and
+interval arithmetic, maintenance spacing, and native timer rescheduling.
+Failed-send sequence wraparound coverage now includes all four keyed types.
+
+Two regressions reproduced one shared defect before its correction: a negotiated
+base of 30 seconds or more hit the backoff cap without reducing traffic after
+loss, in both classical multihop and S-BFD. The limit now allows the greater of
+30 seconds and twice the base, saturating at the maximum wire interval. A
+60-second base can therefore back off to 120 seconds. Fast sessions retain their
+30-second cap; a valid response clears backoff. Maximum-width interval
+saturation remains an explicit operational limitation.
+
+All 215 default tests pass in both release and AddressSanitizer profiles.
+Formatting, release Clippy with warnings denied, version-stamping tests,
+protected ACL validation, production MSI compilation and table checks, and
+hardening checks for both production executables pass. The initial sandboxed
+full test run couldn't create temporary registry fixtures; the permitted native
+run passed. This
+validation doesn't establish hardware-level scheduling precision, interoperation
+with another vendor, or live RRAS and installed-service shutdown/recovery.
+
 ## Reliability follow-up — 2026-10-09
 
 The follow-up review identified two regressions and two older defects in the
