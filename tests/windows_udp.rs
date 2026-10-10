@@ -678,7 +678,7 @@ fn normal_shutdown_announces_admin_down_for_the_detection_period() {
 }
 
 #[test]
-fn shutdown_announces_for_the_peers_full_detection_time_without_a_cap() {
+fn shutdown_announces_for_the_peers_detection_time_within_the_configured_limit() {
     let mut options = options("127.0.0.92", "127.0.0.93", "multihop");
     options.source_port = Some(55092);
     let peer = UdpSocket::bind("127.0.0.93:4784").unwrap();
@@ -719,6 +719,43 @@ fn shutdown_announces_for_the_peers_full_detection_time_without_a_cap() {
         started.elapsed()
     );
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn shutdown_limits_slow_peer_announcements_and_logs_the_tradeoff() {
+    let mut options = options("127.0.0.114", "127.0.0.115", "multihop");
+    options.source_port = Some(55114);
+    options.max_shutdown_announce_ms = 200;
+    let trace = test_log("shutdown-limit");
+    options.log_to_file = true;
+    options.log_file_path = trace.path().into();
+    let peer = UdpSocket::bind("127.0.0.115:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let sender = bfd_sender("127.0.0.115");
+    let mut engine = RunningEngine::start(options);
+    let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+    let mut buffer = [0; 512];
+    peer.recv_from(&mut buffer).unwrap();
+    let mut packet = peer_packet(State::Init);
+    packet.desired_min_tx_us = 1_000_000;
+    packet.required_min_rx_us = 2_500_000;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.114:4784")
+        .unwrap();
+    while engine.state.current() != Some(State::Up) {
+        peer.recv_from(&mut buffer).unwrap();
+    }
+    let started = Instant::now();
+    engine.stop();
+    assert!(started.elapsed() >= Duration::from_millis(190));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    let text = std::fs::read_to_string(trace.path()).unwrap();
+    assert!(text.contains("exceeds MaxShutdownAnnounceMs"), "{text}");
+    assert!(text.contains("peer may detect a failure"), "{text}");
 }
 
 #[test]

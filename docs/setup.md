@@ -382,7 +382,9 @@ then `Stopped`. Stop and Shutdown initiate this status transition immediately.
 The engine sets `AdminDown` and never stops a configured BGP peer; if BFD had
 stopped the peer after a failure, the engine starts it again, as RFC 5882
 requires while BFD is disabled. With a communicating classical peer, it continues
-permitted announcements for at least one Detection Time before finishing cleanup. Other roles
+  permitted announcements for one Detection Time, up to `MaxShutdownAnnounceMs`
+  (30 seconds by default), before finishing cleanup. The installer sets the Windows
+  preshutdown timeout to 125 seconds to cover announcements and cleanup. Other roles
 or sessions without a communicating peer attempt one role-permitted notification.
 See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 

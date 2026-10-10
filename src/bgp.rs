@@ -134,8 +134,8 @@ impl Controller {
                         |method| client.borrow_mut().invoke(method),
                         || start_is_current(&worker_mailbox));
                     // Shutdown cancels a call superseded by the queued final action.
-                    if worker_cancel.is_requested()
-                        && result.as_ref().is_err_and(|error| error.kind() == io::ErrorKind::Interrupted)
+                    if result.as_ref().is_err_and(|error|
+                        superseded_cancellation(&worker_mailbox, &worker_cancel, error))
                     {
                         log.log(format!(
                             "BGP peer={peer:?} method={} superseded at service shutdown",
@@ -212,23 +212,25 @@ impl Controller {
             return Ok(());
         };
         let (mutex, ready) = &*self.mailbox;
-        let superseded = {
+        let cancellation = {
             let mut pending = mutex.lock().unwrap_or_else(|error| error.into_inner());
             pending.closed = true;
-            ready.notify_one();
             // The queued action is the final one, such as a Start that releases
             // BFD's Stop because the service is stopping (RFC 5882 section 4.1).
-            !pending.methods.is_empty()
+            // Publish cancellation before the worker can dequeue the final action.
+            // Its client then recognizes every call of that action as final.
+            let result = if !pending.methods.is_empty() {
+                self.cancel.signal()
+            } else {
+                Ok(())
+            };
+            ready.notify_one();
+            result
         };
-        // An older in-flight call that the queued action supersedes ends promptly;
-        // the final call then runs within the shutdown budget. Otherwise the
-        // in-flight call is itself the final action and completes.
-        if superseded {
-            let _ = self.cancel.signal();
-        }
         worker
             .join()
             .map_err(|_| io::Error::other("BGP MI worker panicked"))?
+            .and(cancellation)
     }
 }
 
@@ -265,6 +267,17 @@ fn reconcile(
 fn start_is_current(mailbox: &Mailbox) -> bool {
     let pending = mailbox.0.lock().unwrap_or_else(|error| error.into_inner());
     pending.methods.is_empty()
+}
+
+fn superseded_cancellation(mailbox: &Mailbox, cancel: &StopSignal, error: &io::Error) -> bool {
+    cancel.is_requested()
+        && error.kind() == io::ErrorKind::Interrupted
+        && !mailbox
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .methods
+            .is_empty()
 }
 
 #[cfg(test)]
@@ -580,6 +593,46 @@ mod tests {
         assert_eq!(pending.methods.len(), 2);
         pending.push(Method::Stop);
         assert_eq!(pending.methods, [Method::Stop]);
+    }
+
+    #[test]
+    fn closing_publishes_cancellation_before_final_calls_and_propagates_their_errors() {
+        let mailbox = Mailbox::default();
+        mailbox.0.lock().unwrap().push(Method::Start);
+        let cancel = StopSignal::new().unwrap();
+        let worker_mailbox = Arc::clone(&mailbox);
+        let worker_cancel = cancel.clone();
+        let worker = thread::spawn(move || {
+            let (mutex, ready) = &*worker_mailbox;
+            let pending = mutex.lock().unwrap();
+            let pending = ready
+                .wait_while(pending, |pending| !pending.closed)
+                .unwrap();
+            assert!(
+                worker_cancel.is_requested(),
+                "final action must see closing before dequeue"
+            );
+            drop(pending);
+            work(&worker_mailbox, |method| {
+                assert_eq!(method, Method::Start);
+                let error = io::Error::from(io::ErrorKind::Interrupted);
+                assert!(
+                    !superseded_cancellation(&worker_mailbox, &worker_cancel, &error),
+                    "an interrupted final action must not be reported as success"
+                );
+                Err(error)
+            })
+        });
+        let controller = Controller {
+            mailbox,
+            worker: Some(worker),
+            log: None,
+            cancel,
+        };
+        assert_eq!(
+            controller.shutdown().unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
     }
 
     #[test]

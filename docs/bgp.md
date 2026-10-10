@@ -102,6 +102,13 @@ A dedicated worker handles provider calls while BFD continues running. Failed ac
 
 SCM restarts a crashed broker after five seconds; once it restarts, the BFD
 worker reconciles the latest requested action. A normal broker Stop does not trigger automatic restart.
+The broker supervises provider requests while Running as well as during Stop.
+If a request, including schema lookup and cleanup, remains active for 20 seconds,
+the watchdog exits the broker process and SCM recovery restarts it. The check
+runs once per second; idle pipe waits do not count as stalled provider work.
+If Stop was requested, the broker reports Stopped before exiting, preventing an
+automatic restart. A client that disconnects before pipe acceptance is discarded
+without stopping the broker.
 The BFD worker checks the connection once per idle second and reconnects after
 broker failure, reapplying the latest requested action. It does not invent an
 action before the session first establishes. The broker uses one client
@@ -119,8 +126,11 @@ Each Management Infrastructure (MI) operation requests a five-second timeout, wh
 BFD accepts the SCM preshutdown notification instead of the shutdown notification.
 During Windows shutdown it announces AdminDown and completes any final BGP action
 while the broker, which stops in the later shutdown phase, is still running.
-Windows waits only up to the service's preshutdown timeout, 10 seconds by default,
-so an announcement period longer than that is cut short during Windows shutdown.
+The installer sets the service's preshutdown timeout to 125 seconds, covering
+the maximum 60-second announcement period, 60 seconds of cleanup, and final
+logs. `MaxShutdownAnnounceMs` defaults to 30 seconds and limits shutdown delay
+from a peer advertising very long timers. Truncating a Detection Time produces
+a warning because the peer might classify the administrative stop as a failure.
 
 <details>
 <summary>Native provider details</summary>

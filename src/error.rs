@@ -8,6 +8,9 @@ pub enum ConfigError {
     /// MinTxUs, MinRxUs, and DetectMult must be nonzero.
     #[error("MinTxUs, MinRxUs, and DetectMult must be nonzero")]
     ZeroTiming,
+    /// MaxShutdownAnnounceMs must be in the range 1..=60000.
+    #[error("MaxShutdownAnnounceMs must be between 1 and 60000 milliseconds")]
+    ShutdownAnnouncementLimit,
     /// AuthKey and AuthKeyHex are mutually exclusive.
     #[error("AuthKey and AuthKeyHex are mutually exclusive")]
     ConflictingKeys,

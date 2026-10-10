@@ -1,5 +1,9 @@
 //! SCM lifecycle for the broker. Provider work stays off the control-handler thread.
-use super::{ipc, serve, Target};
+use super::{
+    ipc, serve,
+    watchdog::{ProviderWatch, PROVIDER_BUDGET},
+    Target,
+};
 use crate::{
     com::ComServer,
     runtime::{Logger, StopSignal},
@@ -48,6 +52,11 @@ struct Reporter {
 }
 impl Reporter {
     fn publish(&mut self, state: ServiceState, failure: bool) -> io::Result<()> {
+        // Reporting Stopped closes SCM's RPC context. Even a queued control
+        // handler must never use that status handle again.
+        if self.state == ServiceState::Stopped {
+            return Ok(());
+        }
         // A Stop received during startup must not be overwritten by Running.
         if self.state == ServiceState::StopPending && state == ServiceState::Running {
             return Ok(());
@@ -132,22 +141,28 @@ fn start() -> io::Result<()> {
             .unwrap_or_else(|error| error.into_inner())
             .publish(ServiceState::Running, false)?;
         let (sender, receiver) = mpsc::channel();
+        let watch = ProviderWatch::default();
         thread::scope(|scope| -> io::Result<()> {
+            let mut supervisor_log = log.clone();
             let worker_log = &mut log;
             let worker = scope.spawn(|| {
                 let result = acquire_listener(&stop, worker_log).and_then(|listener| {
                     worker_log
                         .broker_message("ready; service identity and pipe ACL verified", false);
                     listener.map_or(Ok(()), |listener| {
-                        serve(&listener, target.as_ref(), &stop, worker_log)
+                        serve(&listener, target.as_ref(), &stop, worker_log, &watch)
                     })
                 });
                 let _ = sender.send(());
                 result
             });
             let mut stop_deadline = None;
+            let mut status_failure = None;
             while receiver.recv_timeout(Duration::from_secs(1)).is_err() && !worker.is_finished() {
                 let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
+                if let Some(method) = watch.expired(Instant::now()) {
+                    abandon_provider(&mut reporter, method);
+                }
                 if reporter.state == ServiceState::StopPending {
                     let deadline =
                         *stop_deadline.get_or_insert_with(|| Instant::now() + STOP_BUDGET);
@@ -155,16 +170,23 @@ fn start() -> io::Result<()> {
                         abandon_cleanup(&mut reporter);
                     }
                     if let Err(error) = reporter.publish(ServiceState::StopPending, false) {
-                        // A scoped worker must be cancelled before returning, otherwise
-                        // its pending pipe read would keep scope teardown waiting forever.
+                        // Keep supervising after a status failure: leaving the scope
+                        // would join a potentially stuck provider without a watchdog.
+                        if status_failure.is_none() {
+                            supervisor_log.broker_message(
+                                format_args!("could not report broker shutdown progress: {error}"),
+                                true,
+                            );
+                            status_failure = Some(error);
+                        }
                         let _ = stop.signal();
-                        return Err(error);
                     }
                 }
             }
             worker
                 .join()
                 .map_err(|_| io::Error::other("BGP broker worker panicked"))?
+                .and(status_failure.map_or(Ok(()), Err))
         })?;
         com.shutdown()?;
         Ok(())
@@ -227,4 +249,48 @@ fn abandon_cleanup(reporter: &mut Reporter) -> ! {
     }
     let _ = reporter.publish(ServiceState::Stopped, true);
     process::exit(1);
+}
+
+/// A Running broker exits without reporting Stopped, triggering its configured
+/// SCM crash recovery. A requested Stop remains final and must not restart it.
+fn abandon_provider(reporter: &mut Reporter, method: crate::bgp::Method) -> ! {
+    if let Ok(mut log) = Logger::new(false) {
+        log.broker_message(
+            format_args!(
+                "provider method={} exceeded its {}-second wall-clock budget; ending the broker process",
+                method.name(), PROVIDER_BUDGET.as_secs()
+            ),
+            true,
+        );
+        let _ = log.flush(LOG_FLUSH_TIMEOUT);
+    }
+    if reporter.state == ServiceState::StopPending {
+        let _ = reporter.publish(ServiceState::Stopped, true);
+    }
+    process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopped_status_is_terminal_even_for_queued_controls() {
+        let mut reporter = Reporter {
+            handle: None,
+            state: ServiceState::Running,
+            checkpoint: 0,
+        };
+        reporter.publish(ServiceState::Stopped, false).unwrap();
+        let checkpoint = reporter.checkpoint;
+        for state in [
+            ServiceState::StopPending,
+            ServiceState::Running,
+            ServiceState::Stopped,
+        ] {
+            reporter.publish(state, true).unwrap();
+            assert_eq!(reporter.state, ServiceState::Stopped);
+            assert_eq!(reporter.checkpoint, checkpoint);
+        }
+    }
 }

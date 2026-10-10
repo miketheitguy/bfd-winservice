@@ -236,6 +236,9 @@ pub struct Options {
     pub log_file_path: PathBuf,
     /// Enable append logging; false leaves the configured path untouched
     pub log_to_file: bool,
+    /// Maximum classical AdminDown announcement period at shutdown, in milliseconds.
+    /// Defaults to 30000; accepted values are 1..=60000.
+    pub max_shutdown_announce_ms: u32,
     /// Enable native MI BGP control for this configured peer name
     pub bgp_peer_name: Option<String>,
     /// Routing domain of the BGP peer; omitted selects the default domain
@@ -304,6 +307,7 @@ impl Options {
             auth_key_hex: None,
             log_file_path: DEFAULT_LOG_FILE_PATH.into(),
             log_to_file: false,
+            max_shutdown_announce_ms: 30_000,
             bgp_peer_name: None,
             bgp_routing_domain: None,
             verbose: false,
@@ -459,6 +463,9 @@ impl Options {
     }
 
     pub(crate) fn validate_ranges(&self) -> Result<(), ConfigError> {
+        if !(1..=60_000).contains(&self.max_shutdown_announce_ms) {
+            return Err(ConfigError::ShutdownAnnouncementLimit);
+        }
         if self.min_tx_us == 0 || self.min_rx_us == 0 {
             return Err(ConfigError::ZeroIntervals);
         }

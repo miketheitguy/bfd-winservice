@@ -7,6 +7,7 @@ use std::{
     mem::size_of,
     path::PathBuf,
     ptr,
+    time::Duration,
 };
 use windows_service::{
     service::{Service, ServiceAccess, ServiceSidType},
@@ -14,13 +15,16 @@ use windows_service::{
 };
 use windows_sys::Win32::System::Services::{
     ChangeServiceConfigW, QueryServiceConfig2W, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
-    SERVICE_DELAYED_AUTO_START_INFO, SERVICE_NO_CHANGE,
+    SERVICE_CONFIG_PRESHUTDOWN_INFO, SERVICE_DELAYED_AUTO_START_INFO, SERVICE_NO_CHANGE,
+    SERVICE_PRESHUTDOWN_INFO,
 };
 
 const NAMES: [&str; 2] = ["BfdWinService", BROKER_NAME];
-const SNAPSHOT_MAGIC: &[u8; 4] = b"BSI2";
-/// Account, SID type, delayed automatic start, and non-crash failure recovery.
-const RECORD_LEN: usize = 4;
+const SNAPSHOT_MAGIC: &[u8; 4] = b"BSI3";
+/// Account, SID type, delayed start, recovery flag, and little-endian preshutdown timeout.
+const RECORD_LEN: usize = 8;
+/// Covers the maximum 60-second announcement, 60-second cleanup, and final logging.
+const BFD_PRESHUTDOWN_MS: u32 = 125_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Account {
@@ -70,11 +74,12 @@ struct Policy {
     delayed: bool,
     /// Run failure actions when the service stops with a nonzero exit code.
     non_crash_recovery: bool,
+    preshutdown_ms: u32,
 }
 
 impl Policy {
     fn encode(self) -> [u8; RECORD_LEN] {
-        [
+        let mut record = [
             self.account.byte(),
             match self.sid {
                 ServiceSidType::None => 0,
@@ -83,7 +88,13 @@ impl Policy {
             },
             u8::from(self.delayed),
             u8::from(self.non_crash_recovery),
-        ]
+            0,
+            0,
+            0,
+            0,
+        ];
+        record[4..].copy_from_slice(&self.preshutdown_ms.to_le_bytes());
+        record
     }
 }
 
@@ -133,6 +144,27 @@ fn delayed_auto_start(service: &Service) -> io::Result<bool> {
     Ok(info.fDelayedAutostart != 0)
 }
 
+fn preshutdown_timeout(service: &Service) -> io::Result<u32> {
+    let mut info = SERVICE_PRESHUTDOWN_INFO {
+        dwPreshutdownTimeout: 0,
+    };
+    let mut needed = 0;
+    // SAFETY: QUERY_CONFIG handle and aligned, correctly sized output storage.
+    if unsafe {
+        QueryServiceConfig2W(
+            service.raw_handle(),
+            SERVICE_CONFIG_PRESHUTDOWN_INFO,
+            (&mut info as *mut SERVICE_PRESHUTDOWN_INFO).cast(),
+            size_of::<SERVICE_PRESHUTDOWN_INFO>() as u32,
+            &mut needed,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(info.dwPreshutdownTimeout)
+}
+
 fn query(service: &Service) -> io::Result<Policy> {
     let config = service.query_config().map_err(io::Error::other)?;
     let account = config
@@ -146,6 +178,7 @@ fn query(service: &Service) -> io::Result<Policy> {
         sid: service
             .get_config_service_sid_info()
             .map_err(io::Error::other)?,
+        preshutdown_ms: preshutdown_timeout(service)?,
         delayed: delayed_auto_start(service)?,
         non_crash_recovery: service
             .get_failure_actions_on_non_crash_failures()
@@ -188,6 +221,9 @@ fn set(service: &Service, policy: Policy) -> io::Result<()> {
         .map_err(io::Error::other)?;
     service
         .set_failure_actions_on_non_crash_failures(policy.non_crash_recovery)
+        .map_err(io::Error::other)?;
+    service
+        .set_preshutdown_timeout(Duration::from_millis(u64::from(policy.preshutdown_ms)))
         .map_err(io::Error::other)
 }
 
@@ -204,7 +240,7 @@ fn decode(bytes: &[u8]) -> io::Result<[Option<Policy>; 2]> {
             0 => Account::System,
             1 => Account::LocalService,
             2 => Account::NetworkService,
-            255 if record[1..] == [0, 0, 0] => continue,
+            255 if record[1..] == [0; RECORD_LEN - 1] => continue,
             _ => return Err(io::Error::other("invalid rollback account")),
         };
         let sid = match record[1] {
@@ -223,6 +259,7 @@ fn decode(bytes: &[u8]) -> io::Result<[Option<Policy>; 2]> {
             sid,
             delayed: flag(record[2])?,
             non_crash_recovery: flag(record[3])?,
+            preshutdown_ms: u32::from_le_bytes(record[4..].try_into().map_err(io::Error::other)?),
         });
     }
     Ok(values)
@@ -236,7 +273,9 @@ pub(super) fn prepare() -> io::Result<()> {
         let service = match manager.open_service(name, ServiceAccess::QUERY_CONFIG) {
             Ok(service) => service,
             Err(windows_service::Error::Winapi(error)) if error.raw_os_error() == Some(1060) => {
-                bytes.extend_from_slice(&[255, 0, 0, 0]);
+                let mut absent = [0; RECORD_LEN];
+                absent[0] = 255;
+                bytes.extend_from_slice(&absent);
                 continue;
             }
             Err(error) => return Err(io::Error::other(error)),
@@ -271,15 +310,18 @@ pub(super) fn configure() -> io::Result<()> {
             sid: ServiceSidType::Unrestricted,
             delayed: true,
             non_crash_recovery: true,
+            preshutdown_ms: BFD_PRESHUTDOWN_MS,
         },
     )?;
+    let broker = open(&manager, NAMES[1])?;
     set(
-        &open(&manager, NAMES[1])?,
+        &broker,
         Policy {
             account: Account::System,
             sid: ServiceSidType::Unrestricted,
             delayed: true,
             non_crash_recovery: false,
+            preshutdown_ms: preshutdown_timeout(&broker)?,
         },
     )
 }
@@ -321,30 +363,42 @@ mod tests {
             sid: ServiceSidType::None,
             delayed: false,
             non_crash_recovery: false,
+            preshutdown_ms: 10_000,
         };
         let local = Policy {
             account: Account::LocalService,
             sid: ServiceSidType::Unrestricted,
             delayed: true,
             non_crash_recovery: true,
+            preshutdown_ms: BFD_PRESHUTDOWN_MS,
         };
-        assert_eq!(
-            decode(b"BSI2\0\0\0\0\x01\x01\x01\x01").unwrap(),
-            [Some(system), Some(local)]
-        );
         let mut encoded = SNAPSHOT_MAGIC.to_vec();
         encoded.extend_from_slice(&system.encode());
         encoded.extend_from_slice(&local.encode());
         assert_eq!(decode(&encoded).unwrap(), [Some(system), Some(local)]);
-        assert_eq!(decode(b"BSI2\xff\0\0\0\xff\0\0\0").unwrap(), [None, None]);
+        let mut absent = SNAPSHOT_MAGIC.to_vec();
+        for _ in NAMES {
+            absent.extend_from_slice(&[255, 0, 0, 0, 0, 0, 0, 0]);
+        }
+        assert_eq!(decode(&absent).unwrap(), [None, None]);
+        for (index, value) in [(0, 3), (1, 2), (2, 2), (3, 2)] {
+            let mut invalid = encoded.clone();
+            invalid[SNAPSHOT_MAGIC.len() + index] = value;
+            assert!(decode(&invalid).is_err());
+        }
+        for index in 1..RECORD_LEN {
+            let mut invalid = absent.clone();
+            invalid[SNAPSHOT_MAGIC.len() + index] = 1;
+            assert!(decode(&invalid).is_err());
+        }
+        let mut extra = encoded.clone();
+        extra.push(0);
+        assert!(decode(&extra).is_err());
+        for length in 0..encoded.len() {
+            assert!(decode(&encoded[..length]).is_err());
+        }
         for bytes in [
-            &b"BSI2\x03\0\0\0\0\0\0\0"[..],
-            &b"BSI2\0\x02\0\0\0\0\0\0"[..],
-            &b"BSI2\0\0\x02\0\0\0\0\0"[..],
-            &b"BSI2\0\0\0\x02\0\0\0\0"[..],
-            &b"BSI2\xff\x01\0\0\0\0\0\0"[..],
-            &b"BSI2\xff\0\x01\0\0\0\0\0"[..],
-            &b"BSI2\0\0\0\0\0\0\0\0\0"[..],
+            &b"BSI2\0\0\0\0\x01\x01\x01\x01"[..],
             &b"BSI1\0\0\0\0\0\0\0\0"[..],
             &b"BSI1\0\0\x01\x01"[..],
         ] {

@@ -261,12 +261,14 @@ pub struct Engine {
     reflector: Option<Reflector>,
     last_peer_report: Option<(State, u8, u32)>,
     live_settings: LiveSettings,
+    settings_retry: bool,
+    last_settings_error: Option<Instant>,
     events: EventBudget,
     shutdown_progress: ShutdownProgress,
 }
 
 /// Reports the AdminDown announcement period chosen when the engine stops, so a
-/// service supervisor can extend its stop budget to honor the full period.
+/// service supervisor can include that bounded period in its stop budget.
 #[derive(Clone, Default)]
 pub struct ShutdownProgress(Arc<AtomicU64>);
 
@@ -362,6 +364,8 @@ impl Engine {
             reflector,
             last_peer_report: None,
             live_settings,
+            settings_retry: false,
+            last_settings_error: None,
             events: EventBudget::default(),
             shutdown_progress: ShutdownProgress::default(),
         })
@@ -544,10 +548,18 @@ impl Engine {
     }
 
     fn reload_sbfd_settings(&mut self, log: &mut Logger) {
+        self.reload_sbfd_settings_from(log, load_sbfd_settings);
+    }
+
+    fn reload_sbfd_settings_from(
+        &mut self,
+        log: &mut Logger,
+        read: impl FnOnce(&Options) -> io::Result<(Timing, bool)>,
+    ) {
         if !self.options.registry_backed || self.options.session_type == SessionType::Classical {
             return;
         }
-        let result = load_sbfd_settings(&self.options).and_then(|(timing, admin_down)| {
+        let result = read(&self.options).and_then(|(timing, admin_down)| {
             if self.timing != timing {
                 self.set_timing(timing)?;
                 log.log("S-BFD timing settings reloaded");
@@ -556,7 +568,19 @@ impl Engine {
             Ok(())
         });
         if let Err(error) = result {
-            log.log(format_args!("S-BFD settings reload rejected: {error}"));
+            self.settings_retry = true;
+            if due(
+                &mut self.last_settings_error,
+                Instant::now(),
+                REPORT_INTERVAL,
+            ) {
+                log.log(format_args!(
+                    "S-BFD settings reload rejected; retrying: {error}"
+                ));
+            }
+        } else {
+            self.settings_retry = false;
+            self.last_settings_error = None;
         }
     }
 
@@ -578,14 +602,28 @@ impl Engine {
             },
             LiveSettings::Poll => now >= *next_poll,
         };
-        if due {
-            self.reload_sbfd_settings(log);
+        self.refresh_settings_from(now, next_poll, due, log, load_sbfd_settings);
+    }
+
+    fn refresh_settings_from(
+        &mut self,
+        now: Instant,
+        next_poll: &mut Instant,
+        changed: bool,
+        log: &mut Logger,
+        read: impl FnOnce(&Options) -> io::Result<(Timing, bool)>,
+    ) {
+        if changed || self.settings_retry && now >= *next_poll {
+            self.reload_sbfd_settings_from(log, read);
             *next_poll = now + Duration::from_secs(1);
         }
     }
 
     /// Bounds a wait so the fallback settings read and the idle wakeup still occur.
     fn idle_wait(&self, now: Instant, next_poll: Instant) -> Duration {
+        if self.settings_retry {
+            return next_poll.saturating_duration_since(now).min(MAX_IDLE_WAIT);
+        }
         match self.live_settings {
             LiveSettings::Poll => next_poll.saturating_duration_since(now).min(MAX_IDLE_WAIT),
             LiveSettings::None | LiveSettings::Notify(_) => MAX_IDLE_WAIT,
@@ -749,9 +787,9 @@ impl Engine {
         } else {
             self.run_session(stop, log)
         };
-        // RFC 5880 section 6.8.16 and RFC 5882 section 8: assert AdminDown for at
-        // least one Detection Time, measured before AdminDown in both directions,
-        // so neither end mistakes the shutdown for a path failure.
+        // RFC 5880 section 6.8.16 and RFC 5882 section 8 recommend at least one
+        // Detection Time. Measure both directions before AdminDown, then apply
+        // the configured operational limit so a peer cannot delay Stop indefinitely.
         let grace = if result.is_ok()
             && self.options.session_type == SessionType::Classical
             && self.session.communicating()
@@ -762,6 +800,13 @@ impl Engine {
         } else {
             Duration::ZERO
         };
+        let limit = Duration::from_millis(u64::from(self.options.max_shutdown_announce_ms));
+        if grace > limit {
+            log.service_warning(format_args!(
+                "AdminDown announcement period {grace:?} exceeds MaxShutdownAnnounceMs; limiting it to {limit:?}. The peer may detect a failure before learning of this administrative stop"
+            ));
+        }
+        let grace = grace.min(limit);
         self.shutdown_progress.record(grace);
         let previous = self.session.state;
         self.session.admin_down();
@@ -1024,6 +1069,74 @@ mod tests {
     use super::*;
     #[cfg(not(miri))]
     use std::{fs, io::Write};
+
+    #[cfg(not(miri))]
+    #[test]
+    fn notified_timing_change_retries_after_poll_without_another_notification() {
+        let mut options = Options::new(
+            "127.0.0.112".parse().unwrap(),
+            "127.0.0.113".parse().unwrap(),
+        );
+        options.session_type = SessionType::SbfdInitiator;
+        options.remote_discriminator = Some(99);
+        options.discriminator = Some(7);
+        options.registry_backed = true;
+        let auth = options.validate().unwrap();
+        let reflector = Reflector::new(Options::reflector(options.peer, 99), auth.clone()).unwrap();
+        let mut log = Logger::new(false).unwrap();
+        let mut engine = Engine::open(options, auth, &mut log).unwrap();
+        let now = Instant::now();
+        for step in 0..3 {
+            let time = now + Duration::from_millis(step * 100);
+            let request = engine.session.packet_at(false, time);
+            engine
+                .session
+                .receive(&reflector.respond(&request).unwrap(), time)
+                .unwrap();
+        }
+        let first = Timing::new(500_000, 300_000, 3).unwrap();
+        let latest = Timing::new(700_000, 300_000, 3).unwrap();
+        let mut retry_at = now;
+        engine.refresh_settings_from(now, &mut retry_at, true, &mut log, |_| Ok((first, false)));
+        let poll = engine
+            .session
+            .packet_at(false, now + Duration::from_millis(400));
+        engine.refresh_settings_from(now, &mut retry_at, true, &mut log, |_| Ok((latest, false)));
+        assert!(engine.settings_retry);
+        assert_eq!(engine.timing, first);
+        engine.refresh_settings_from(now, &mut retry_at, false, &mut log, |_| {
+            panic!("retry must be paced")
+        });
+        engine
+            .session
+            .receive(
+                &reflector.respond(&poll).unwrap(),
+                now + Duration::from_millis(410),
+            )
+            .unwrap();
+        let request = engine
+            .session
+            .packet_at(false, now + Duration::from_millis(500));
+        engine
+            .session
+            .receive(
+                &reflector.respond(&request).unwrap(),
+                now + Duration::from_millis(510),
+            )
+            .unwrap();
+        engine.refresh_settings_from(retry_at, &mut retry_at, false, &mut log, |_| {
+            Ok((latest, false))
+        });
+        assert!(!engine.settings_retry);
+        assert_eq!(engine.timing, latest);
+        engine.refresh_settings_from(
+            now + Duration::from_secs(5),
+            &mut retry_at,
+            false,
+            &mut log,
+            |_| panic!("successful notified settings must not resume polling"),
+        );
+    }
 
     #[cfg(not(miri))]
     #[test]

@@ -49,6 +49,8 @@ try {
             if ($key.GetValue('ServiceSidType', 0) -ne 0) { throw 'Rollback did not restore the previous service SID setting.' }
             if ($key.GetValue('DelayedAutostart', 0) -ne 0) { throw 'Rollback did not restore the previous delayed-start setting.' }
             if ($key.GetValue('FailureActionsOnNonCrashFailures', 0) -ne 0) { throw 'Rollback did not restore the previous non-crash recovery setting.' }
+            # GitHub's Windows 2025 runner uses the 10-second Windows default.
+            if ($key.GetValue('PreshutdownTimeout', 10000) -ne 10000) { throw 'Rollback did not restore the previous preshutdown timeout.' }
             & sc.exe delete BfdWinService | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Could not remove the migration fixture.' }
         } elseif ($null -ne $service) { throw 'Rollback left the newly installed BFD service.' }

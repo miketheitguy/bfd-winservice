@@ -979,6 +979,22 @@ impl Listener {
         })
     }
     pub(crate) fn accept(&self, stop: &StopSignal) -> io::Result<()> {
+        loop {
+            if stop.is_requested() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            match self.accept_once(stop) {
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+                    // A client can open and close between pipe creation/reset and
+                    // ConnectNamedPipe. Reset this instance and accept another.
+                    self.disconnect();
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn accept_once(&self, stop: &StopSignal) -> io::Result<()> {
         let (event, mut overlap) = operation()?;
         // SAFETY: live pipe and OVERLAPPED retained through completion/cancellation.
         let immediate = unsafe { ConnectNamedPipe(self.pipe.as_raw_handle(), &mut overlap) } != 0;

@@ -122,13 +122,15 @@ probing; reflectors answer requests and send no periodic packets.
 
 On normal classical shutdown with a communicating peer, the service sends an
 immediate AdminDown notification and continues permitted periodic announcements
-for at least one Detection Time, as recommended by
+for one Detection Time, up to `MaxShutdownAnnounceMs`, as recommended by
 [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16)
 and [RFC 5882 section 8](https://www.rfc-editor.org/rfc/rfc5882.html#section-8).
 The period is the longer of the local Detection Time and the peer's Detection
-Time for this system's packets, both measured before AdminDown, so a peer with
-long timers lengthens the stop. During Windows shutdown, the service's
-preshutdown timeout can cut the period short.
+Time for this system's packets, both measured before AdminDown. The announcement
+limit defaults to 30 seconds and accepts 1–60000 milliseconds. If it truncates
+the Detection Time, the service logs a warning; the peer might then classify the
+stop as a failure. The installer sets a 125-second Windows preshutdown timeout
+to cover the maximum announcement period, 60 seconds of cleanup, and final logs.
 Zero-RX suppression and passive-role restrictions still apply to periodic traffic.
 Without a communicating peer, after a fatal (non-transient) transport error, or for an S-BFD
 initiator, shutdown attempts one role-permitted notification. Passive sessions

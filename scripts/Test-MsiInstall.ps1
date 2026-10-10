@@ -99,6 +99,9 @@ function Assert-ServicePolicy {
         # Only BFD recovers from a nonzero exit; its requested stops always exit with 0.
         $nonCrash = [int]($name -eq 'BfdWinService')
         Assert-Installed ($key.GetValue('FailureActionsOnNonCrashFailures', 0) -eq $nonCrash) "Unexpected non-crash recovery setting: $name"
+        if ($name -eq 'BfdWinService') {
+            Assert-Installed ($key.GetValueKind('PreshutdownTimeout') -eq 'DWord' -and $key.GetValue('PreshutdownTimeout') -eq 125000) 'BFD needs 125 seconds for bounded preshutdown cleanup.'
+        }
         Assert-Installed ('RpcSs' -in @((Get-Service $name).ServicesDependedOn.Name)) "Missing RpcSs dependency: $name"
     }
     Assert-Installed ('BfdBgpBroker' -in @((Get-Service BfdWinService).ServicesDependedOn.Name)) 'BFD must depend on the broker.'

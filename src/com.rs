@@ -22,19 +22,20 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Mutex, PoisonError,
+        mpsc, Arc, Mutex, PoisonError,
     },
     thread,
-    time::{Duration, Instant},
 };
 use windows::{
-    core::{implement, w, Error, IUnknown, Interface, Ref, Result, BOOL, GUID, PCWSTR},
+    core::{
+        implement, w, AgileReference, Error, IUnknown, Interface, Ref, Result, BOOL, GUID, PCWSTR,
+    },
     Win32::{
         Foundation::{
             LocalFree, CLASS_E_NOAGGREGATION, CO_E_OBJNOTCONNECTED, DISP_E_BADINDEX,
             DISP_E_BADPARAMCOUNT, DISP_E_MEMBERNOTFOUND, DISP_E_NONAMEDARGS,
             DISP_E_UNKNOWNINTERFACE, DISP_E_UNKNOWNNAME, E_INVALIDARG, E_POINTER, HLOCAL,
-            RPC_E_SERVERCALL_RETRYLATER, RPC_E_TOO_LATE,
+            RPC_E_TOO_LATE,
         },
         Security::{
             Authorization::{
@@ -93,34 +94,25 @@ impl Access {
         }
     }
 }
-/// Type descriptions built per second, process-wide. Clients request one per
-/// object, so this only bounds callers that request them in a loop.
-const TYPE_INFO_PER_SECOND: u32 = 64;
-static TYPE_INFO_BUDGET: Mutex<TypeInfoBudget> = Mutex::new(TypeInfoBudget {
-    window: None,
-    built: 0,
-});
+/// One immutable type description shared by every object of a registered class.
+/// AgileReference resolves it in the caller's apartment without sharing a raw
+/// apartment-bound COM pointer across RPC threads.
+#[derive(Default)]
+struct TypeInfoCache(Mutex<Option<AgileReference<ITypeInfo>>>);
 
-struct TypeInfoBudget {
-    window: Option<Instant>,
-    built: u32,
-}
-
-impl TypeInfoBudget {
-    fn admit(&mut self, now: Instant) -> bool {
-        if self
-            .window
-            .is_none_or(|start| now.duration_since(start) >= Duration::from_secs(1))
-        {
-            self.window = Some(now);
-            self.built = 0;
-        }
-        if self.built < TYPE_INFO_PER_SECOND {
-            self.built += 1;
-            true
-        } else {
-            false
-        }
+impl TypeInfoCache {
+    fn resolve(&self) -> Result<ITypeInfo> {
+        let reference = {
+            let mut cached = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(reference) = &*cached {
+                reference.clone()
+            } else {
+                let reference = AgileReference::new(&create_type_info()?)?;
+                *cached = Some(reference.clone());
+                reference
+            }
+        };
+        reference.resolve()
     }
 }
 
@@ -283,7 +275,11 @@ impl ComApartment {
         if self.cookie.is_some() {
             return Err(E_INVALIDARG.into());
         }
-        let factory: IClassFactory = StateFactory { state }.into();
+        let type_info = Arc::new(TypeInfoCache::default());
+        // Create metadata on the owner MTA before publishing the factory. Its
+        // apartment remains initialized for the registration's entire lifetime.
+        type_info.resolve()?;
+        let factory: IClassFactory = StateFactory { state, type_info }.into();
         // SAFETY: COM is initialized on this thread. The factory has a generated
         // IClassFactory vtable and owns its shared state. COM retains its own ref.
         self.cookie = Some(unsafe {
@@ -381,6 +377,7 @@ impl Drop for SecurityAllocation {
 #[implement(IClassFactory)]
 struct StateFactory {
     state: StateObserver,
+    type_info: Arc<TypeInfoCache>,
 }
 
 impl IClassFactory_Impl for StateFactory_Impl {
@@ -403,6 +400,7 @@ impl IClassFactory_Impl for StateFactory_Impl {
         }
         let dispatch: IDispatch = SessionDispatch {
             state: self.state.clone(),
+            type_info: Arc::clone(&self.type_info),
         }
         .into();
         // SAFETY: COM supplies a valid IID and writable output. QueryInterface
@@ -421,6 +419,7 @@ struct SessionDispatch {
     // Security boundary: COM requests can read a snapshot, but cannot control the
     // LocalSystem engine or supply paths to its privileged resource operations.
     state: StateObserver,
+    type_info: Arc<TypeInfoCache>,
 }
 
 impl IDispatch_Impl for SessionDispatch_Impl {
@@ -432,15 +431,7 @@ impl IDispatch_Impl for SessionDispatch_Impl {
         if index != 0 {
             return Err(DISP_E_BADINDEX.into());
         }
-        // Each request builds an in-memory type library; bound callers that loop.
-        if !TYPE_INFO_BUDGET
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .admit(Instant::now())
-        {
-            return Err(RPC_E_SERVERCALL_RETRYLATER.into());
-        }
-        create_type_info()
+        self.type_info.resolve()
     }
 
     fn GetIDsOfNames(
@@ -644,6 +635,7 @@ mod tests {
         let publisher = StatePublisher::new(State::Down);
         let dispatch: IDispatch = SessionDispatch {
             state: publisher.observer(),
+            type_info: Arc::default(),
         }
         .into();
         for (state, name) in [
@@ -696,6 +688,7 @@ mod tests {
         let publisher = StatePublisher::new(State::Down);
         let dispatch: IDispatch = SessionDispatch {
             state: publisher.observer(),
+            type_info: Arc::default(),
         }
         .into();
         for supplied_path in [
@@ -776,6 +769,7 @@ mod tests {
         let publisher = StatePublisher::new(State::Down);
         let factory: IClassFactory = StateFactory {
             state: publisher.observer(),
+            type_info: Arc::default(),
         }
         .into();
         // SAFETY: a valid generated factory is called without aggregation. The
@@ -838,10 +832,16 @@ mod tests {
     }
 
     #[test]
-    fn type_descriptions_are_available_but_bounded_per_second() {
+    fn type_descriptions_are_cached_without_a_shared_client_quota() {
+        // SAFETY: this test owns its MTA initialization and matching teardown.
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+            .ok()
+            .unwrap();
         let publisher = StatePublisher::new(State::Down);
+        let cache = Arc::new(TypeInfoCache::default());
         let dispatch: IDispatch = SessionDispatch {
             state: publisher.observer(),
+            type_info: Arc::clone(&cache),
         }
         .into();
         // SAFETY: a valid generated dispatch object; the result owns its reference.
@@ -857,16 +857,34 @@ mod tests {
         let error = unsafe { dispatch.GetTypeInfo(1, 0) }.unwrap_err();
         assert_eq!(error.code(), DISP_E_BADINDEX);
 
-        let now = Instant::now();
-        let mut budget = TypeInfoBudget {
-            window: None,
-            built: 0,
-        };
-        for _ in 0..TYPE_INFO_PER_SECOND {
-            assert!(budget.admit(now));
+        for _ in 0..1000 {
+            // SAFETY: a valid dispatch and metadata index on this initialized MTA.
+            assert_eq!(unsafe { dispatch.GetTypeInfo(0, 0) }.unwrap(), info);
         }
-        assert!(!budget.admit(now + Duration::from_millis(999)));
-        assert!(budget.admit(now + Duration::from_secs(1)));
+        thread::spawn(move || {
+            // SAFETY: this thread owns a separate STA initialization.
+            unsafe { CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) }
+                .ok()
+                .unwrap();
+            let second = cache.resolve().unwrap();
+            // SAFETY: the agile reference resolves a valid type description here.
+            let attrs = unsafe { second.GetTypeAttr() }.unwrap();
+            // SAFETY: attrs belongs to second and is released once.
+            unsafe {
+                assert_eq!((*attrs).cFuncs, 3);
+                second.ReleaseTypeAttr(attrs);
+            }
+            drop(second);
+            drop(cache);
+            // SAFETY: balances this thread's successful initialization.
+            unsafe { CoUninitialize() };
+        })
+        .join()
+        .unwrap();
+        drop(info);
+        drop(dispatch);
+        // SAFETY: balances the successful initialization at test entry.
+        unsafe { CoUninitialize() };
     }
 
     #[test]

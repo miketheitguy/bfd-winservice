@@ -3,6 +3,7 @@
 mod install;
 mod mi;
 mod service;
+mod watchdog;
 
 use crate::{
     bgp::{
@@ -85,10 +86,14 @@ fn serve(
     target: Option<&Target>,
     stop: &StopSignal,
     log: &mut Logger,
+    watch: &watchdog::ProviderWatch,
 ) -> io::Result<()> {
     serve_with_backend(listener, target.is_some(), stop, log, |method, log| {
         let target = target.ok_or_else(|| io::Error::other("BGP is not configured"))?;
-        let result = target.execute(method, log);
+        let result = {
+            let _call = watch.begin(method);
+            target.execute(method, log)
+        };
         if method != Method::Get || result.is_err() {
             log.broker_message(
                 format_args!(
@@ -171,6 +176,32 @@ mod tests {
     use super::*;
     use ipc::fixtures;
     use std::{sync::mpsc, thread, time::Duration};
+
+    #[test]
+    fn disconnect_before_accept_keeps_broker_available_for_the_next_client() {
+        let (listener, name) = fixtures::listener("S-1-1-0");
+        drop(fixtures::connect_pipe(&name));
+        let stop = StopSignal::new().unwrap();
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                serve_with_backend(
+                    &listener,
+                    true,
+                    &stop,
+                    &mut Logger::new(false).unwrap(),
+                    |method, _| {
+                        assert_eq!(method, Method::Get);
+                        Ok(1)
+                    },
+                )
+            });
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let client = fixtures::connect_pipe(&name);
+            assert_eq!(fixtures::request(&client, Method::Get, 1).unwrap().value, 1);
+            stop.signal().unwrap();
+            server.join().unwrap().unwrap();
+        });
+    }
 
     #[test]
     fn query_only_and_unconfigured_connections_never_mutate_on_disconnect() {

@@ -83,6 +83,7 @@ Transmit (TX) and receive (RX) intervals use microseconds. For S-BFD initiators,
 | `MinRxUs` | `REG_DWORD` | `300000` | Required receive interval; S-BFD initiator RTT allowance, 1–4294967295 microseconds |
 | `StartupTxUs` | `REG_DWORD` | `1000000` | Startup interval, at least one second; the base outside Up is `max(StartupTxUs, MinTxUs)` before congestion backoff |
 | `DetectMult` | `REG_DWORD` | `3` | Advertised/local detection multiplier, 1–255; reflectors copy the request multiplier |
+| `MaxShutdownAnnounceMs` | `REG_DWORD` | `30000` | Maximum classical AdminDown announcement period at shutdown, in milliseconds, 1–60000; read at startup |
 
 Classical BFD intervals are **microseconds** before jitter:
 
@@ -96,6 +97,13 @@ Periodic transmit intervals are randomly reduced by 0–25%, or 10–25% when th
 For S-BFD, see [timing and live updates](seamless.md#change-timing-and-entity-availability).
 For multihop timeout backoff and expired peer RX limits, see
 [Classical session behavior](protocol.md#classical-session-behavior).
+
+`MaxShutdownAnnounceMs` limits the longer of the two negotiated Detection Times
+used for shutdown announcements. The default is 30 seconds. When that limit
+truncates a Detection Time, the service logs a warning: it cannot guarantee that
+the peer learns of the administrative stop before detecting a failure. This is
+an operational limit on the RFC announcement recommendation, not a change to
+the timers used while BFD runs. See [shutdown behavior](protocol.md#supported-modes-and-limits).
 
 ## Authentication
 

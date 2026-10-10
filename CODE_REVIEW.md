@@ -2,6 +2,43 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## Reliability follow-up — 2026-10-09
+
+The follow-up review identified two regressions and two older defects in the
+preceding changes. Shutdown now signals cancellation under the BGP mailbox lock,
+before the worker can dequeue its final action; interrupted final actions return
+an error instead of being reported as superseded. Pipe acceptance resets and
+retries when a client closes before acceptance. The broker's Stopped status is
+terminal, including for queued control handlers. Live S-BFD settings retain a
+retry obligation after rejected updates and read the latest values once per
+second until they apply; a second notification is not required.
+
+Operational limits were also added. `MaxShutdownAnnounceMs` defaults to 30000
+and accepts 1–60000 milliseconds. Truncating a negotiated Detection Time logs a
+warning and is an explicit deviation from the RFC announcement recommendation.
+The installer sets BFD's Windows preshutdown timeout to 125 seconds and preserves
+its previous value in the BSI3 rollback snapshot. A broker watchdog detects
+provider requests active for 20 seconds, including schema lookup and cleanup,
+while Running or stopping. Running timeouts exit without reporting Stopped so
+SCM crash recovery restarts the broker; requested stops remain final. Status
+reporting failures keep the worker under watchdog supervision until it ends.
+COM metadata is created once per class registration and shared through agile
+references, replacing the process-wide metadata quota.
+
+Regression coverage includes cancellation publication and final-action errors,
+native reconnect after a disconnect before acceptance, terminal broker status,
+live settings retry after Poll completion, active-provider timeout detection,
+bounded native UDP shutdown with a warning, and metadata reuse across an MTA and
+an STA. Installation tests check the preshutdown setting; rollback tests check
+restoration of the previous default.
+
+Validation: all 193 default tests pass in the release and AddressSanitizer
+profiles; the ignored read-only native MI schema test also passes. Formatting,
+release Clippy, version stamping, protected ACL validation, and MSI compilation
+and table checks pass. Live RRAS mutations, SCM recovery during a real provider
+stall, and MSI installation/rollback remain Windows Server or CI integration
+checks; the local review did not install or reconfigure services.
+
 ## Reliability and security review — 2026-10-09
 
 Reviewed the whole codebase for crashes, stalls, races, and Rust/Windows security

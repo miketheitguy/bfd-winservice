@@ -120,10 +120,11 @@ authentication does not establish administrator privileges.
 The factory and dispatch objects own only a read-only state observer. State
 queries read this shared atomic value, accept no arguments, and reject property
 writes. They have no engine, logging, file, registry, or BGP management handles.
-Automation metadata is built in memory and is never saved to disk. Each
-`GetTypeInfo` request builds it again; the process builds at most 64 per second
-and otherwise returns `RPC_E_SERVERCALL_RETRYLATER` (`0x8001010A`), so a caller
-looping on metadata requests cannot consume the packet engine's processor time.
+Automation metadata is built once in memory when the class is registered and
+is never saved to disk. All objects of that class share the cached description.
+An [agile reference](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-rogetagilereference)
+resolves the COM pointer in each calling apartment. Repeated metadata requests
+do not rebuild the type library or exhaust a quota shared by other clients.
 
 The current methods perform no file or registry access on a caller's behalf.
 If you add such a method, apply these requirements:

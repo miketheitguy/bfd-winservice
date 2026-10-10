@@ -214,8 +214,10 @@ the reflector's `SbfdAdminDown` are reloaded when a registry change notification
 reports a write to the Parameters key; if notification is unavailable, they are
 read once per second. Valid changes apply without restarting or resetting the
 session. Invalid values and timer changes that overlap a transmitted Poll leave
-the preceding settings active and produce a text diagnostic. The next change to
-the key retries the requested values.
+the preceding settings active and produce a text diagnostic. Rejected updates
+are retried once per second until they apply, including after a Poll completes;
+another registry write is not required. Each retry reads the latest requested
+values, and repeated rejection diagnostics are limited to once per minute.
 Other registry settings are read
 at startup.
 

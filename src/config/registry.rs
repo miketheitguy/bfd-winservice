@@ -234,6 +234,9 @@ impl Registry {
             options.log_file_path = path.into();
         }
         options.log_to_file = self.boolean("LogToFile")?;
+        options.max_shutdown_announce_ms = self
+            .dword("MaxShutdownAnnounceMs")?
+            .unwrap_or(options.max_shutdown_announce_ms);
         options.bgp_peer_name = self.string("BgpPeerName")?;
         options.bgp_routing_domain = self.string("BgpRoutingDomain")?;
         options.verbose = self.boolean("Verbose")?;
@@ -671,6 +674,30 @@ mod tests {
             let options = fixture.load(false).unwrap();
             assert!(options.log_to_file);
             assert_eq!(options.log_file_path.to_str(), Some(DEFAULT_LOG_FILE_PATH));
+        }
+
+        #[test]
+        fn native_registry_reads_and_validates_shutdown_announcement_limit() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.dword("Multihop", 1);
+            assert_eq!(
+                fixture.load(false).unwrap().max_shutdown_announce_ms,
+                30_000
+            );
+            for value in [1, 60_000] {
+                fixture.dword("MaxShutdownAnnounceMs", value);
+                let mut options = fixture.load(false).unwrap();
+                assert_eq!(options.max_shutdown_announce_ms, value);
+                options.validate().unwrap();
+            }
+            for value in [0, 60_001, u32::MAX] {
+                fixture.dword("MaxShutdownAnnounceMs", value);
+                assert_eq!(
+                    fixture.load(false).unwrap().validate().err().unwrap(),
+                    crate::error::ConfigError::ShutdownAnnouncementLimit
+                );
+            }
         }
 
         #[test]
