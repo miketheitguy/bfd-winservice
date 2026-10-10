@@ -118,13 +118,24 @@ fn assert_executable(executable: &std::path::Path) {
         .to_string_lossy()
         .replace('-', "_")
         + ".pdb";
-    let pdb = fs::read(executable.with_file_name(pdb_name))
-        .expect("full debug symbols must be generated alongside the executable");
-    assert_eq!(
-        &pdb[..32],
-        b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0",
-        "PDB container"
-    );
+    let pdb_path = executable.with_file_name(pdb_name);
+    // The repository's development and ASan profiles enable debug assertions
+    // and PDBs; the release profile disables both.
+    if cfg!(debug_assertions) {
+        let pdb = fs::read(pdb_path)
+            .expect("full debug symbols must be generated alongside development executables");
+        assert_eq!(
+            &pdb[..32],
+            b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0",
+            "PDB container"
+        );
+    } else {
+        assert!(!pdb_path.exists(), "release builds must not generate PDBs");
+        assert!(
+            (0..debug_size / 28).all(|index| dword(&image, debug + index * 28 + 12) != 2),
+            "release executables must not reference CodeView debug symbols"
+        );
+    }
 }
 
 fn word(image: &[u8], offset: usize) -> u16 {

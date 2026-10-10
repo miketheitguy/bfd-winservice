@@ -56,8 +56,9 @@ Debug and release builds use these protections:
 | Control-flow Enforcement Technology (CET) shadow-stack compatibility | `/CETCOMPAT` |
 | Integer overflow detection | `overflow-checks = true` |
 | Immediate termination on panic | `panic = "abort"` in the release profile |
-| Full debug information | `debug = 2`; release symbols aren't stripped |
-| SHA-256 source checksums in debug information | `-Z src-hash-algorithm=sha256` |
+| Full debug information for development and ASan | `debug = 2` in the development profile; ASan inherits it |
+| Release builds without debug information or symbols | `debug = 0`, `strip = "symbols"`, and release-only `/DEBUG:NONE` |
+| SHA-256 source checksums when debug information is enabled | `-Z src-hash-algorithm=sha256` |
 
 The `dev` and `release` profiles in [Cargo.toml](Cargo.toml) set overflow checks,
 debug information, and the release panic strategy. Target-specific `rustflags`
@@ -74,6 +75,11 @@ inserts stack cookies and checks them when functions return.
 is an MSVC C/C++ compiler option, so Rust uses its compiler's stack protector
 instead. The stack protector and EH continuation compiler options require
 nightly Rust.
+
+The release-only `rustflags` profile in `.cargo/config.toml` adds `/DEBUG:NONE`
+to suppress MSVC PDB generation. It uses Cargo's nightly
+[`profile-rustflags` feature](https://doc.rust-lang.org/cargo/reference/unstable.html#profile-rustflags)
+alongside the target hardening flags. Development and ASan retain debug output.
 
 The [EH continuation metadata](https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-eh-continuation-metadata?view=msvc-170)
 lists valid exception continuation targets for Windows instruction-pointer
@@ -122,7 +128,8 @@ Confirm that the output includes:
 - `EH Continuation table present`. A nonzero count must have a table address;
   an empty enabled table is valid when the image has no continuation targets.
 - `CET compatible` in the extended DLL characteristics.
-- A `bfd_winservice.pdb` file beside the executable.
+- A `bfd_winservice.pdb` file beside the executable for development builds.
+  Release builds do not generate PDBs for either service.
 
 The cookie address confirms the image's stack-cookie support. The required
 compiler setting supplies the Rust function instrumentation; the address alone
@@ -174,7 +181,7 @@ settings to this build:
 | `/sdl` | C/C++ only. Rust uses compile-time initialization and ownership checks, denied unsafe operations outside the FFI boundaries, stack protection, and strict Clippy checks. These aren't identical to MSVC SDL analysis. |
 | `/analyze` | C/C++ only. Run strict Clippy and Miri for Rust static and dynamic checks. |
 | `/ZH:SHA_256` | Rust uses SHA-256 source checksums. `/ZH:SHA_SHA256` isn't a valid MSVC spelling. |
-| `/Zi` | Rust full debug information and the generated PDB. |
+| `/Zi` | Rust full debug information and the generated PDB in development and ASan builds. Release builds disable symbols. |
 
 See Microsoft's
 [`/sdl` reference](https://learn.microsoft.com/en-us/cpp/build/reference/sdl-enable-additional-security-checks?view=msvc-170),
@@ -190,9 +197,10 @@ A crate-wide `unsafe_code = "forbid"` would reject those required FFI calls.
 Unsafe operations still need explicit blocks and safety explanations.
 
 Unit and integration test fixtures allow `unwrap()` so invalid setup fails
-immediately. Production code retains the denied lint. Full PDBs support
-debugging and source matching; retain the executable and PDB from the same
-build in your symbol archive. Source checksums aren't a binary signature.
+immediately. Production code retains the denied lint. Development and ASan
+PDBs support debugging and source matching. Release builds omit symbols, so
+release crash dumps do not have matching PDBs for source-level debugging.
+Source checksums aren't a binary signature.
 
 ### Run AddressSanitizer checks
 
@@ -415,11 +423,9 @@ Output files appear in `target\installer`:
 | --- | --- |
 | `BfdWinService-VERSION-x64.msi` | Installer with embedded payload cabinet |
 | `BfdWinService-VERSION-x64.msi.sha256` | SHA-256 checksum of that MSI |
-| `BfdWinService-VERSION-x64.wixpdb` | WiX symbols for package diagnostics |
 
-`VERSION` is the build's package version, such as `1.2.0`. The Rust PDB remains
-beside the executable in the release folder; retain it with that build.
-The broker's matching `bfd_bgp_broker.pdb` is generated and published too.
+`VERSION` is the build's package version, such as `1.2.0`. Release builds
+disable Rust PDBs for both services and WiX symbols with `-pdbtype none`.
 Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
 
@@ -512,7 +518,7 @@ the x64 package's elevation requirement, service, payload, registry defaults,
 firewall rules, and manifest lifecycle.
 
 After a successful tag build, download the `BfdWinService-x64-COMMIT_SHA`
-artifact. It contains the MSI, its checksum, WiX symbols, and both matching Rust PDBs.
+artifact. It contains the MSI and its checksum.
 `COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
 including when a test fails.
 
@@ -521,7 +527,7 @@ including when a test fails.
 Pushing a version tag or manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the build, hardening, and installation checks pass. The release attaches the MSI,
-its SHA-256 checksum, WiX symbols, and both matching Rust PDBs, with generated release
+its SHA-256 checksum, with generated release
 notes. The release title includes the version tag, such as
 `BFD Windows Service v1.2.0`.
 

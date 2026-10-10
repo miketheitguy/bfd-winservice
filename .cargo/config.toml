@@ -1,6 +1,11 @@
 [build]
 target = "x86_64-pc-windows-msvc"
 
+# MSVC can generate PDBs even with debug = 0 and stripping enabled.
+# Suppress linker debug output only in release builds; retain development/ASan PDBs.
+[profile.release]
+rustflags = ["-C", "link-arg=/DEBUG:NONE"]
+
 # Target flags apply to the service, Rust dependencies, and rebuilt standard
 # library. The explicit build target keeps host build scripts and proc macros
 # on their default compiler and linker settings.
@@ -39,3 +44,4 @@ asan = [
 # cargo asan, sanitizer instrumentation. Requires nightly Cargo and rust-src.
 [unstable]
 build-std = ["std", "panic_unwind"]
+profile-rustflags = true

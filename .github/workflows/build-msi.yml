@@ -108,7 +108,7 @@ jobs:
           if ($msi.Count -ne 1) { throw 'Expected one MSI artifact.' }
           ./scripts/Test-MsiRollback.ps1 -Path $msi[0].FullName
           ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
-      - name: Upload MSI and matching symbols
+      - name: Upload MSI and checksum
         if: github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -118,9 +118,6 @@ jobs:
           path: |
             target/installer/*.msi
             target/installer/*.msi.sha256
-            target/installer/*.wixpdb
-            target/x86_64-pc-windows-msvc/release/bfd_winservice.pdb
-            target/x86_64-pc-windows-msvc/release/bfd_bgp_broker.pdb
       - name: Upload installer test logs
         if: always() && github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -141,7 +138,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - name: Download validated MSI and matching symbols
+      - name: Download validated MSI and checksum
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: BfdWinService-x64-${{ github.sha }}
@@ -160,13 +157,10 @@ jobs:
           }
           $version = $env:RELEASE_VERSION
           if ($tag -cne "v$version") { throw 'Release tag does not match the validated package version.' }
-          $msi = "release-assets/installer/BfdWinService-$version-x64.msi"
+          $msi = "release-assets/BfdWinService-$version-x64.msi"
           $assets = @(
             $msi,
-            "$msi.sha256",
-            "release-assets/installer/BfdWinService-$version-x64.wixpdb",
-            'release-assets/x86_64-pc-windows-msvc/release/bfd_winservice.pdb',
-            'release-assets/x86_64-pc-windows-msvc/release/bfd_bgp_broker.pdb'
+            "$msi.sha256"
           )
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {

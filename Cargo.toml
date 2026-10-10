@@ -30,8 +30,8 @@ overflow-checks = true
 
 [profile.release]
 opt-level = 3
-debug = 2
-strip = "none"
+debug = 0
+strip = "symbols"
 overflow-checks = true
 panic = "abort"
 

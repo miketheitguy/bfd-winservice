@@ -54,7 +54,7 @@ try {
     $outputDirectory = Join-Path $repositoryRoot 'target\installer'
     New-Item -ItemType Directory -Path $outputDirectory -Force
     $msi = Join-Path $outputDirectory "BfdWinService-$version-x64.msi"
-    & dotnet tool run wix -- build installer/Package.wxs -arch x64 `
+    & dotnet tool run wix -- build installer/Package.wxs -arch x64 -pdbtype none `
         @eulaArguments `
         -d "RepositoryRoot=$repositoryRoot" -d "ProductVersion=$version" `
         -ext "WixToolset.Util.wixext/$($toolManifest.tools.wix.version)" `
