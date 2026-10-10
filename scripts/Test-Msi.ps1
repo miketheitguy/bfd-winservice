@@ -80,7 +80,7 @@ try {
     Assert-Package ([string]::IsNullOrEmpty($service.Arguments)) 'Service command line must have no console or configuration arguments.'
     Assert-Package ($service.Dependencies -ceq 'RpcSs[~]BfdBgpBroker[~][~]') 'BFD must depend on RpcSs and the broker.'
     $broker = @($services | Where-Object Name -EQ 'BfdBgpBroker')[0]
-    Assert-Package ($broker.Type -eq '16' -and $broker.Start -eq '3' -and $broker.Account -eq 'LocalSystem' -and $broker.Dependencies -ceq 'RpcSs[~][~]' -and [string]::IsNullOrEmpty($broker.Arguments)) 'Expected a demand-start, own-process LocalSystem BGP broker.'
+    Assert-Package ($broker.Type -eq '16' -and $broker.Start -eq '2' -and $broker.Account -eq 'LocalSystem' -and $broker.Dependencies -ceq 'RpcSs[~][~]' -and [string]::IsNullOrEmpty($broker.Arguments)) 'Expected an Automatic, own-process LocalSystem BGP broker.'
     $controls = @(Get-MsiRows 'SELECT `Event`, `Wait` FROM `ServiceControl`' @('Event','Wait'))
     Assert-Package ($controls.Count -eq 2 -and @($controls | Where-Object { $_.Event -ne '162' -or $_.Wait -ne '1' }).Count -eq 0) 'Both services must stop on install/removal, uninstall cleanly, and await cleanup.'
     $files = @(Get-MsiRows 'SELECT `File`, `FileName`, `Component_`, `Version` FROM `File`' @('Id','Name','Component','Version'))
@@ -142,9 +142,13 @@ try {
     }
     $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($bytes, 0)
     Assert-Package ($descriptor.DiscretionaryAcl.Count -eq 3) 'COM launch ACL must contain exactly three grants.'
-    $expectedSids = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-11')
+    # Execute, local launch, and local activation (11) for SYSTEM and administrators;
+    # execute and local activation only (9) for authenticated users, so they cannot
+    # start a service that an administrator stopped.
+    $expectedMasks = @{ 'S-1-5-18' = 11; 'S-1-5-32-544' = 11; 'S-1-5-11' = 9 }
     foreach ($ace in $descriptor.DiscretionaryAcl) {
-        Assert-Package ($ace.AceType -eq 'AccessAllowed' -and $ace.AccessMask -eq 11 -and $ace.SecurityIdentifier.Value -in $expectedSids) 'COM activation must allow only local launch/activation for SYSTEM, administrators, and authenticated users.'
+        $sid = $ace.SecurityIdentifier.Value
+        Assert-Package ($ace.AceType -eq 'AccessAllowed' -and $expectedMasks.ContainsKey($sid) -and $ace.AccessMask -eq $expectedMasks[$sid]) 'COM launch must be limited to SYSTEM and administrators; authenticated users may only activate locally.'
     }
     $permissions = @(Get-MsiRows 'SELECT `LockObject`, `Table`, `SDDLText`, `Condition` FROM `MsiLockPermissionsEx`' @('Object','Table','Sddl','Condition'))
     Assert-Package ($permissions.Count -eq 13) 'Expected explicit permissions for both folders, four files, six COM keys, and service parameters.'
@@ -206,7 +210,11 @@ try {
     }
     $actions = @(Get-MsiRows 'SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction`' @('Name','Type','Source','Target'))
     $recovery = @(Get-MsiRows 'SELECT `ServiceName`, `Component_`, `NewService`, `FirstFailureActionType`, `SecondFailureActionType`, `ThirdFailureActionType`, `ResetPeriodInDays`, `RestartServiceDelayInSeconds` FROM `Wix4ServiceConfig`' @('Service','Component','New','First','Second','Third','ResetDays','DelaySeconds'))
-    Assert-Package ($recovery.Count -eq 1 -and $recovery[0].Service -eq 'BfdBgpBroker' -and $recovery[0].Component -eq 'BrokerComponent' -and $recovery[0].New -eq '1' -and $recovery[0].First -eq 'restart' -and $recovery[0].Second -eq 'restart' -and $recovery[0].Third -eq 'restart' -and $recovery[0].ResetDays -eq '1' -and $recovery[0].DelaySeconds -eq '5') 'The broker must restart after a crash with a five-second delay.'
+    Assert-Package ($recovery.Count -eq 2) 'Expected recovery actions for both services.'
+    foreach ($expected in @(@('BfdBgpBroker','BrokerComponent','5'), @('BfdWinService','ServiceComponent','10'))) {
+        $rows = @($recovery | Where-Object Service -EQ $expected[0])
+        Assert-Package ($rows.Count -eq 1 -and $rows[0].Component -eq $expected[1] -and $rows[0].New -eq '1' -and $rows[0].First -eq 'restart' -and $rows[0].Second -eq 'restart' -and $rows[0].Third -eq 'restart' -and $rows[0].ResetDays -eq '1' -and $rows[0].DelaySeconds -eq $expected[2]) "$($expected[0]) must restart after a failure with a $($expected[2])-second delay."
+    }
     $policyActions = @{
         PrepareServicePolicy=@(3090,'--prepare-install')
         ConfigureServicePolicy=@(3090,'--configure-install')

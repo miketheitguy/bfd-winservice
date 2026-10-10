@@ -2,6 +2,66 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## Reliability and security review — 2026-10-09
+
+Reviewed the whole codebase for crashes, stalls, races, and Rust/Windows security
+issues. No memory-safety defect or remotely reachable panic was found: packet,
+ancillary-data, and authentication parsing stay in bounds under `panic = "abort"`
+and `overflow-checks = true`. These findings were fixed:
+
+| Finding | Correction |
+| --- | --- |
+| The COM launch ACL let any authenticated user start a stopped service, restarting BFD and then BGP after an administrator's Stop. | Authenticated users keep local activation (`0x9`) but lose launch; SYSTEM and administrators keep `0xb`. |
+| Any receive or wait error other than WouldBlock or `WSAEMSGSIZE` ended the engine, stopping BGP, and BFD had no SCM recovery. | Network-condition Winsock errors pause socket use with a 10–250 ms backoff while timers continue. BFD restarts 10 seconds after a crash or unrequested failure exit; requested stops report exit code 0, so recovery never undoes a Stop. Both services use Automatic (Delayed Start). |
+| Shutdown could take minutes, and StopPending checkpoints advanced indefinitely, hiding hangs. | Closing cancels a superseded in-flight call; each call of the final BGP action has a 20-second budget. BFD ends its process 60 seconds plus its AdminDown announcement period after Stop; the broker after 60 seconds. BFD accepts preshutdown, so its final BGP action reaches the broker before the shutdown phase. |
+| Final events were written after SERVICE_STOPPED, when the process can end. | Both services flush logs before reporting Stopped; the broker creates its logger first. |
+| BFD required the broker even without BGP, and a squatted pipe name stopped the broker. | BFD probes the broker only with `BgpPeerName`; the broker stays Running and retries the name each second. |
+| Congestion backoff grew to about 71 minutes. | Backoff stops at 30 seconds, or a slower negotiated base. |
+| Weak authentication settings were silent; peer events were unbounded; the file log never rotated; the reflector replied without limit. | Warning event 4 reports weak settings; session events are limited to 32 per second; the file rotates at 64 MiB to one backup; the reflector replies at most 1,000 times per second per source. |
+| MI function-table entries were transmuted from `isize` to non-null function pointers. | `entry` rejects zero entries before conversion, so a missing entry is an error rather than undefined behavior. |
+| The LocalService process kept SeImpersonatePrivilege; the broker shared the BFD COM access list; `GetTypeInfo` rebuilt metadata without bound. | Both run modes remove all but two privileges at startup; the broker admits only SYSTEM, administrators, and services; metadata builds are limited to 64 per second. |
+| Startup checkpoints never advanced; a probe/worker pipe race logged a spurious failure; S-BFD settings were read every second. | Startup advances checkpoints; clients wait briefly for a busy pipe instance; a registry change notification triggers reloads, with polling as a fallback. |
+| `AuthKeyHex` accepted `+` signs; key copies were never cleared; the nightly toolchain floated. | Hex digits are checked; key buffers are wiped with volatile writes; `rust-toolchain.toml` pins `nightly-2026-10-01`; CI runs `cargo audit`. |
+
+The `Restricted` service SID type was evaluated but not adopted: without a
+runtime check of COM registration and ETW under a write-restricted token, it
+could not be validated.
+
+Follow-up policy change: stopping BFD no longer stops BGP. Local AdminDown, set
+only at service stop, maps to no BGP action. A Down caused by the peer's AdminDown
+also leaves BGP unchanged, per RFC 5882 section 3.2, so stopping BFD at either end
+keeps the BGP session. The broker no longer stops a peer when its client
+disconnects or when it shuts down, so a BFD stop, failure, or crash leaves BGP on
+its own hold timer.
+
+Second follow-up, closing the RFC 5882 gaps: section 4.1 requires adjacencies to
+be allowed while BFD is administratively disabled at either end, so local
+AdminDown at service stop, or a peer's AdminDown, withdraws a Stop that BFD
+issued by starting the peer; peers that BFD never stopped are untouched, and the
+queued final action now runs at shutdown. Section 8 and RFC 5880 section 6.8.16
+call for AdminDown to be asserted for at least one Detection Time, so the former
+five-second cap is removed: the period is the longer Detection Time in either
+direction, and the BFD stop budget extends by that period. After both follow-ups, all 186 tests pass in debug, `cargo test-release`, and `cargo asan`.
+
+Validation on the pinned toolchain: `cargo fmt --check`; Clippy with
+`-D warnings` for all targets in the dev profile and in CI's release
+configuration; and all 182 tests in debug, `cargo test-release`, and `cargo asan`
+with no sanitizer report. The ignored native MI test also passed under the
+broker's narrower COM policy. New tests cover transient-error classification,
+retry backoff and Stop-only pauses, notification wakeups, the event and reply
+limits, file rotation, registry change notification, IPC cancellation and busy
+pipes, privilege removal in a child process, the 30-second backoff ceiling,
+exit-code policy, startup checkpoints, `GetTypeInfo` limits, checked MI entries,
+the BSI2 rollback snapshot, and hex-key parsing. The cross-process PowerShell COM
+test now hosts its server after removing privileges, as the service does.
+
+Not validated locally: building the MSI requires accepting the WiX OSMF EULA, so
+`Test-Msi.ps1` table checks (launch ACL, recovery rows, broker start type) were
+not run; their PowerShell syntax and the WiX XML were checked. The installation
+and rollback scripts, now covering delayed start and recovery flags, run only on
+GitHub-hosted runners. Transient Winsock faults have unit coverage but no fault
+injection in the native UDP tests.
+
 ## MSI packaging review — 2026-10-08
 
 Added the [Build Windows MSI workflow](.github/workflows/build-msi.yml),

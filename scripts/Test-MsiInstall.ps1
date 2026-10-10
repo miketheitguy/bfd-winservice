@@ -89,10 +89,16 @@ function Assert-ServicePolicy {
     $service = Get-CimInstance Win32_Service -Filter "Name='BfdWinService'"
     $broker = Get-CimInstance Win32_Service -Filter "Name='BfdBgpBroker'"
     Assert-Installed ($service.StartName -eq 'NT AUTHORITY\LocalService' -and $service.PathName -eq ('"' + $executable + '"')) 'BFD must use LocalService and the quoted installed executable.'
-    Assert-Installed ($broker.StartName -eq 'LocalSystem' -and $broker.StartMode -eq 'Manual' -and $broker.PathName -eq ('"' + (Join-Path $installDirectory 'bfd-bgp-broker.exe') + '"')) 'The broker must use LocalSystem, demand startup, and its own executable.'
+    Assert-Installed ($broker.StartName -eq 'LocalSystem' -and $broker.StartMode -eq 'Auto' -and $broker.PathName -eq ('"' + (Join-Path $installDirectory 'bfd-bgp-broker.exe') + '"')) 'The broker must use LocalSystem, automatic startup, and its own executable.'
+    foreach ($installed in @($service, $broker)) {
+        Assert-Installed ($installed.DelayedAutoStart -eq $true) "Expected Automatic (Delayed Start): $($installed.Name)"
+    }
     foreach ($name in @('BfdWinService','BfdBgpBroker')) {
         $key = Get-Item -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$name"
         Assert-Installed ($key.GetValueKind('ServiceSidType') -eq 'DWord' -and $key.GetValue('ServiceSidType') -eq 1) "Missing enabled service SID: $name"
+        # Only BFD recovers from a nonzero exit; its requested stops always exit with 0.
+        $nonCrash = [int]($name -eq 'BfdWinService')
+        Assert-Installed ($key.GetValue('FailureActionsOnNonCrashFailures', 0) -eq $nonCrash) "Unexpected non-crash recovery setting: $name"
         Assert-Installed ('RpcSs' -in @((Get-Service $name).ServicesDependedOn.Name)) "Missing RpcSs dependency: $name"
     }
     Assert-Installed ('BfdBgpBroker' -in @((Get-Service BfdWinService).ServicesDependedOn.Name)) 'BFD must depend on the broker.'
@@ -237,7 +243,8 @@ try {
     Assert-ServicePolicy
     $settings = Get-ItemProperty -Path $parameters
     Assert-Installed ($settings.Multihop -eq 1 -and $settings.LogToFile -eq 1 -and $settings.LogFilePath -eq $customLog) 'Repair reset administrator settings.'
-    # Activate the stopped service through COM after repair, exercising LocalService.
+    # As an administrator, activate the stopped service through COM after repair,
+    # exercising LocalService. Standard users have activation but not launch rights.
     $session = New-Object -ComObject BfdWinService.SessionState
     try {
         Assert-Installed ($session.GetState() -eq 1 -and $session.StateName -ceq 'Down') 'COM activation failed after repair.'

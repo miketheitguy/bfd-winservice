@@ -22,9 +22,10 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc,
+        mpsc, Mutex, PoisonError,
     },
     thread,
+    time::{Duration, Instant},
 };
 use windows::{
     core::{implement, w, Error, IUnknown, Interface, Ref, Result, BOOL, GUID, PCWSTR},
@@ -33,7 +34,7 @@ use windows::{
             LocalFree, CLASS_E_NOAGGREGATION, CO_E_OBJNOTCONNECTED, DISP_E_BADINDEX,
             DISP_E_BADPARAMCOUNT, DISP_E_MEMBERNOTFOUND, DISP_E_NONAMEDARGS,
             DISP_E_UNKNOWNINTERFACE, DISP_E_UNKNOWNNAME, E_INVALIDARG, E_POINTER, HLOCAL,
-            RPC_E_TOO_LATE,
+            RPC_E_SERVERCALL_RETRYLATER, RPC_E_TOO_LATE,
         },
         Security::{
             Authorization::{
@@ -73,6 +74,55 @@ const UNKNOWN_ID: i32 = -1;
 static SECURITY_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 // Distinguishes this in-memory type description in Automation clients' caches.
 const SESSION_STATE_TYPE_ID: GUID = GUID::from_u128(0xf8efee55_bd2b_42f3_ad46_f97a4e0b62e3);
+/// Process-wide COM access policy, selected by the hosting service.
+#[derive(Clone, Copy)]
+enum Access {
+    /// Authenticated local users may query the BFD state server.
+    StateServer,
+    /// A host without a class factory admits only SYSTEM, administrators, and
+    /// service accounts, which covers any provider callback but no interactive user.
+    PrivateHost,
+}
+
+impl Access {
+    /// COM execute + execute-local only (0x3): no remote or anonymous access.
+    fn sddl(self) -> PCWSTR {
+        match self {
+            Self::StateServer => w!("O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)(A;;0x3;;;AU)"),
+            Self::PrivateHost => w!("O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)(A;;0x3;;;SU)"),
+        }
+    }
+}
+/// Type descriptions built per second, process-wide. Clients request one per
+/// object, so this only bounds callers that request them in a loop.
+const TYPE_INFO_PER_SECOND: u32 = 64;
+static TYPE_INFO_BUDGET: Mutex<TypeInfoBudget> = Mutex::new(TypeInfoBudget {
+    window: None,
+    built: 0,
+});
+
+struct TypeInfoBudget {
+    window: Option<Instant>,
+    built: u32,
+}
+
+impl TypeInfoBudget {
+    fn admit(&mut self, now: Instant) -> bool {
+        if self
+            .window
+            .is_none_or(|start| now.duration_since(start) >= Duration::from_secs(1))
+        {
+            self.window = Some(now);
+            self.built = 0;
+        }
+        if self.built < TYPE_INFO_PER_SECOND {
+            self.built += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 /// Controls a dedicated MTA thread that owns COM initialization and registration.
 /// Initialization completes process security before returning to the caller.
@@ -99,12 +149,25 @@ impl ComServer {
     /// Returns thread creation, COM initialization, or security errors. Security
     /// already initialized elsewhere is an error; system defaults are never accepted.
     pub fn initialize() -> io::Result<Self> {
+        Self::initialize_with(Access::StateServer)
+    }
+
+    /// Initializes COM for a process that registers no class, such as the BGP
+    /// broker. Incoming calls are limited to SYSTEM, administrators, and services.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`ComServer::initialize`].
+    pub fn initialize_private() -> io::Result<Self> {
+        Self::initialize_with(Access::PrivateHost)
+    }
+
+    fn initialize_with(access: Access) -> io::Result<Self> {
         let (commands, receiver) = mpsc::channel();
         let (ready, initialized) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("bfd-com".into())
             .spawn(move || {
-                let mut apartment = match ComApartment::initialize() {
+                let mut apartment = match ComApartment::initialize(access) {
                     Ok(apartment) => apartment,
                     Err(error) => {
                         let _ = ready.send(Err(com_error("initialize COM security", error)));
@@ -205,14 +268,14 @@ struct ComApartment {
 }
 
 impl ComApartment {
-    fn initialize() -> Result<Self> {
+    fn initialize(access: Access) -> Result<Self> {
         // SAFETY: no reserved data is passed; this thread owns the matching teardown.
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok()?;
         let server = Self {
             cookie: None,
             _thread_bound: PhantomData,
         };
-        initialize_security()?;
+        initialize_security(access)?;
         Ok(server)
     }
 
@@ -245,7 +308,7 @@ impl Drop for ComApartment {
 
 // COM requires an absolute descriptor. Borrow its SID/ACL fields from the
 // self-relative SDDL allocation, keeping that allocation alive through initialization.
-fn initialize_security() -> Result<()> {
+fn initialize_security(access: Access) -> Result<()> {
     // One attempt per process, including failed attempts. No later host can retry
     // or accept different defaults. The startup channel publishes successful
     // initialization; this flag protects only the right to attempt it.
@@ -253,11 +316,10 @@ fn initialize_security() -> Result<()> {
         return Err(RPC_E_TOO_LATE.into());
     }
     let mut relative = PSECURITY_DESCRIPTOR::default();
-    // COM execute + execute-local only (0x3): no remote or anonymous access.
     // SAFETY: the SDDL is static and terminated; the output pointer is valid.
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            w!("O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)(A;;0x3;;;AU)"),
+            access.sddl(),
             SDDL_REVISION_1,
             &mut relative,
             None,
@@ -369,6 +431,14 @@ impl IDispatch_Impl for SessionDispatch_Impl {
     fn GetTypeInfo(&self, index: u32, _locale: u32) -> Result<ITypeInfo> {
         if index != 0 {
             return Err(DISP_E_BADINDEX.into());
+        }
+        // Each request builds an in-memory type library; bound callers that loop.
+        if !TYPE_INFO_BUDGET
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .admit(Instant::now())
+        {
+            return Err(RPC_E_SERVERCALL_RETRYLATER.into());
         }
         create_type_info()
     }
@@ -768,6 +838,69 @@ mod tests {
     }
 
     #[test]
+    fn type_descriptions_are_available_but_bounded_per_second() {
+        let publisher = StatePublisher::new(State::Down);
+        let dispatch: IDispatch = SessionDispatch {
+            state: publisher.observer(),
+        }
+        .into();
+        // SAFETY: a valid generated dispatch object; the result owns its reference.
+        let info = unsafe { dispatch.GetTypeInfo(0, 0) }.unwrap();
+        // SAFETY: the type description was laid out with three members.
+        let attributes = unsafe { info.GetTypeAttr() }.unwrap();
+        // SAFETY: attributes came from this type information and are released once.
+        unsafe {
+            assert_eq!((*attributes).cFuncs, 3);
+            info.ReleaseTypeAttr(attributes);
+        }
+        // SAFETY: requesting an unsupported index is a supported dispatch operation.
+        let error = unsafe { dispatch.GetTypeInfo(1, 0) }.unwrap_err();
+        assert_eq!(error.code(), DISP_E_BADINDEX);
+
+        let now = Instant::now();
+        let mut budget = TypeInfoBudget {
+            window: None,
+            built: 0,
+        };
+        for _ in 0..TYPE_INFO_PER_SECOND {
+            assert!(budget.admit(now));
+        }
+        assert!(!budget.admit(now + Duration::from_millis(999)));
+        assert!(budget.admit(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn private_host_initializes_security_once_without_registering_a_class() {
+        const HOST: &str = "BFD_TEST_COM_PRIVATE_HOST";
+        if std::env::var_os(HOST).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "com::tests::private_host_initializes_security_once_without_registering_a_class",
+                    "--nocapture",
+                ])
+                .env(HOST, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let server = ComServer::initialize_private().unwrap();
+        // Process security has been claimed; neither policy can be applied again.
+        assert!(ComServer::initialize()
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("0x80010119"));
+        server.shutdown().unwrap();
+    }
+
+    #[test]
     fn dedicated_host_rejects_preexisting_process_security() {
         const HOST: &str = "BFD_TEST_COM_EXISTING_SECURITY";
         if std::env::var_os(HOST).is_none() {
@@ -842,6 +975,9 @@ mod tests {
             }
             return;
         }
+        // Host exactly as the service does: without SeImpersonatePrivilege and the
+        // other privileges removed at startup.
+        crate::runtime::drop_privileges().unwrap();
         let mut server = ComServer::initialize().unwrap();
         let worker = server.worker.as_ref().unwrap().thread();
         assert_eq!(worker.name(), Some("bfd-com"));

@@ -47,6 +47,8 @@ try {
             }
             $key = Get-Item -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService'
             if ($key.GetValue('ServiceSidType', 0) -ne 0) { throw 'Rollback did not restore the previous service SID setting.' }
+            if ($key.GetValue('DelayedAutostart', 0) -ne 0) { throw 'Rollback did not restore the previous delayed-start setting.' }
+            if ($key.GetValue('FailureActionsOnNonCrashFailures', 0) -ne 0) { throw 'Rollback did not restore the previous non-crash recovery setting.' }
             & sc.exe delete BfdWinService | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Could not remove the migration fixture.' }
         } elseif ($null -ne $service) { throw 'Rollback left the newly installed BFD service.' }

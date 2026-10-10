@@ -24,6 +24,12 @@ character boundaries. When output resumes, the writer reports how many records
 were dropped to STDOUT or the enabled file log. This diagnostic does not produce
 an Operational event.
 
+File output is capped by size. When the file reaches 64 MiB, the writer renames
+it to `LogFilePath` with `.1` appended, replacing any earlier backup, and
+continues in a new file, so file logging uses at most about 128 MiB. If another
+process holds the file without delete sharing, the rename fails; writing
+continues and the rename is retried after another 4 MiB.
+
 File output uses an 8 KiB buffer to group writes. While output is responsive,
 the writer flushes pending bytes within 100 milliseconds, when the buffer
 fills, before replacing the output file, and on normal shutdown. Library
@@ -126,6 +132,7 @@ The following events identify execution, communication, and state changes:
 | 1 | Information | Engine initialized and SCM Running reported |
 | 2 | Information | Execution and cleanup ended; ExitCode 0 means success, 1 means failure |
 | 3 | Error | Configuration, initialization, or execution failed |
+| 4 | Warning | Weak but valid security configuration, a transient socket fault, or suppressed output (see [Service warnings](#service-warnings)) |
 | 100 | Information | Valid peer communication started or resumed |
 | 101 | Warning | No valid peer packet arrived within the detection interval |
 | 102 | Information | Local session or reflector entity entered Up |
@@ -156,6 +163,13 @@ events 110–113, even when the local state doesn't change. Repeated identical
 reports don't duplicate these events. Logging starts a fresh peer observation
 after communication expires or the peer discriminator changes. Rejected
 packets never update the recorded peer state or diagnostic.
+
+Events 100–104, 110–113, and 201–208 share a budget of 32 records per second,
+so a flapping peer or spoofed packets cannot flood the log. Records beyond the
+budget are suppressed, and Warning event 4 reports the suppressed count at most
+once a minute and at shutdown. Local AdminDown records (106 and 207) are always
+written. Suppression affects logging only; BFD state, the COM state, and BGP
+actions are unchanged.
 
 ### Diagnostic events
 
@@ -222,6 +236,23 @@ They remain stateless for peers and don't emit per-peer communication, state,
 or diagnostic events. A reflector's unused `PeerAddress` is the unspecified
 address for its IP family. Live-setting reload errors appear in text logs and
 leave the preceding settings active.
+
+### Service warnings
+
+Warning event 4 carries a text message. The service writes it in these cases:
+
+- At startup, for valid settings that let spoofed or replayed packets change
+  BFD state, and through it BGP: multihop without authentication or `MinTtl`;
+  `simple-password`, `keyed-md5`, or `keyed-sha1` on a classical session; an
+  S-BFD initiator without keyed authentication; or a reflector without
+  `AllowedPeers`.
+- When a transient network fault, such as an adapter reset, makes a socket
+  operation fail. The engine retries with a backoff of 10–250 milliseconds while
+  BFD timers continue, so an unusable path still expires the session. The warning
+  repeats at most once a minute; recovery is noted in the text log.
+- When session events or S-BFD replies are suppressed. A reflector answers at
+  most 1,000 requests per second from any one source address, which bounds the
+  traffic that spoofed requests can reflect toward a victim.
 
 ### Authentication events and provider identity
 

@@ -1,28 +1,51 @@
 //! Windows BFD packet/timer loop, logging, and optional background BGP control.
 use crate::{
     bgp::Controller,
-    config::{load_sbfd_settings, Options, SessionType, Timing, ValidatedOptions},
+    config::{load_sbfd_settings, Options, SessionType, SettingsWatch, Timing, ValidatedOptions},
     error::ConfigError,
     event_log::{Origin, SessionEvent},
     packet::{AuthConfig, Diagnostic, State},
     seamless::Reflector,
     session::{ReceiveError, Session, Transmission},
-    transport::{Datagram, Transport},
+    transport::{is_transient, Datagram, Transport},
 };
 use std::{
+    collections::HashMap,
     fmt::Write as _,
     io,
-    sync::mpsc::{Receiver, TryRecvError},
+    net::IpAddr,
+    os::windows::io::BorrowedHandle,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::{Receiver, TryRecvError},
+        Arc,
+    },
+    thread,
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetSystemTime};
 
 mod logging;
+mod privileges;
 pub(crate) mod state;
 pub use crate::transport::StopSignal;
 pub use logging::Logger;
+pub use privileges::drop_privileges;
 pub use state::StateObserver;
 use state::StatePublisher;
+
+/// Loops also wake at least once per second, independent of protocol timers.
+const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
+const FAULT_RETRY_MIN: Duration = Duration::from_millis(10);
+const FAULT_RETRY_MAX: Duration = Duration::from_millis(250);
+/// Warnings about sustained faults or suppression repeat at most this often.
+const REPORT_INTERVAL: Duration = Duration::from_secs(60);
+/// Session, peer, and diagnostic events written per second before suppression.
+const EVENTS_PER_SECOND: u32 = 32;
+/// S-BFD replies per second to any one source address, bounding reflection.
+const REPLIES_PER_SOURCE: u32 = 1000;
+/// Distinct sources tracked per second; further new sources wait for the next second.
+const TRACKED_SOURCES: usize = 4096;
 
 #[derive(Clone, Copy)]
 enum StopRequest<'a> {
@@ -38,10 +61,166 @@ impl StopRequest<'_> {
         }
     }
 
-    fn wait(self, transport: &Transport, timeout: Duration) -> io::Result<()> {
+    fn wait(
+        self,
+        transport: &Transport,
+        timeout: Duration,
+        notify: Option<BorrowedHandle<'_>>,
+    ) -> io::Result<()> {
         match self {
             Self::Channel(_) => transport.wait_readable(timeout.min(Duration::from_millis(10))),
-            Self::Event(signal) => transport.wait_stoppable(timeout, signal),
+            Self::Event(signal) => transport.wait_stoppable(timeout, signal, notify),
+        }
+    }
+
+    /// Sleeps without waking for socket events, pacing retries after socket faults.
+    fn pause(self, timeout: Duration) -> io::Result<()> {
+        match self {
+            Self::Channel(_) => {
+                thread::sleep(timeout.min(Duration::from_millis(10)));
+                Ok(())
+            }
+            Self::Event(signal) => signal.wait(timeout),
+        }
+    }
+}
+
+/// Paces retries after transient socket faults, such as an adapter reset, so a
+/// persistent fault neither ends the engine nor spins its thread. Protocol timers
+/// keep running, so detection still expires while the path is unusable.
+#[derive(Default)]
+struct SocketFaults {
+    count: u64,
+    delay: Duration,
+    last_report: Option<Instant>,
+}
+
+impl SocketFaults {
+    fn next_delay(&mut self) -> Duration {
+        let delay = self.delay.max(FAULT_RETRY_MIN);
+        self.delay = (delay * 2).min(FAULT_RETRY_MAX);
+        self.count = self.count.saturating_add(1);
+        delay
+    }
+
+    /// Records a fault and pauses until the retry delay or `limit`, whichever is sooner.
+    fn pause(
+        &mut self,
+        stop: StopRequest<'_>,
+        error: &io::Error,
+        limit: Duration,
+        log: &mut Logger,
+    ) -> io::Result<()> {
+        let delay = self.next_delay();
+        if due(&mut self.last_report, Instant::now(), REPORT_INTERVAL) {
+            log.service_warning(format_args!(
+                "transient BFD socket failure; retrying while protocol timers continue: {error}"
+            ));
+        }
+        stop.pause(delay.min(limit))
+    }
+
+    fn recovered(&mut self, log: &mut Logger) {
+        if self.count != 0 {
+            log.log(format_args!(
+                "BFD socket recovered after {} transient failures",
+                self.count
+            ));
+            *self = Self::default();
+        }
+    }
+}
+
+/// Bounds session event output when spoofed or flapping traffic changes reported
+/// state on every packet. Suppressed counts are reported at most once a minute.
+#[derive(Default)]
+struct EventBudget {
+    window: Option<Instant>,
+    used: u32,
+    suppressed: u64,
+    last_report: Option<Instant>,
+}
+
+impl EventBudget {
+    fn admit(&mut self, now: Instant) -> bool {
+        if self
+            .window
+            .is_none_or(|start| now.duration_since(start) >= Duration::from_secs(1))
+        {
+            self.window = Some(now);
+            self.used = 0;
+        }
+        if self.used < EVENTS_PER_SECOND {
+            self.used += 1;
+            true
+        } else {
+            self.suppressed = self.suppressed.saturating_add(1);
+            false
+        }
+    }
+
+    /// Takes the suppressed count when a report is due, or unconditionally when forced.
+    fn take_report(&mut self, now: Instant, force: bool) -> Option<u64> {
+        if self.suppressed == 0 || !force && !due(&mut self.last_report, now, REPORT_INTERVAL) {
+            return None;
+        }
+        self.last_report = Some(now);
+        Some(std::mem::take(&mut self.suppressed))
+    }
+}
+
+/// Limits S-BFD replies per source address and second. A spoofed request names
+/// its victim as the source, so a per-source limit bounds reflected traffic.
+#[derive(Default)]
+struct ReplyLimiter {
+    window: Option<Instant>,
+    replies: HashMap<IpAddr, u32>,
+    withheld: u64,
+}
+
+impl ReplyLimiter {
+    fn admit(&mut self, source: IpAddr, now: Instant) -> bool {
+        if self
+            .window
+            .is_none_or(|start| now.duration_since(start) >= Duration::from_secs(1))
+        {
+            self.window = Some(now);
+            self.replies.clear();
+        }
+        let tracked = self.replies.len();
+        let admitted = match self.replies.get_mut(&source) {
+            Some(count) if *count < REPLIES_PER_SOURCE => {
+                *count += 1;
+                true
+            }
+            None if tracked < TRACKED_SOURCES => {
+                self.replies.insert(source, 1);
+                true
+            }
+            _ => false,
+        };
+        if !admitted {
+            self.withheld = self.withheld.saturating_add(1);
+        }
+        admitted
+    }
+}
+
+/// How live S-BFD settings changes are detected.
+enum LiveSettings {
+    /// Classical or programmatic sessions have no live registry settings.
+    None,
+    /// A registry change notification signals the engine's wait.
+    Notify(SettingsWatch),
+    /// Notification is unavailable, so settings are read once per second.
+    Poll,
+}
+
+impl LiveSettings {
+    fn event(&self) -> Option<BorrowedHandle<'_>> {
+        match self {
+            Self::Notify(watch) => Some(watch.event()),
+            Self::None | Self::Poll => None,
         }
     }
 }
@@ -81,6 +260,26 @@ pub struct Engine {
     bgp: Option<Controller>,
     reflector: Option<Reflector>,
     last_peer_report: Option<(State, u8, u32)>,
+    live_settings: LiveSettings,
+    events: EventBudget,
+    shutdown_progress: ShutdownProgress,
+}
+
+/// Reports the AdminDown announcement period chosen when the engine stops, so a
+/// service supervisor can extend its stop budget to honor the full period.
+#[derive(Clone, Default)]
+pub struct ShutdownProgress(Arc<AtomicU64>);
+
+impl ShutdownProgress {
+    /// Returns the announcement period, or zero before shutdown begins.
+    pub fn announcement(&self) -> Duration {
+        Duration::from_millis(self.0.load(Ordering::Relaxed))
+    }
+
+    fn record(&self, period: Duration) {
+        let millis = u64::try_from(period.as_millis()).unwrap_or(u64::MAX);
+        self.0.store(millis, Ordering::Relaxed);
+    }
 }
 
 impl Engine {
@@ -134,6 +333,24 @@ impl Engine {
             transport.source_port,
             session.local_discriminator, session.state()
         ));
+        for warning in options.security_warnings() {
+            log.service_warning(warning);
+        }
+        let live_settings = if options.registry_backed
+            && options.session_type != SessionType::Classical
+        {
+            match SettingsWatch::open() {
+                Ok(watch) => LiveSettings::Notify(watch),
+                Err(error) => {
+                    log.log(format_args!(
+                            "registry change notification is unavailable; reading S-BFD settings each second: {error}"
+                        ));
+                    LiveSettings::Poll
+                }
+            }
+        } else {
+            LiveSettings::None
+        };
         Ok(Self {
             state_publisher: StatePublisher::new(session.state()),
             timing: options.timing(),
@@ -144,6 +361,9 @@ impl Engine {
             bgp,
             reflector,
             last_peer_report: None,
+            live_settings,
+            events: EventBudget::default(),
+            shutdown_progress: ShutdownProgress::default(),
         })
     }
     /// Returns a shared, read-only view of the current local BFD state.
@@ -151,20 +371,55 @@ impl Engine {
         self.state_publisher.observer()
     }
 
-    fn state_changed(&self, previous: State, log: &mut Logger) {
+    /// Returns a handle that reports the AdminDown announcement period at shutdown.
+    pub fn shutdown_progress(&self) -> ShutdownProgress {
+        self.shutdown_progress.clone()
+    }
+
+    /// Admits one session event within the per-second budget. Administrative
+    /// events bypass the budget so shutdown is always recorded.
+    fn event_admitted(&mut self, administrative: bool, log: &mut Logger) -> bool {
+        let now = Instant::now();
+        let admitted = administrative || self.events.admit(now);
+        self.report_suppressed_events(now, false, log);
+        admitted
+    }
+
+    fn report_suppressed_events(&mut self, now: Instant, force: bool, log: &mut Logger) {
+        if let Some(count) = self.events.take_report(now, force) {
+            log.service_warning(format_args!(
+                "suppressed {count} BFD session events that exceeded {EVENTS_PER_SECOND} per second"
+            ));
+        }
+    }
+
+    fn state_changed(&mut self, previous: State, log: &mut Logger) {
         if previous == self.session.state() {
             return;
         }
         self.state_publisher.publish(self.session.state());
-        log.session_event(
-            SessionEvent::StateChanged,
-            &self.options,
-            &self.session,
-            previous,
-            self.session.remote_discriminator,
-        );
+        if let Some(bgp) = &self.bgp {
+            // Stopping a BFD service, here or at the peer, is administrative rather
+            // than a path failure (RFC 5882 section 3.2), so it leaves BGP unchanged.
+            // Local AdminDown maps to no BGP action; a peer's AdminDown is skipped here.
+            if !self.session.down_by_peer_admin() {
+                bgp.state_changed(previous, self.session.state);
+            }
+        }
+        let administrative = self.session.state() == State::AdminDown;
+        if self.event_admitted(administrative, log) {
+            log.session_event(
+                SessionEvent::StateChanged,
+                &self.options,
+                &self.session,
+                previous,
+                self.session.remote_discriminator,
+            );
+        }
         // Up retains historical classical diagnostics; it doesn't report a new failure.
-        if matches!(self.session.state(), State::Down | State::AdminDown) {
+        if matches!(self.session.state(), State::Down | State::AdminDown)
+            && self.event_admitted(administrative, log)
+        {
             log.diagnostic_event(
                 &self.options,
                 &self.session,
@@ -173,17 +428,17 @@ impl Engine {
                 previous,
             );
         }
-        if let Some(bgp) = &self.bgp {
-            bgp.state_changed(previous, self.session.state);
-        }
     }
     fn peer_communication_changed(
-        &self,
+        &mut self,
         communicating: bool,
         previous: State,
         remote_discriminator: u32,
         log: &mut Logger,
     ) {
+        if !self.event_admitted(false, log) {
+            return;
+        }
         log.session_event(
             if communicating {
                 SessionEvent::CommunicationStarted
@@ -201,10 +456,16 @@ impl Engine {
         let state = self.session.remote_state();
         let diagnostic = self.session.remote_diagnostic();
         let discriminator = self.session.remote_discriminator();
+        if state == State::AdminDown {
+            if let Some(bgp) = &self.bgp {
+                // RFC 5882 section 4.1: BFD disabled at the peer must allow BGP.
+                bgp.peer_admin_down();
+            }
+        }
         let previous = self
             .last_peer_report
             .filter(|report| report.2 == discriminator);
-        if previous.is_none_or(|report| report.0 != state) {
+        if previous.is_none_or(|report| report.0 != state) && self.event_admitted(false, log) {
             log.session_event(
                 SessionEvent::PeerStateChanged,
                 &self.options,
@@ -213,10 +474,14 @@ impl Engine {
                 discriminator,
             );
         }
-        if previous.is_none_or(|report| {
-            report.1 != diagnostic
-                || report.0 != state && matches!(state, State::Down | State::AdminDown)
-        }) {
+        // Only diagnostics 1-8 have events; reserved values must not consume the budget.
+        if (1..=8).contains(&diagnostic)
+            && previous.is_none_or(|report| {
+                report.1 != diagnostic
+                    || report.0 != state && matches!(state, State::Down | State::AdminDown)
+            })
+            && self.event_admitted(false, log)
+        {
             log.diagnostic_event(
                 &self.options,
                 &self.session,
@@ -295,6 +560,57 @@ impl Engine {
         }
     }
 
+    /// Reloads live S-BFD settings after a registry change notification, or once
+    /// per second when notification is unavailable. A failed notification falls
+    /// back to polling rather than leaving later changes unapplied.
+    fn refresh_settings(&mut self, now: Instant, next_poll: &mut Instant, log: &mut Logger) {
+        let due = match &self.live_settings {
+            LiveSettings::None => return,
+            LiveSettings::Notify(watch) => match watch.take_change() {
+                Ok(changed) => changed,
+                Err(error) => {
+                    log.log(format_args!(
+                        "registry change notification failed; reading S-BFD settings each second: {error}"
+                    ));
+                    self.live_settings = LiveSettings::Poll;
+                    true
+                }
+            },
+            LiveSettings::Poll => now >= *next_poll,
+        };
+        if due {
+            self.reload_sbfd_settings(log);
+            *next_poll = now + Duration::from_secs(1);
+        }
+    }
+
+    /// Bounds a wait so the fallback settings read and the idle wakeup still occur.
+    fn idle_wait(&self, now: Instant, next_poll: Instant) -> Duration {
+        match self.live_settings {
+            LiveSettings::Poll => next_poll.saturating_duration_since(now).min(MAX_IDLE_WAIT),
+            LiveSettings::None | LiveSettings::Notify(_) => MAX_IDLE_WAIT,
+        }
+    }
+
+    /// Waits for traffic, a timer, Stop, or a settings change. A transient socket
+    /// fault reported by the wait pauses the loop instead of ending the engine.
+    fn wait_for_traffic(
+        &self,
+        stop: StopRequest<'_>,
+        timeout: Duration,
+        faults: &mut SocketFaults,
+        log: &mut Logger,
+    ) -> io::Result<()> {
+        match stop.wait(&self.transport, timeout, self.live_settings.event()) {
+            Ok(()) => {
+                faults.recovered(log);
+                Ok(())
+            }
+            Err(error) if is_transient(&error) => faults.pause(stop, &error, timeout, log),
+            Err(error) => Err(error),
+        }
+    }
+
     fn log_rejection(
         &self,
         datagram: &Datagram,
@@ -324,21 +640,24 @@ impl Engine {
 
     fn run_reflector(&mut self, stop: StopRequest<'_>, log: &mut Logger) -> io::Result<()> {
         let mut datagram = Datagram::default();
-        let mut next_registry_read = Instant::now() + Duration::from_secs(1);
+        // Also applies any change made before the settings watch was armed.
+        self.reload_sbfd_settings(log);
+        let mut next_settings_poll = Instant::now() + Duration::from_secs(1);
         let mut last_error = None;
         let mut last_discard = None;
         let mut last_auth_failure = None;
-        loop {
+        let mut last_withheld_report = None;
+        let mut faults = SocketFaults::default();
+        let mut replies = ReplyLimiter::default();
+        let result = loop {
             if stop.is_requested() {
-                return Ok(());
+                break Ok(());
             }
             let now = Instant::now();
-            if now >= next_registry_read {
-                self.reload_sbfd_settings(log);
-                next_registry_read = now + Duration::from_secs(1);
-            }
+            self.refresh_settings(now, &mut next_settings_poll, log);
             match self.transport.receive_into(&mut datagram) {
                 Ok(()) => {
+                    faults.recovered(log);
                     let reply = datagram
                         .validate(&self.options)
                         .map_err(ReceiveError::Packet)
@@ -349,6 +668,8 @@ impl Engine {
                                 .respond_checked(&datagram.data)
                         });
                     match reply {
+                        // Requests over a source's reply limit are withheld, not answered.
+                        Ok(_) if !replies.admit(datagram.source.ip(), now) => {}
                         Ok(reply) => {
                             if let Err(error) =
                                 self.transport.send_reply(&reply, &datagram, &self.options)
@@ -369,22 +690,38 @@ impl Engine {
                             &mut last_auth_failure,
                         ),
                     }
+                    if replies.withheld != 0 && due(&mut last_withheld_report, now, REPORT_INTERVAL)
+                    {
+                        report_withheld(&mut replies, log);
+                    }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    stop.wait(
-                        &self.transport,
-                        next_registry_read.saturating_duration_since(Instant::now()),
-                    )?;
+                    let wait = self.idle_wait(Instant::now(), next_settings_poll);
+                    if let Err(error) = self.wait_for_traffic(stop, wait, &mut faults, log) {
+                        break Err(error);
+                    }
                 }
                 Err(error)
                     if error.kind() == io::ErrorKind::InvalidData
                         || error.raw_os_error() == Some(10040) => {}
-                Err(error) => return Err(error),
+                Err(error) if is_transient(&error) => {
+                    let limit = self.idle_wait(Instant::now(), next_settings_poll);
+                    if let Err(error) = faults.pause(stop, &error, limit, log) {
+                        break Err(error);
+                    }
+                }
+                Err(error) => break Err(error),
             }
             // One request per pass keeps Stop and settings reload responsive under load.
+        };
+        if replies.withheld != 0 {
+            report_withheld(&mut replies, log);
         }
+        result
     }
     /// Run until a stop message/channel disconnect or fatal receive/wait error.
+    /// Transient network faults, such as an adapter reset, pause socket use with
+    /// a bounded backoff while timers continue; they don't end the engine.
     ///
     /// On exit, set AdminDown, announce shutdown when the role permits it, and
     /// wait for BGP cleanup. Send failures are logged, not returned. The BGP
@@ -412,20 +749,25 @@ impl Engine {
         } else {
             self.run_session(stop, log)
         };
-        // Honor the RFC 5880 shutdown recommendation for an established peer.
-        // Bound SCM/console stop latency even when a peer advertises huge timers.
+        // RFC 5880 section 6.8.16 and RFC 5882 section 8: assert AdminDown for at
+        // least one Detection Time, measured before AdminDown in both directions,
+        // so neither end mistakes the shutdown for a path failure.
         let grace = if result.is_ok()
             && self.options.session_type == SessionType::Classical
             && self.session.communicating()
         {
-            self.session.detection_time().min(Duration::from_secs(5))
+            self.session
+                .detection_time()
+                .max(self.session.peer_detection_time())
         } else {
             Duration::ZERO
         };
+        self.shutdown_progress.record(grace);
         let previous = self.session.state;
         self.session.admin_down();
+        // Local AdminDown releases any Stop that BFD imposed on BGP.
         self.state_changed(previous, log);
-        // BGP Stop is already queued, including after fatal transport errors.
+        self.report_suppressed_events(Instant::now(), true, log);
         let announcements = self.announce_shutdown(grace, log);
         // Wait for the pending Stop attempt and propagate failure before completion.
         let shutdown = self.bgp.take().map_or(Ok(()), Controller::shutdown);
@@ -485,11 +827,22 @@ impl Engine {
                     if let Some(detection) = self.session.detection_deadline() {
                         wait = wait.min(detection.saturating_duration_since(now));
                     }
-                    self.transport.wait_readable(wait)?;
+                    match self.transport.wait_readable(wait) {
+                        Err(error) if is_transient(&error) => {
+                            end_announcements(&error, log);
+                            return Ok(());
+                        }
+                        result => result?,
+                    }
                 }
                 Err(error)
                     if error.kind() == io::ErrorKind::InvalidData
                         || error.raw_os_error() == Some(10040) => {}
+                // Announcements are best effort; a faulted path must not delay Stop.
+                Err(error) if is_transient(&error) => {
+                    end_announcements(&error, log);
+                    return Ok(());
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -503,7 +856,10 @@ impl Engine {
         let mut last_error = None;
         let mut last_discard = None;
         let mut last_auth_failure = None;
-        let mut next_registry_read = Instant::now() + Duration::from_secs(1);
+        let mut faults = SocketFaults::default();
+        // Also applies any change made before the settings watch was armed.
+        self.reload_sbfd_settings(log);
+        let mut next_settings_poll = Instant::now() + Duration::from_secs(1);
         loop {
             if stop.is_requested() {
                 break;
@@ -513,10 +869,7 @@ impl Engine {
             let remote_discriminator = self.session.remote_discriminator;
             let communicating = self.session.communicating();
             let old_interval = self.session.transmit_interval();
-            if now >= next_registry_read {
-                self.reload_sbfd_settings(log);
-                next_registry_read = now + Duration::from_secs(1);
-            }
+            self.refresh_settings(now, &mut next_settings_poll, log);
             let state_changed = self.session.expire(now);
             if communicating && !self.session.communicating() {
                 self.last_peer_report = None;
@@ -543,8 +896,10 @@ impl Engine {
             }
             let before_interval = self.session.transmit_interval();
             let before_enabled = self.session.periodic_enabled();
+            let mut fault = None;
             match self.transport.receive_into(&mut datagram) {
                 Ok(()) => {
+                    faults.recovered(log);
                     let received_at = Instant::now();
                     let previous = self.session.state;
                     let communicating = self.session.communicating();
@@ -616,29 +971,52 @@ impl Engine {
                 {
                     continue
                 }
+                // Detection timers continue; an unusable path expires the session.
+                Err(error) if is_transient(&error) => fault = Some(error),
                 Err(error) => return Err(error),
             }
             let now = Instant::now();
-            let mut wait = next_registry_read.saturating_duration_since(now);
+            let mut wait = self.idle_wait(now, next_settings_poll);
             if self.session.periodic_enabled() {
                 wait = wait.min(next_periodic_tx.saturating_duration_since(now));
             }
             if let Some(deadline) = self.session.detection_deadline() {
                 wait = wait.min(deadline.saturating_duration_since(now));
             }
-            stop.wait(&self.transport, wait)?;
+            match fault {
+                Some(error) => faults.pause(stop, &error, wait, log)?,
+                None => self.wait_for_traffic(stop, wait, &mut faults, log)?,
+            }
         }
         Ok(())
     }
 }
 
-fn log_due(last: &mut Option<Instant>, now: Instant) -> bool {
-    if last.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1)) {
+fn end_announcements(error: &io::Error, log: &mut Logger) {
+    log.log(format_args!(
+        "AdminDown announcements ended after a transient socket failure: {error}"
+    ));
+}
+
+fn report_withheld(replies: &mut ReplyLimiter, log: &mut Logger) {
+    log.service_warning(format_args!(
+        "S-BFD reflector withheld {} replies to sources exceeding {REPLIES_PER_SOURCE} per second",
+        std::mem::take(&mut replies.withheld)
+    ));
+}
+
+/// Returns true, recording `now`, when `interval` has passed since the last true result.
+fn due(last: &mut Option<Instant>, now: Instant, interval: Duration) -> bool {
+    if last.is_none_or(|last| now.duration_since(last) >= interval) {
         *last = Some(now);
         true
     } else {
         false
     }
+}
+
+fn log_due(last: &mut Option<Instant>, now: Instant) -> bool {
+    due(last, now, Duration::from_secs(1))
 }
 
 #[cfg(test)]
@@ -1022,6 +1400,83 @@ mod tests {
         ] {
             assert!(stdout.contains(message), "{stdout}");
         }
+    }
+
+    #[test]
+    fn socket_fault_retries_back_off_to_a_bounded_delay_and_reset_on_recovery() {
+        let mut faults = SocketFaults::default();
+        let delays: Vec<_> = (0..8).map(|_| faults.next_delay()).collect();
+        assert_eq!(
+            delays,
+            [10, 20, 40, 80, 160, 250, 250, 250].map(Duration::from_millis)
+        );
+        assert_eq!(faults.count, 8);
+        let mut log = Logger::new(true).unwrap();
+        faults.recovered(&mut log);
+        assert_eq!(faults.count, 0);
+        assert_eq!(faults.next_delay(), FAULT_RETRY_MIN);
+    }
+
+    #[test]
+    fn stop_only_pause_is_not_shortened_by_readable_sockets_and_ends_on_stop() {
+        let stop = StopSignal::new().unwrap();
+        let started = Instant::now();
+        StopRequest::Event(&stop)
+            .pause(Duration::from_millis(50))
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(45));
+        stop.signal().unwrap();
+        let started = Instant::now();
+        StopRequest::Event(&stop)
+            .pause(Duration::from_secs(5))
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn session_events_are_bounded_per_second_and_suppression_is_reported_rarely() {
+        let now = Instant::now();
+        let mut budget = EventBudget::default();
+        for _ in 0..EVENTS_PER_SECOND {
+            assert!(budget.admit(now));
+        }
+        assert!(!budget.admit(now + Duration::from_millis(999)));
+        assert!(!budget.admit(now + Duration::from_millis(999)));
+        assert_eq!(budget.take_report(now, false), Some(2));
+        assert!(!budget.admit(now + Duration::from_millis(999)));
+        // Another report waits for the interval unless shutdown forces it.
+        assert_eq!(
+            budget.take_report(now + Duration::from_secs(1), false),
+            None
+        );
+        assert!(budget.admit(now + Duration::from_secs(1)));
+        assert_eq!(
+            budget.take_report(now + Duration::from_secs(2), true),
+            Some(1)
+        );
+        assert_eq!(budget.take_report(now + REPORT_INTERVAL * 2, true), None);
+    }
+
+    #[test]
+    fn reflector_replies_are_limited_per_source_and_tracked_source_count() {
+        let now = Instant::now();
+        let mut limiter = ReplyLimiter::default();
+        let victim: IpAddr = "192.0.2.10".parse().unwrap();
+        for _ in 0..REPLIES_PER_SOURCE {
+            assert!(limiter.admit(victim, now));
+        }
+        assert!(!limiter.admit(victim, now));
+        assert!(limiter.admit("192.0.2.11".parse().unwrap(), now));
+        assert_eq!(limiter.withheld, 1);
+        assert!(limiter.admit(victim, now + Duration::from_secs(1)));
+
+        let mut limiter = ReplyLimiter::default();
+        for index in 0..TRACKED_SOURCES {
+            let address = std::net::Ipv6Addr::from(u128::try_from(index).unwrap() + 1);
+            assert!(limiter.admit(address.into(), now));
+        }
+        assert!(!limiter.admit(victim, now));
+        assert!(limiter.admit(victim, now + Duration::from_secs(1)));
     }
 
     #[test]

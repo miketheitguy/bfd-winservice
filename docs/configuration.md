@@ -12,7 +12,7 @@ The program reads this key without creating or modifying it. Missing optional va
 
 - **Strings:** `REG_SZ`. `REG_EXPAND_SZ` and environment-variable expansion are unsupported.
 - **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
-- **Apply changes:** restart to reload startup settings. S-BFD timing and maintenance settings reload once per second; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
+- **Apply changes:** restart to reload startup settings. S-BFD timing and maintenance settings reload when the Parameters key changes; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 The MSI protects this key: SYSTEM and administrators have full control, and the
 enabled BFD service SID has read access. Console configuration therefore requires
@@ -106,7 +106,7 @@ These values select the authentication algorithm and key:
 | `Auth` | `REG_SZ` | `none` | `none`, `simple-password`, `keyed-md5`, `meticulous-md5`, `keyed-sha1`, or `meticulous-sha1` |
 | `AuthKeyId` | `REG_DWORD` | `0` | Key ID, 0–255 |
 | `AuthKey` | `REG_SZ` | None | ASCII key |
-| `AuthKeyHex` | `REG_SZ` | None | Hexadecimal encoding of a binary key |
+| `AuthKeyHex` | `REG_SZ` | None | Hexadecimal encoding of a binary key: pairs of digits `0`–`9`, `a`–`f`, or `A`–`F`, with no signs or separators |
 
 Configure the same authentication type, key ID, and key at both ends. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is enabled. Password/MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. One key is active at a time.
 

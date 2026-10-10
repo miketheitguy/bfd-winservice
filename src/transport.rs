@@ -8,7 +8,7 @@ use std::{
     io,
     mem::{align_of, size_of},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::windows::io::{AsRawHandle, AsRawSocket, FromRawHandle, OwnedHandle},
+    os::windows::io::{AsRawHandle, AsRawSocket, BorrowedHandle, FromRawHandle, OwnedHandle},
     ptr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -20,7 +20,7 @@ use windows_sys::Win32::NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWA
 use windows_sys::Win32::Networking::WinSock::*;
 use windows_sys::Win32::{
     Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
-    System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects},
+    System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject},
 };
 
 use crate::config::{is_seamless_source, Mode, Options, SessionType, ValidatedOptions, SBFD_PORT};
@@ -78,6 +78,50 @@ impl StopSignal {
     pub fn is_requested(&self) -> bool {
         self.state.requested.load(Ordering::Acquire)
     }
+
+    /// Sleeps until shutdown is requested or the timeout elapses, rounding up to
+    /// a whole millisecond. Unlike a socket wait, a signalled socket cannot end it.
+    ///
+    /// # Errors
+    /// Returns native wait errors.
+    pub(crate) fn wait(&self, timeout: Duration) -> io::Result<()> {
+        // SAFETY: shared ownership keeps the event alive for this synchronous wait.
+        match unsafe {
+            WaitForSingleObject(self.state.event.as_raw_handle(), milliseconds(timeout))
+        } {
+            WAIT_OBJECT_0 | WAIT_TIMEOUT => Ok(()),
+            WAIT_FAILED => Err(io::Error::last_os_error()),
+            _ => Err(io::Error::other("unexpected BFD stop wait result")),
+        }
+    }
+}
+
+/// Converts a timeout to a finite Windows wait, rounding up to a whole millisecond.
+fn milliseconds(timeout: Duration) -> u32 {
+    // u32::MAX means an infinite Windows wait, so retain a finite timeout.
+    u32::try_from(timeout.as_nanos().div_ceil(1_000_000))
+        .unwrap_or(u32::MAX - 1)
+        .min(u32::MAX - 1)
+}
+
+/// Returns whether a Winsock failure reflects a network condition that can clear
+/// without reopening the socket, such as an adapter reset or a removed address.
+/// Invalid handles, arguments, and other programming errors remain fatal.
+pub(crate) fn is_transient(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(
+            WSAENETDOWN
+                | WSAENETUNREACH
+                | WSAENETRESET
+                | WSAECONNRESET
+                | WSAENOBUFS
+                | WSAETIMEDOUT
+                | WSAEHOSTDOWN
+                | WSAEHOSTUNREACH
+                | WSAEADDRNOTAVAIL
+        )
+    )
 }
 
 /// Received UDP bytes and ancillary metadata, before session validation.
@@ -468,35 +512,55 @@ impl Transport {
     /// # Errors
     /// Returns native wait errors or failed socket events.
     pub fn wait_readable(&self, timeout: Duration) -> io::Result<()> {
-        self.wait_events(timeout, None)
+        self.wait_events(timeout, None, None)
     }
 
-    pub(crate) fn wait_stoppable(&self, timeout: Duration, stop: &StopSignal) -> io::Result<()> {
-        self.wait_events(timeout, Some(stop))
+    /// Also returns early when Stop or the optional notification event is signalled.
+    pub(crate) fn wait_stoppable(
+        &self,
+        timeout: Duration,
+        stop: &StopSignal,
+        notify: Option<BorrowedHandle<'_>>,
+    ) -> io::Result<()> {
+        self.wait_events(timeout, Some(stop), notify)
     }
 
-    fn wait_events(&self, timeout: Duration, stop: Option<&StopSignal>) -> io::Result<()> {
-        // Stop occupies the first slot so a simultaneous packet flood cannot mask it.
-        let handles = [
-            stop.map_or(self.readable.as_raw_handle(), |stop| {
-                stop.state.event.as_raw_handle()
-            }),
-            self.readable.as_raw_handle(),
-        ];
-        let count = if stop.is_some() { 2 } else { 1 };
-        // u32::MAX means an infinite Windows wait, so retain a finite timeout.
-        let milliseconds = u32::try_from(timeout.as_nanos().div_ceil(1_000_000))
-            .unwrap_or(u32::MAX - 1)
-            .min(u32::MAX - 1);
-        // SAFETY: count initialized handles remain alive; this is a synchronous wait.
-        let result = unsafe { WaitForMultipleObjects(count, handles.as_ptr(), 0, milliseconds) };
+    fn wait_events(
+        &self,
+        timeout: Duration,
+        stop: Option<&StopSignal>,
+        notify: Option<BorrowedHandle<'_>>,
+    ) -> io::Result<()> {
+        // Stop and notifications precede the socket so a packet flood cannot mask them.
+        let mut handles = [self.readable.as_raw_handle(); 3];
+        let mut count = 0;
+        for handle in [
+            stop.map(|stop| stop.state.event.as_raw_handle()),
+            notify.map(|notify| notify.as_raw_handle()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            handles[count] = handle;
+            count += 1;
+        }
+        let readable_slot = u32::try_from(count).expect("at most two signal handles");
+        // The readable event already occupies every remaining slot.
+        // SAFETY: count+1 initialized handles remain alive; this is a synchronous wait.
+        let result = unsafe {
+            WaitForMultipleObjects(
+                readable_slot + 1,
+                handles.as_ptr(),
+                0,
+                milliseconds(timeout),
+            )
+        };
         if result == WAIT_FAILED {
             return Err(io::Error::last_os_error());
         }
-        if result == WAIT_TIMEOUT || stop.is_some() && result == WAIT_OBJECT_0 {
+        if result == WAIT_TIMEOUT || result < WAIT_OBJECT_0 + readable_slot {
             return Ok(());
         }
-        let readable_slot = u32::from(stop.is_some());
         if result != WAIT_OBJECT_0 + readable_slot {
             return Err(io::Error::other("unexpected BFD socket wait result"));
         }
@@ -764,7 +828,7 @@ mod tests {
         });
         let started = Instant::now();
         transport
-            .wait_stoppable(Duration::from_secs(5), &stop)
+            .wait_stoppable(Duration::from_secs(5), &stop, None)
             .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
         worker.join().unwrap();
@@ -772,9 +836,78 @@ mod tests {
         stop.signal().unwrap();
         let started = Instant::now();
         transport
-            .wait_stoppable(Duration::from_secs(5), &stop)
+            .wait_stoppable(Duration::from_secs(5), &stop, None)
             .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
+        let started = Instant::now();
+        stop.wait(Duration::from_secs(5)).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn notification_wakes_a_socket_wait_and_stop_wait_ignores_readable_sockets() {
+        use std::{net::UdpSocket, time::Instant};
+        let mut options = Options::new(
+            "127.0.0.246".parse().unwrap(),
+            "127.0.0.247".parse().unwrap(),
+        );
+        options.multihop = true;
+        let transport = Transport::open(&options).unwrap();
+        let stop = StopSignal::new().unwrap();
+        let notify = StopSignal::new().unwrap();
+        notify.signal().unwrap();
+        // SAFETY: the notification event outlives this borrowed wait handle.
+        let notify_handle =
+            unsafe { BorrowedHandle::borrow_raw(notify.state.event.as_raw_handle()) };
+        let started = Instant::now();
+        transport
+            .wait_stoppable(Duration::from_secs(5), &stop, Some(notify_handle))
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        // A pending datagram ends socket waits immediately, but never a Stop-only pause.
+        UdpSocket::bind((options.peer, 0))
+            .unwrap()
+            .send_to(&[0xa5; 24], options.address(options.local, 4784))
+            .unwrap();
+        transport.wait_readable(Duration::from_secs(2)).unwrap();
+        let started = Instant::now();
+        stop.wait(Duration::from_millis(100)).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(90));
+        assert!(!stop.is_requested());
+    }
+
+    #[test]
+    fn only_network_condition_winsock_errors_are_transient() {
+        for code in [
+            WSAENETDOWN,
+            WSAENETUNREACH,
+            WSAENETRESET,
+            WSAECONNRESET,
+            WSAENOBUFS,
+            WSAETIMEDOUT,
+            WSAEHOSTDOWN,
+            WSAEHOSTUNREACH,
+            WSAEADDRNOTAVAIL,
+        ] {
+            assert!(is_transient(&io::Error::from_raw_os_error(code)), "{code}");
+        }
+        for code in [WSAENOTSOCK, WSAEINVAL, WSAEFAULT, WSAEMSGSIZE, 6] {
+            assert!(!is_transient(&io::Error::from_raw_os_error(code)), "{code}");
+        }
+        assert!(!is_transient(&io::Error::other(
+            "BFD receive socket closed"
+        )));
+        assert!(!is_transient(&io::ErrorKind::WouldBlock.into()));
+    }
+
+    #[test]
+    fn wait_timeouts_round_up_and_stay_finite() {
+        assert_eq!(milliseconds(Duration::ZERO), 0);
+        assert_eq!(milliseconds(Duration::from_nanos(1)), 1);
+        assert_eq!(milliseconds(Duration::from_micros(1500)), 2);
+        assert_eq!(milliseconds(Duration::MAX), u32::MAX - 1);
     }
 
     // Encode native ancillary bytes without raw-pointer writes, so the fixtures can

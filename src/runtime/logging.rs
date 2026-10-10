@@ -12,6 +12,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     net::SocketAddr,
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -25,12 +26,71 @@ const QUEUE_CAPACITY: usize = 256;
 const MAX_TEXT_BYTES: usize = 16_384;
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 const FILE_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+/// A full file is renamed to `<name>.1`, so file output uses at most twice this.
+const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 enum Command {
     Text(String),
     Event(Record),
-    File(Option<File>),
+    File(Option<(File, PathBuf)>),
     Flush(mpsc::Sender<io::Result<()>>),
+}
+
+/// The enabled append file and its size-based rotation state.
+struct OutputFile {
+    writer: BufWriter<File>,
+    path: PathBuf,
+    /// File length, including buffered output, since opening or rotation.
+    length: u64,
+    rotate_at: u64,
+    limit: u64,
+}
+
+impl OutputFile {
+    fn new(file: File, path: PathBuf, limit: u64) -> Self {
+        let length = file.metadata().map_or(0, |metadata| metadata.len());
+        Self {
+            writer: BufWriter::new(file),
+            path,
+            length,
+            rotate_at: limit,
+            limit,
+        }
+    }
+
+    /// Renames a full file to `<name>.1`, replacing an older backup, then continues
+    /// in a new file. If another process prevents the rename, output continues and
+    /// rotation is retried after another sixteenth of the limit.
+    fn rotate_if_full(&mut self) {
+        if self.length < self.rotate_at {
+            return;
+        }
+        match self.rotate() {
+            Ok(()) => {
+                self.length = 0;
+                self.rotate_at = self.limit;
+            }
+            Err(error) => {
+                diagnostic(format_args!("unable to rotate BFD file log: {error}"));
+                self.rotate_at = self.length.saturating_add((self.limit / 16).max(1));
+            }
+        }
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        self.writer.flush()?;
+        let mut backup = self.path.clone().into_os_string();
+        backup.push(".1");
+        // The writer's handle permits renaming; std opens files with delete sharing.
+        fs::rename(&self.path, &backup)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        // Replacing the flushed writer closes the renamed file.
+        self.writer = BufWriter::new(file);
+        Ok(())
+    }
 }
 
 struct Shutdown {
@@ -115,12 +175,13 @@ impl Logger {
             {
                 fs::create_dir_all(parent)?;
             }
-            Some(
+            Some((
                 OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&options.log_file_path)?,
-            )
+                options.log_file_path.clone(),
+            ))
         } else {
             None
         };
@@ -221,6 +282,16 @@ impl Logger {
             )));
         }
     }
+    /// Queues a Warning event for a weak configuration or a recoverable runtime
+    /// condition. Callers rate-limit repeated warnings; text omits key material.
+    pub fn service_warning(&mut self, warning: impl Display) {
+        let mut text = BoundedText(String::new());
+        let _ = write!(&mut text, "{warning}");
+        self.enqueue(Command::Event(Record::service_warning(
+            self.console,
+            &text.0,
+        )));
+    }
     /// Queues a startup/runtime error without authentication data.
     pub fn service_failed(&mut self, error: impl Display) {
         let mut text = BoundedText(String::new());
@@ -302,20 +373,26 @@ fn text_output(
     message: &str,
     console: bool,
     stdout_failed: &mut bool,
-    file: &mut Option<BufWriter<File>>,
+    file: &mut Option<OutputFile>,
     timestamp: &mut String,
 ) {
-    if let Some(file) = file {
+    if let Some(output) = file {
         utc_timestamp(timestamp);
         for line in message.split('\n') {
-            if let Err(error) = writeln!(file, "{timestamp} {line}") {
+            if let Err(error) = writeln!(output.writer, "{timestamp} {line}") {
                 diagnostic(format_args!("unable to write BFD file log: {error}"));
                 break;
             }
+            // Timestamp, separator, text, and newline.
+            let written = timestamp.len() + line.len() + 2;
+            output.length = output
+                .length
+                .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
         }
+        output.rotate_if_full();
         // Keep file output visible before a console pipe can block the worker.
         if console {
-            flush_file(file);
+            flush_file(&mut output.writer);
         }
     }
     if console && !*stdout_failed {
@@ -350,7 +427,7 @@ fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64
             }
         }
     };
-    write_records_with(receiver, console, dropped, |record| {
+    write_records_with(receiver, console, dropped, MAX_FILE_BYTES, |record| {
         provider
             .as_ref()
             .map_or(Ok(()), |provider| provider.emit(record))
@@ -361,15 +438,18 @@ fn write_records_with(
     receiver: Receiver<Command>,
     console: bool,
     dropped: &AtomicU64,
+    file_limit: u64,
     mut emit: impl FnMut(&Record) -> io::Result<()>,
 ) {
-    let mut file: Option<BufWriter<File>> = None;
+    let mut file: Option<OutputFile> = None;
     let mut timestamp = String::with_capacity(24);
     let mut next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
     let mut stdout_failed = false;
     let mut reported = 0;
     loop {
-        let pending = file.as_ref().is_some_and(|file| !file.buffer().is_empty());
+        let pending = file
+            .as_ref()
+            .is_some_and(|output| !output.writer.buffer().is_empty());
         let command = if pending {
             receiver.recv_timeout(next_flush.saturating_duration_since(Instant::now()))
         } else {
@@ -381,8 +461,8 @@ fn write_records_with(
         let command = match command {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(file) = &mut file {
-                    flush_file(file);
+                if let Some(output) = &mut file {
+                    flush_file(&mut output.writer);
                 }
                 next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
                 continue;
@@ -428,24 +508,24 @@ fn write_records_with(
                 }
             }
             Command::File(next) => {
-                if let Some(file) = &mut file {
-                    flush_file(file);
+                if let Some(output) = &mut file {
+                    flush_file(&mut output.writer);
                 }
-                file = next.map(BufWriter::new);
+                file = next.map(|(next, path)| OutputFile::new(next, path, file_limit));
             }
             Command::Flush(reply) => {
-                let _ = reply.send(file.as_mut().map_or(Ok(()), Write::flush));
+                let _ = reply.send(file.as_mut().map_or(Ok(()), |output| output.writer.flush()));
             }
         }
         if Instant::now() >= next_flush {
-            if let Some(file) = &mut file {
-                flush_file(file);
+            if let Some(output) = &mut file {
+                flush_file(&mut output.writer);
             }
             next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
         }
     }
-    if let Some(file) = &mut file {
-        flush_file(file);
+    if let Some(output) = &mut file {
+        flush_file(&mut output.writer);
     }
 }
 
@@ -458,12 +538,22 @@ mod tests {
         events: Arc<Mutex<Vec<(u16, u8)>>>,
         fail_etw: bool,
     ) -> Logger {
+        captured_logger_with_limit(console, events, fail_etw, MAX_FILE_BYTES)
+    }
+
+    #[cfg(not(miri))]
+    fn captured_logger_with_limit(
+        console: bool,
+        events: Arc<Mutex<Vec<(u16, u8)>>>,
+        fail_etw: bool,
+        file_limit: u64,
+    ) -> Logger {
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         let (done_tx, done) = mpsc::channel();
         let dropped = Arc::new(AtomicU64::new(0));
         let worker_dropped = Arc::clone(&dropped);
         let thread = thread::spawn(move || {
-            write_records_with(receiver, console, &worker_dropped, |record| {
+            write_records_with(receiver, console, &worker_dropped, file_limit, |record| {
                 events.lock().unwrap().push(record.identity());
                 if fail_etw {
                     Err(io::Error::other("synthetic ETW failure"))
@@ -642,12 +732,42 @@ mod tests {
         assert!(fs::read_to_string(first_path)
             .unwrap()
             .contains("before file switch"));
-        let second = fs::read_to_string(options.log_file_path).unwrap();
+        let second = fs::read_to_string(&options.log_file_path).unwrap();
         assert!(second.contains("after file switch") && second.contains("second line"));
         let lines: Vec<_> = second.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(&lines[0][..24], &lines[1][..24]);
         assert_eq!(&lines[0][..24], &lines[2][..24]);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn full_file_rotates_to_one_backup_and_output_continues() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::reflector("127.0.0.1".parse().unwrap(), 99);
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("trace.log");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut log = captured_logger_with_limit(false, events, false, 256);
+        log.open_file(&options).unwrap();
+        // Each 77-byte line counts toward the limit, so every fourth record rotates.
+        for index in 0..42 {
+            log.log(format_args!("record {index:02} {}", "x".repeat(40)));
+        }
+        log.flush(Duration::from_secs(2)).unwrap();
+        let mut backup = options.log_file_path.clone().into_os_string();
+        backup.push(".1");
+        let current = fs::read_to_string(&options.log_file_path).unwrap();
+        let previous = fs::read_to_string(&backup).unwrap();
+        assert!(current.contains("record 41"), "{current}");
+        assert!(!current.contains("record 39"), "{current}");
+        assert!(previous.contains("record 39"), "{previous}");
+        // Each file stays within one record of the limit, and older backups are replaced.
+        for text in [&current, &previous] {
+            assert!(text.len() < 256 + 128, "{}", text.len());
+        }
+        assert!(!previous.contains("record 00"));
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
     }
 
     #[test]

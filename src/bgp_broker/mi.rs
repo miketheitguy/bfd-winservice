@@ -10,7 +10,12 @@
 
 use super::Method;
 use crate::runtime::Logger;
-use std::{ffi::c_void, io, mem::transmute, ptr};
+use std::{
+    ffi::c_void,
+    io,
+    mem::{size_of, transmute_copy},
+    ptr,
+};
 use windows_sys::{core::w, Win32::System::Wmi::*};
 
 type ApplicationClose = unsafe extern "system" fn(*mut MI_Application) -> MI_Result;
@@ -134,6 +139,35 @@ type Next<T> = unsafe extern "system" fn(
     *mut *const MI_Instance,
 ) -> MI_Result;
 
+/// Converts a windows-sys MI function-table entry, stored as `isize`, to its
+/// mi.h signature. A zero entry is an error: transmuting it to a non-nullable
+/// function pointer would be undefined behavior, not merely a failed call.
+///
+/// # Safety
+/// `F` must be the exact `unsafe extern "system" fn` type that mi.h declares
+/// for the table entry `raw` was read from.
+unsafe fn entry<F: Copy>(raw: isize, name: &str) -> io::Result<F> {
+    const { assert!(size_of::<F>() == size_of::<isize>()) };
+    if raw == 0 {
+        return Err(io::Error::other(format!(
+            "MI function table has no {name} entry"
+        )));
+    }
+    // SAFETY: the entry is nonzero and pointer-sized; the caller guarantees that
+    // F is its exact function-pointer type.
+    Ok(unsafe { transmute_copy::<isize, F>(&raw) })
+}
+
+/// Reports a failed close/delete, including a missing table entry.
+fn finish_cleanup(result: io::Result<MI_Result>, context: &str, log: &Logger) {
+    match result {
+        Ok(result) => cleanup(result, context, log),
+        Err(error) => log
+            .clone()
+            .broker_message(format_args!("{context}: {error}"), true),
+    }
+}
+
 fn check(result: MI_Result, context: &str) -> io::Result<()> {
     if result == MI_RESULT_OK {
         Ok(())
@@ -168,7 +202,8 @@ impl Application {
         let mut destination = MI_DestinationOptions::default();
         // SAFETY: live application, exact SDK signature, writable output handle.
         let result = unsafe {
-            let new: NewDestination = transmute((*self.0.ft).NewDestinationOptions);
+            let new: NewDestination =
+                entry((*self.0.ft).NewDestinationOptions, "NewDestinationOptions")?;
             new(&mut self.0, &mut destination)
         };
         check(result, "create MI destination options")?;
@@ -179,7 +214,7 @@ impl Application {
         // SAFETY: live destination options, exact SetNumber ABI from mi.h,
         // and a static terminated option name; no delegation or remote target.
         let result = unsafe {
-            let set: DestinationSetNumber = transmute((*destination.0.ft).SetNumber);
+            let set: DestinationSetNumber = entry((*destination.0.ft).SetNumber, "SetNumber")?;
             set(
                 &mut destination.0,
                 w!("__MI_DESTINATIONOPTIONS_IMPERSONATION_TYPE"),
@@ -196,7 +231,7 @@ impl Application {
         ] {
             // SAFETY: live destination options, exact ABI and static UTF-16 strings.
             let result = unsafe {
-                let set: DestinationSetString = transmute((*destination.0.ft).SetString);
+                let set: DestinationSetString = entry((*destination.0.ft).SetString, "SetString")?;
                 set(&mut destination.0, name, w!("en-US"), 0)
             };
             check(result, "set MI status metadata locale")?;
@@ -205,7 +240,7 @@ impl Application {
         // SAFETY: application is live; SDK NewSession signature and writable
         // output. Null protocol/destination select the local default transport.
         let result = unsafe {
-            let new_session: NewSession = transmute((*self.0.ft).NewSession);
+            let new_session: NewSession = entry((*self.0.ft).NewSession, "NewSession")?;
             new_session(
                 &mut self.0,
                 ptr::null(),
@@ -241,7 +276,7 @@ impl Application {
         // SAFETY: application is live; class is terminated UTF-16; null RTTI
         // requests a dynamic instance; output is writable. Signature is mi.h.
         let result = unsafe {
-            let new_instance: NewInstance = transmute((*self.0.ft).NewInstance);
+            let new_instance: NewInstance = entry((*self.0.ft).NewInstance, "NewInstance")?;
             new_instance(&mut self.0, class, ptr::null(), &mut instance)
         };
         check(result, "create MI method parameters")?;
@@ -285,7 +320,8 @@ impl Application {
         let mut options = MI_OperationOptions::default();
         // SAFETY: live application, exact SDK signature, writable output handle.
         let result = unsafe {
-            let new_options: NewOptions = transmute((*self.0.ft).NewOperationOptions);
+            let new_options: NewOptions =
+                entry((*self.0.ft).NewOperationOptions, "NewOperationOptions")?;
             new_options(&mut self.0, 0, &mut options)
         };
         check(result, "create MI operation options")?;
@@ -297,7 +333,7 @@ impl Application {
         // SAFETY: live options and interval, exact SDK SetInterval signature.
         // This is the same option used by MI_OperationOptions_SetTimeout.
         let result = unsafe {
-            let set_interval: SetInterval = transmute((*options.0.ft).SetInterval);
+            let set_interval: SetInterval = entry((*options.0.ft).SetInterval, "SetInterval")?;
             set_interval(
                 &mut options.0,
                 w!("__MI_OPERATIONOPTIONS_TIMEOUT"),
@@ -315,10 +351,9 @@ impl Drop for Application {
         // SAFETY: live uniquely owned application. Callers declare it before
         // child handles, which drop first in reverse local-variable order.
         let result = unsafe {
-            let close: ApplicationClose = transmute((*self.0.ft).Close);
-            close(&mut self.0)
+            entry::<ApplicationClose>((*self.0.ft).Close, "Close").map(|close| close(&mut self.0))
         };
-        cleanup(result, "close MI application", &self.1);
+        finish_cleanup(result, "close MI application", &self.1);
     }
 }
 
@@ -326,10 +361,11 @@ struct DestinationOptions(MI_DestinationOptions);
 impl Drop for DestinationOptions {
     fn drop(&mut self) {
         // SAFETY: uniquely owned options; dependent session already closed.
-        unsafe {
-            let delete: DestinationDelete = transmute((*self.0.ft).Delete);
-            delete(&mut self.0);
-        }
+        // A missing Delete entry leaves the options allocated rather than unsound.
+        let _ = unsafe {
+            entry::<DestinationDelete>((*self.0.ft).Delete, "Delete")
+                .map(|delete| delete(&mut self.0))
+        };
     }
 }
 
@@ -343,10 +379,10 @@ impl Drop for Session {
         // SAFETY: live session, exact SDK signature, no asynchronous callback;
         // its operations have been drained and closed before session destruction.
         let result = unsafe {
-            let close: SessionClose = transmute((*self.handle.ft).Close);
-            close(&mut self.handle, ptr::null_mut(), None)
+            entry::<SessionClose>((*self.handle.ft).Close, "Close")
+                .map(|close| close(&mut self.handle, ptr::null_mut(), None))
         };
-        cleanup(result, "close MI session", &self.log);
+        finish_cleanup(result, "close MI session", &self.log);
     }
 }
 
@@ -362,7 +398,7 @@ impl Parameters {
         // SAFETY: live instance; caller supplies matching union and valid name.
         // Flags 0 ask MI to copy the value, including pointed-to strings/arrays.
         let result = unsafe {
-            let add: AddElement = transmute((*(*self.0).ft).AddElement);
+            let add: AddElement = entry((*(*self.0).ft).AddElement, "AddElement")?;
             add(self.0, name, value, kind, 0)
         };
         check(result, "add MI method parameter")
@@ -372,10 +408,9 @@ impl Drop for Parameters {
     fn drop(&mut self) {
         // SAFETY: uniquely owned MI-allocated dynamic instance; exact signature.
         let result = unsafe {
-            let delete: InstanceDelete = transmute((*(*self.0).ft).Delete);
-            delete(self.0)
+            entry::<InstanceDelete>((*(*self.0).ft).Delete, "Delete").map(|delete| delete(self.0))
         };
-        cleanup(result, "delete MI parameters", &self.1);
+        finish_cleanup(result, "delete MI parameters", &self.1);
     }
 }
 
@@ -383,10 +418,10 @@ struct OperationOptions(MI_OperationOptions);
 impl Drop for OperationOptions {
     fn drop(&mut self) {
         // SAFETY: live options, no operation still uses them; exact signature.
-        unsafe {
-            let delete: OptionsDelete = transmute((*self.0.ft).Delete);
-            delete(&mut self.0);
-        }
+        // A missing Delete entry leaves the options allocated rather than unsound.
+        let _ = unsafe {
+            entry::<OptionsDelete>((*self.0.ft).Delete, "Delete").map(|delete| delete(&mut self.0))
+        };
     }
 }
 
@@ -409,7 +444,7 @@ impl Operation {
     ) -> io::Result<()> {
         let mut returned_value = false;
         // SAFETY: initialized instance operation, exact SDK GetInstance ABI.
-        let next: GetInstance = unsafe { transmute((*self.handle.ft).GetInstance) };
+        let next: GetInstance = unsafe { entry((*self.handle.ft).GetInstance, "GetInstance") }?;
         self.drain(next, |instance| {
             // SAFETY: drain lends a live instance until the next result fetch.
             unsafe {
@@ -484,18 +519,18 @@ impl Drop for Operation {
         if !self.drained {
             // SAFETY: live operation; exact Cancel signature, default reason 0.
             let result = unsafe {
-                let cancel: OperationCancel = transmute((*self.handle.ft).Cancel);
-                cancel(&mut self.handle, 0)
+                entry::<OperationCancel>((*self.handle.ft).Cancel, "Cancel")
+                    .map(|cancel| cancel(&mut self.handle, 0))
             };
-            cleanup(result, "cancel MI operation", &self.log);
+            finish_cleanup(result, "cancel MI operation", &self.log);
             let result = if self.class_result {
                 // SAFETY: class operation; exact SDK GetClass accessor.
-                let next: GetClass = unsafe { transmute((*self.handle.ft).GetClass) };
-                self.drain(next, |_| Ok(()))
+                unsafe { entry::<GetClass>((*self.handle.ft).GetClass, "GetClass") }
+                    .and_then(|next| self.drain(next, |_| Ok(())))
             } else {
                 // SAFETY: instance operation; exact SDK GetInstance accessor.
-                let next: GetInstance = unsafe { transmute((*self.handle.ft).GetInstance) };
-                self.drain(next, |_| Ok(()))
+                unsafe { entry::<GetInstance>((*self.handle.ft).GetInstance, "GetInstance") }
+                    .and_then(|next| self.drain(next, |_| Ok(())))
             };
             if let Err(error) = result {
                 self.log
@@ -506,10 +541,10 @@ impl Drop for Operation {
         // SAFETY: uniquely owned initialized operation; exact SDK Close signature.
         // If normal draining failed, cancellation and draining were attempted above.
         let result = unsafe {
-            let close: OperationClose = transmute((*self.handle.ft).Close);
-            close(&mut self.handle)
+            entry::<OperationClose>((*self.handle.ft).Close, "Close")
+                .map(|close| close(&mut self.handle))
         };
-        cleanup(result, "close MI operation", &self.log);
+        finish_cleanup(result, "close MI operation", &self.log);
     }
 }
 
@@ -528,7 +563,7 @@ unsafe fn return_value(instance: *const MI_Instance) -> io::Result<()> {
     // SAFETY: caller guarantees instance validity; all outputs writable and
     // signature matches mi.h. Optional index output is null.
     let result = unsafe {
-        let get: GetElement = transmute((*(*instance).ft).GetElement);
+        let get: GetElement = entry((*(*instance).ft).GetElement, "GetElement")?;
         get(
             instance,
             w!("ReturnValue"),
@@ -580,7 +615,7 @@ unsafe fn element(
     let mut flags = 0;
     // SAFETY: caller guarantees live instance/name, exact ABI, writable outputs.
     let result = unsafe {
-        let get: GetElement = transmute((*(*instance).ft).GetElement);
+        let get: GetElement = entry((*(*instance).ft).GetElement, "GetElement")?;
         get(
             instance,
             name,
@@ -611,7 +646,7 @@ unsafe fn qualifier_strings(
     let mut index = 0;
     // SAFETY: live qualifier set and terminated name, exact SDK signature.
     let result = unsafe {
-        let get: GetQualifier = transmute((*qualifiers.ft).GetQualifier);
+        let get: GetQualifier = entry((*qualifiers.ft).GetQualifier, "GetQualifier")?;
         get(
             qualifiers, name, &mut kind, &mut flags, &mut value, &mut index,
         )
@@ -656,7 +691,7 @@ unsafe fn enum_mapping(
     let mut qualifiers = MI_QualifierSet::default();
     // SAFETY: caller guarantees live class/property; exact SDK signature.
     let result = unsafe {
-        let get: ClassGetElement = transmute((*(*class).ft).GetElement);
+        let get: ClassGetElement = entry((*(*class).ft).GetElement, "GetElement")?;
         get(
             class,
             property,
@@ -742,7 +777,7 @@ fn schema_operation(
     // SAFETY: private callers supply terminated static namespace/class names;
     // session/options are live, exact SDK signature, writable output.
     unsafe {
-        let get: SessionGetClass = transmute((*session.handle.ft).GetClass);
+        let get: SessionGetClass = entry((*session.handle.ft).GetClass, "GetClass")?;
         get(
             &mut session.handle,
             MI_OPERATIONFLAGS_FULL_RTTI | MI_OPERATIONFLAGS_LOCALIZED_QUALIFIERS,
@@ -782,7 +817,7 @@ pub(super) fn started(peer: &str, domain: Option<&str>, log: &Logger) -> io::Res
         )?;
         let mut mapping = None;
         // SAFETY: class operation; exact SDK GetClass result-accessor signature.
-        let next: GetClass = unsafe { transmute((*schema.handle.ft).GetClass) };
+        let next: GetClass = unsafe { entry((*schema.handle.ft).GetClass, "GetClass") }?;
         schema.drain(next, |class| {
             // SAFETY: drain lends a live schema until next fetch/Close.
             mapping = Some(unsafe { enum_mapping(class, w!("ConnectivityStatus")) }?);
@@ -794,7 +829,7 @@ pub(super) fn started(peer: &str, domain: Option<&str>, log: &Logger) -> io::Res
     // SAFETY: live handles, static terminated strings, exact SDK Invoke ABI;
     // Get reads configuration only; no callbacks means synchronous retrieval.
     unsafe {
-        let invoke: Invoke = transmute((*session.handle.ft).Invoke);
+        let invoke: Invoke = entry((*session.handle.ft).Invoke, "Invoke")?;
         invoke(
             &mut session.handle,
             0,
@@ -855,7 +890,7 @@ pub(super) fn invoke(
     // Null inboundInstance invokes a static class method; no callbacks means
     // synchronous result retrieval. The namespace uses MI forward-slash notation.
     unsafe {
-        let invoke: Invoke = transmute((*session.handle.ft).Invoke);
+        let invoke: Invoke = entry((*session.handle.ft).Invoke, "Invoke")?;
         invoke(
             &mut session.handle,
             0,
@@ -886,6 +921,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn missing_function_table_entries_are_errors_not_null_function_pointers() {
+        // SAFETY: a zero entry is rejected before any conversion.
+        let missing = unsafe { entry::<ApplicationClose>(0, "Close") };
+        assert!(missing.unwrap_err().to_string().contains("no Close entry"));
+        extern "system" fn close_probe(_: *mut MI_Application) -> MI_Result {
+            MI_RESULT_NOT_SUPPORTED
+        }
+        let raw = isize::try_from(close_probe as *const () as usize).unwrap();
+        // SAFETY: raw came from a function with exactly the ApplicationClose ABI.
+        let close = unsafe { entry::<ApplicationClose>(raw, "Close") }.unwrap();
+        // SAFETY: the probe ignores its argument.
+        assert_eq!(unsafe { close(ptr::null_mut()) }, MI_RESULT_NOT_SUPPORTED);
+    }
+
+    #[test]
     fn connectivity_mapping_distinguishes_stopped_from_running_without_assuming_ids() {
         let mapping = vec![
             (71, "Stopped".into()),
@@ -906,9 +956,9 @@ mod tests {
     #[test]
     #[ignore = "requires access to Windows CIM namespaces; run explicitly outside a restricted sandbox"]
     fn native_mi_reads_enum_qualifiers_from_local_class_schema() {
-        // The service initializes process-wide COM security before native MI.
+        // The broker initializes private process-wide COM security before native MI.
         // Exercise a real provider under those defaults without changing BGP.
-        let _com = crate::com::ComServer::initialize().unwrap();
+        let _com = crate::com::ComServer::initialize_private().unwrap();
         let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         let mut session = application.session().unwrap();
         let mut options = application.options().unwrap();
@@ -922,7 +972,7 @@ mod tests {
         .unwrap();
         let mut mapping = None;
         // SAFETY: class operation, exact SDK accessor signature.
-        let next: GetClass = unsafe { transmute((*schema.handle.ft).GetClass) };
+        let next: GetClass = unsafe { entry((*schema.handle.ft).GetClass, "GetClass") }.unwrap();
         schema
             .drain(next, |class| {
                 // SAFETY: class is lent by drain until the next result fetch/Close.
@@ -1010,7 +1060,8 @@ mod tests {
                 // SAFETY: live locally allocated instance, exact signature,
                 // static property name and writable outputs.
                 let status = unsafe {
-                    let get: GetElement = transmute((*(*parameters.0).ft).GetElement);
+                    let get: GetElement =
+                        entry((*(*parameters.0).ft).GetElement, "GetElement").unwrap();
                     get(
                         parameters.0,
                         name,
@@ -1054,7 +1105,7 @@ mod tests {
         // SAFETY: live handles, exact SDK signature, terminated static strings,
         // writable output. An absent class ensures no method can change state.
         unsafe {
-            let invoke: Invoke = transmute((*session.handle.ft).Invoke);
+            let invoke: Invoke = entry((*session.handle.ft).Invoke, "Invoke").unwrap();
             invoke(
                 &mut session.handle,
                 0,

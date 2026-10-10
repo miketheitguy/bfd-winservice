@@ -202,14 +202,20 @@ Initiators set the Demand bit; reflectors clear it. Each role rejects packets
 with the opposite role's Demand setting. Reflectors also reject source port
 `7784`, preventing reflector-to-reflector loops. Invalid packets never refresh
 liveness or cause a response. Authentication failures use Operational event `105`.
+A reflector answers at most 1,000 valid requests per second from any one source
+address and reports withheld replies with Warning event 4, which bounds traffic
+reflected toward a spoofed source. Without `AllowedPeers`, startup also logs
+Warning event 4.
 
 ## Change timing and entity availability
 
 In S-BFD service and console execution, `MinTxUs`, `MinRxUs`, `DetectMult`, and
-the reflector's `SbfdAdminDown` are checked once per second. Valid changes apply
-without restarting or resetting the session. Invalid values and timer changes
-that overlap a transmitted Poll leave the preceding settings active and produce
-a text diagnostic. The next registry check retries the requested values.
+the reflector's `SbfdAdminDown` are reloaded when a registry change notification
+reports a write to the Parameters key; if notification is unavailable, they are
+read once per second. Valid changes apply without restarting or resetting the
+session. Invalid values and timer changes that overlap a transmitted Poll leave
+the preceding settings active and produce a text diagnostic. The next change to
+the key retries the requested values.
 Other registry settings are read
 at startup.
 
@@ -223,8 +229,10 @@ Detection time = local DetectMult × probe interval + local MinRxUs
 ```
 
 Outside `Up`, the initial desired interval is `max(StartupTxUs, MinTxUs)`.
-After missing responses, the initiator doubles its probing interval with
-saturating arithmetic to reduce traffic. A valid response clears this backoff.
+After missing responses, the initiator doubles its probing interval to reduce
+traffic, up to 30 seconds, so a recovered reflector is probed again, and BGP
+control can resume, within one interval. A reflector's longer advertised receive
+interval remains the floor. A valid response clears this backoff.
 Poll/Final exchanges acknowledge interval changes without adding an `Init` phase.
 When `MinTxUs` increases in Up, probes advertise the requested value but continue
 at the preceding local TX rate until the Poll receives a Final. The probe and
@@ -242,7 +250,7 @@ New-ItemProperty -Path $parameters -Name SbfdAdminDown `
     -PropertyType DWord -Value 1 -Force
 ```
 
-PowerShell displays the `SbfdAdminDown` value. Within the next reload interval, the
+PowerShell displays the `SbfdAdminDown` value. After the reload, the
 reflector responds with `AdminDown`. Initiators remain in communication, enter
 `Down`, and send no faster than once per second, including after jitter.
 This state indicates entity maintenance rather than loss of reachability.

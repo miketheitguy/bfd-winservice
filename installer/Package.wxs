@@ -47,6 +47,10 @@
                           ErrorControl="normal" Vital="yes">
             <ServiceDependency Id="RpcSs" />
             <ServiceDependency Id="BfdBgpBroker" />
+            <!-- ConfigureServicePolicy also enables delayed start and recovery after a
+                 nonzero exit. Administrator Stop requests always exit with code 0. -->
+            <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                                ThirdFailureActionType="restart" RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
           </ServiceInstall>
           <!-- Configuration and SEHOP policy are provisioned before the first start. -->
           <ServiceControl Id="ControlBfdService" Name="BfdWinService"
@@ -76,7 +80,7 @@
           </File>
           <ServiceInstall Id="InstallBgpBroker" Name="BfdBgpBroker" DisplayName="BFD BGP Management Broker"
                           Description="Controls the configured BGP peer through an authenticated local pipe."
-                          Type="ownProcess" Start="demand" Account="LocalSystem" ErrorControl="normal" Vital="yes">
+                          Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Vital="yes">
             <ServiceDependency Id="RpcSs" />
             <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
                                 ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
@@ -112,11 +116,13 @@
                          Name="AppID" Type="string" Value="{EBF04871-D193-4CDF-ABBC-DCD7D220224B}">
             <PermissionEx Id="ComExeAppSecurity" Sddl="$(var.RegistrySecurity)" />
           </RegistryValue>
-          <!-- O:SYG:SYD:(A;;0xb;;;SY)(A;;0xb;;;BA)(A;;0xb;;;AU):
-               SYSTEM, administrators, authenticated users; local launch/activation only. -->
+          <!-- O:SYG:SYD:(A;;0xb;;;SY)(A;;0xb;;;BA)(A;;0x9;;;AU):
+               SYSTEM and administrators may launch (start) a stopped service through COM.
+               Authenticated users may only activate the running server, so they cannot
+               restart a service, and its BGP control, that an administrator stopped. -->
           <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
                          Name="LaunchPermission" Type="binary"
-                         Value="010004801400000020000000000000002C0000000101000000000005120000000101000000000005120000000200480003000000000014000B000000010100000000000512000000000018000B00000001020000000000052000000020020000000014000B00000001010000000000050B000000" />
+                         Value="010004801400000020000000000000002C0000000101000000000005120000000101000000000005120000000200480003000000000014000B000000010100000000000512000000000018000B00000001020000000000052000000020020000000014000900000001010000000000050B000000" />
         </Component>
         <Component Id="ManifestComponent" Bitness="always64">
           <File Id="EventManifest" Source="$(var.RepositoryRoot)\events\BFD-Service.man" KeyPath="yes">
@@ -164,7 +170,8 @@
       </Directory>
     </StandardDirectory>
     <!-- Fixed-target native SCM actions avoid the documented MsiConfigureServices
-         limitation. Snapshot before installation; restore accounts/SIDs on rollback. -->
+         limitation. Snapshot before installation; restore accounts, SIDs, delayed
+         start, and non-crash recovery on rollback. -->
     <CustomAction Id="PrepareServicePolicy" FileRef="BrokerExe" ExeCommand="--prepare-install" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="RollbackServicePolicy" FileRef="BrokerExe" ExeCommand="--rollback-install" Execute="rollback" Impersonate="no" Return="ignore" />
     <CustomAction Id="ConfigureServicePolicy" FileRef="BrokerExe" ExeCommand="--configure-install" Execute="deferred" Impersonate="no" Return="check" />

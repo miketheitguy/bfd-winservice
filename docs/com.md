@@ -8,12 +8,15 @@ late binding; C++ and Rust clients can use the standard `IDispatch` interface.
 ## Before you begin
 
 Install the x64 MSI and [configure the service](setup.md#2-configure-the-session).
-Use a 64-bit client on the same machine. COM activation starts `BfdWinService`
-if it is stopped, so finish configuration before querying it. The foreground
-`--console` mode does not host the COM server.
+Use a 64-bit client on the same machine. The foreground `--console` mode does
+not host the COM server.
 
-Authenticated local users can activate and query the server, subject to the
-machine's COM security policy. Remote and anonymous calls are denied. The MSI
+Authenticated local users can activate and query the running server, subject to
+the machine's COM security policy. Only SYSTEM and administrators can launch the
+service through COM: their activation starts a stopped `BfdWinService`, so finish
+configuration first. A standard user's activation of a stopped service fails with
+`E_ACCESSDENIED` (`0x80070005`) instead of undoing an administrator's Stop, which
+would resume BGP control. Remote and anonymous calls are denied. The MSI
 does not add a COM network firewall rule. File-copy installations do not register
 the Automation class; use the MSI for this interface.
 
@@ -109,12 +112,18 @@ service; references do not keep the service running after an SCM Stop request.
 
 ## Caller privileges and resource access
 
-The installed BFD service runs as `LocalService`. An authenticated COM caller can be
-a standard user; authentication does not establish administrator privileges.
+The installed BFD service runs as `LocalService`. At startup it permanently removes
+every process privilege except `SeChangeNotifyPrivilege` and
+`SeCreateGlobalPrivilege`, including `SeImpersonatePrivilege`, before accepting
+network traffic or COM calls. An authenticated COM caller can be a standard user;
+authentication does not establish administrator privileges.
 The factory and dispatch objects own only a read-only state observer. State
 queries read this shared atomic value, accept no arguments, and reject property
 writes. They have no engine, logging, file, registry, or BGP management handles.
-Automation metadata is built in memory and is never saved to disk.
+Automation metadata is built in memory and is never saved to disk. Each
+`GetTypeInfo` request builds it again; the process builds at most 64 per second
+and otherwise returns `RPC_E_SERVERCALL_RETRYLATER` (`0x8001010A`), so a caller
+looping on metadata requests cannot consume the packet engine's processor time.
 
 The current methods perform no file or registry access on a caller's behalf.
 If you add such a method, apply these requirements:
@@ -169,10 +178,11 @@ and adds the `RpcSs` service dependency. It writes these `REG_SZ` values under
 service. The release installation test checks the registry view, value types,
 and mappings after both installation and repair.
 
-The launch ACL and the server's
+The launch ACL grants local launch and activation to SYSTEM and administrators,
+and local activation only to authenticated users. The server's
 [`CoInitializeSecurity`](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity)
-access ACL grant only local COM rights to SYSTEM, administrators, and
-authenticated users. Standard machine-wide restrictions still apply.
+access ACL grants local call rights to SYSTEM, administrators, and authenticated
+users. Standard machine-wide restrictions still apply.
 The dedicated thread calls `CoInitializeSecurity` immediately after `CoInitializeEx`,
 before starting management workers or registering its class factory. Startup
 fails if process security has already been initialized. A process-wide guard
@@ -184,7 +194,9 @@ relying on the machine's default authentication setting. The service also sets
 
 The outgoing COM impersonation default is `RPC_C_IMP_LEVEL_IDENTIFY`. The broker
 initializes security on its own dedicated COM thread before starting MI; it does
-not register the Automation factory. Its local MI destination explicitly requests
+not register the Automation factory. Its access ACL admits only SYSTEM,
+administrators, and service accounts (`SU`), so interactive standard users have
+no COM access to the LocalSystem broker process. Its local MI destination explicitly requests
 [`MI_DestinationOptions_ImpersonationType_Impersonate`](https://learn.microsoft.com/en-us/windows/win32/api/mi/ne-mi-mi_destinationoptions_impersonationtype).
 This follows
 [Microsoft's WMI guidance](https://learn.microsoft.com/en-us/windows/win32/wmisdk/setting-the-default-process-security-level-using-c-)

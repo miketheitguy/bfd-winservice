@@ -30,8 +30,11 @@ Only Get, Start, and Stop operations are accepted, in fixed-size messages with
 strictly increasing connection sequence numbers. Requests contain no peer name,
 routing domain, path, command, or registry key. The broker loads its one allowed
 target from the administrator-controlled Parameters key at startup. Pipe clients
-cannot create another server instance or alter the pipe ACL. An occupied pipe
-name causes broker startup to fail.
+cannot create another server instance or alter the pipe ACL. If another process
+holds the pipe name, the broker stays Running, logs Error event 301 at most once a
+minute, and retries each second; BFD with `BgpPeerName` rejects the impostor
+through the process ID check and fails startup until the name is released. BFD
+without `BgpPeerName` doesn't contact the broker.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
@@ -70,21 +73,35 @@ Watch the BFD logs and BGP peer status. The worker applies these actions:
 | Startup and handshake before the first Up | Read status; leave BGP unchanged |
 | Enter Up, including recovery | Check status; Start if the peer is stopped and the action is still current |
 | Enter Down after BFD has been Up | Stop |
-| Engine shutdown or fatal receive/wait error | Set AdminDown and queue Stop, even if BFD never reached Up |
+| Peer signals AdminDown, for example because its BFD service stopped | Never Stop; if BFD's latest action was a Stop, Start the peer |
+| BFD service stop or OS shutdown | Never Stop; if BFD's latest action was a Stop, Start the peer; announce AdminDown for a Detection Time |
+| Fatal (non-transient) receive/wait error or crash | Leave BGP unchanged |
 
 A running BGP peer continues during the initial BFD handshake. A stopped peer waits for BFD to reach Up. Failed or ambiguous status checks never trigger a speculative Start. Init does not cancel a previously queued Stop.
 
-At Up, an already running peer is claimed by the broker connection without
-restarting it. A failed or abandoned connection that attempted a mutation causes
-a Stop attempt; query-only startup probes never stop a peer on disconnect. If
-that cleanup fails, the broker retries it before accepting another client. A
-broker shutdown makes a final cleanup attempt and reports failure if it fails.
+Stopping BFD is administrative, not a path failure, so it never stops BGP. Local
+AdminDown, set only when the service stops, never stops the peer. Following
+[RFC 5882 section 3.2](https://www.rfc-editor.org/rfc/rfc5882.html#section-3.2),
+a session that goes Down because the peer signalled AdminDown also leaves BGP
+running, so stopping BFD at either end of the session keeps BGP running. BGP
+relies on its own hold timer until BFD returns; reaching Up again finds the peer
+running and leaves it unchanged. An S-BFD reflector in maintenance is treated
+the same way.
 
-A dedicated worker handles provider calls while BFD continues running. Failed actions retry after one second unless replaced by a newer action or shutdown. At most a Stop/Start pair remains queued; Down/AdminDown discard queued Starts. An already issued call finishes before the next action runs.
+[RFC 5882 section 4.1](https://www.rfc-editor.org/rfc/rfc5882.html#section-4.1)
+requires that BGP adjacencies be allowed while BFD is administratively disabled
+at either end. This service blocks an adjacency by stopping the peer after a
+detected failure. So when the local service stops, or the peer reports AdminDown,
+the worker withdraws its own Stop: if its latest action was a Stop, it starts the
+peer. A peer that BFD never stopped, for example one an operator stopped, is left
+unchanged. A failure or crash closes the broker connection without an
+administrative signal; the broker never changes the peer on disconnection or on
+its own shutdown.
 
-SCM restarts a crashed broker after five seconds. An abrupt broker termination
-cannot run its disconnect cleanup; once it restarts, the BFD worker reconciles
-the latest requested action. A normal broker Stop does not trigger automatic restart.
+A dedicated worker handles provider calls while BFD continues running. Failed actions retry after one second unless replaced by a newer action or shutdown. At most a Stop/Start pair remains queued; Down discards queued Starts. An already issued call finishes before the next action runs, unless shutdown queues a newer final action, which cancels it.
+
+SCM restarts a crashed broker after five seconds; once it restarts, the BFD
+worker reconciles the latest requested action. A normal broker Stop does not trigger automatic restart.
 The BFD worker checks the connection once per idle second and reconnects after
 broker failure, reapplying the latest requested action. It does not invent an
 action before the session first establishes. The broker uses one client
@@ -97,7 +114,13 @@ ETW/text diagnostic writer and does not open the BFD file log. Slow log output
 does not delay provider calls; the [logging queue limits](logging.md#log-destinations)
 apply to both processes.
 
-Each Management Infrastructure (MI) operation requests a five-second timeout, which is **not a hard shutdown deadline** ([timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)). Shutdown discards queued Starts, attempts pending Stops, and waits for the worker. A failed final Stop produces a nonzero exit status; final shutdown calls are not retried indefinitely.
+Each Management Infrastructure (MI) operation requests a five-second timeout, which is **not a hard shutdown deadline** ([timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)). Shutdown never queues a Stop. The latest queued action still runs, such as a Start that withdraws BFD's Stop or one queued by a recent Up. When an action is queued, an older in-flight call is cancelled, and each call of the final action runs within 20 seconds, including any wait for the broker to finish the cancelled call. If the final action fails, it is recorded as event 3; because the stop was requested, the SCM exit code stays `0` and recovery doesn't restart BFD. Final calls are not retried indefinitely. If the broker's cleanup still runs 60 seconds after a Stop request, or BFD's still runs 60 seconds plus its AdminDown announcement period, the service reports Stopped and ends its process, leaving the BGP peer unchanged.
+
+BFD accepts the SCM preshutdown notification instead of the shutdown notification.
+During Windows shutdown it announces AdminDown and completes any final BGP action
+while the broker, which stops in the later shutdown phase, is still running.
+Windows waits only up to the service's preshutdown timeout, 10 seconds by default,
+so an announcement period longer than that is cut short during Windows shutdown.
 
 <details>
 <summary>Native provider details</summary>

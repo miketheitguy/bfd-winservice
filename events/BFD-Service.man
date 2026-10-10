@@ -82,6 +82,10 @@
             <data name="Mode" inType="win:UInt8" map="RunMode"/>
             <data name="Error" inType="win:UnicodeString"/>
           </template>
+          <template tid="ServiceWarningData">
+            <data name="Mode" inType="win:UInt8" map="RunMode"/>
+            <data name="Warning" inType="win:UnicodeString"/>
+          </template>
           <template tid="SessionData">
             <data name="LocalAddress" inType="win:UnicodeString"/>
             <data name="PeerAddress" inType="win:UnicodeString"/>
@@ -131,6 +135,9 @@
           <event value="3" version="0" symbol="SERVICE_FAILED" channel="Operational"
                  level="win:Error" task="ServiceLifecycle" keywords="Service"
                  template="ServiceFailedData" message="$(string.Event.ServiceFailed)"/>
+          <event value="4" version="0" symbol="SERVICE_WARNING" channel="Operational"
+                 level="win:Warning" task="ServiceLifecycle" keywords="Service"
+                 template="ServiceWarningData" message="$(string.Event.ServiceWarning)"/>
           <event value="100" version="0" symbol="PEER_COMMUNICATION_STARTED" channel="Operational"
                  level="win:Informational" task="PeerCommunication" keywords="Communication"
                  template="SessionData" message="$(string.Event.PeerCommunicationStarted)"/>
@@ -230,6 +237,7 @@
         <string id="Event.BrokerMessage" value="BFD BGP broker: %1"/>
         <string id="Event.ServiceStopped" value="BFD service stopped. Mode: %1. Exit code: %2."/>
         <string id="Event.ServiceFailed" value="BFD service failed. Mode: %1. Error: %2."/>
+        <string id="Event.ServiceWarning" value="BFD service warning. Mode: %1. Warning: %2."/>
         <string id="Event.PeerCommunicationStarted" value="Remote peer %2 started sending valid BFD control packets to %1. Local discriminator: %3. Remote discriminator: %4. State: %6."/>
         <string id="Event.PeerCommunicationStopped" value="Remote peer %2 stopped sending valid BFD control packets to %1 within the detection interval (%9 microseconds). Local discriminator: %3. Last remote discriminator: %4. State: %6."/>
         <string id="Event.SessionUp" value="Local BFD session or reflector entity is Up. Local address: %1. Configured peer: %2. Previous state: %5. Local discriminator: %3. Remote discriminator: %4."/>

@@ -6,10 +6,10 @@ use crate::{
 };
 use std::{
     ffi::OsString,
-    io,
+    io, process,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use windows_service::{
     define_windows_service,
@@ -21,15 +21,22 @@ use windows_service::{
     service_dispatcher,
 };
 
+/// A synchronous MI call can outlast its requested timeout. After this long in
+/// StopPending, the broker reports Stopped and ends its process.
+const STOP_BUDGET: Duration = Duration::from_secs(60);
+/// Final records are written before SERVICE_STOPPED ends the process lifetime.
+const LOG_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+/// Another process may hold the pipe name; retry while reporting the conflict.
+const LISTENER_RETRY: Duration = Duration::from_secs(1);
+const SQUAT_REPORT_INTERVAL: Duration = Duration::from_secs(60);
+
 define_windows_service!(broker_entry, entry);
 pub(super) fn run() -> io::Result<()> {
     service_dispatcher::start(ipc::BROKER_NAME, broker_entry).map_err(io::Error::other)
 }
 fn entry(_: Vec<OsString>) {
+    // start() records its own failures before reporting Stopped.
     if let Err(error) = start() {
-        if let Ok(mut log) = Logger::new(false) {
-            log.broker_message(format_args!("service failed: {error}"), true);
-        }
         eprintln!("BGP broker service failed: {error}");
     }
 }
@@ -85,6 +92,8 @@ impl Reporter {
 }
 
 fn start() -> io::Result<()> {
+    // Created first so every later failure is recorded before SERVICE_STOPPED.
+    let mut log = Logger::new(false)?;
     let stop = StopSignal::new()?;
     let reporter = Arc::new(Mutex::new(Reporter {
         handle: None,
@@ -115,26 +124,36 @@ fn start() -> io::Result<()> {
     let result = (|| -> io::Result<()> {
         ipc::require_broker_identity()?;
         // Initialize process security before MI can marshal anything. This process
-        // uses the apartment/security lifecycle without registering a COM factory.
-        let com = ComServer::initialize()?;
+        // registers no COM factory, so interactive users get no COM access.
+        let com = ComServer::initialize_private()?;
         let target = Target::load()?;
-        let listener = ipc::Listener::new()?;
-        let mut log = Logger::new(false)?;
-        log.broker_message("ready; service identity and pipe ACL verified", false);
         reporter
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .publish(ServiceState::Running, false)?;
         let (sender, receiver) = mpsc::channel();
         thread::scope(|scope| -> io::Result<()> {
+            let worker_log = &mut log;
             let worker = scope.spawn(|| {
-                let result = serve(&listener, target.as_ref(), &stop, &mut log);
+                let result = acquire_listener(&stop, worker_log).and_then(|listener| {
+                    worker_log
+                        .broker_message("ready; service identity and pipe ACL verified", false);
+                    listener.map_or(Ok(()), |listener| {
+                        serve(&listener, target.as_ref(), &stop, worker_log)
+                    })
+                });
                 let _ = sender.send(());
                 result
             });
+            let mut stop_deadline = None;
             while receiver.recv_timeout(Duration::from_secs(1)).is_err() && !worker.is_finished() {
                 let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
                 if reporter.state == ServiceState::StopPending {
+                    let deadline =
+                        *stop_deadline.get_or_insert_with(|| Instant::now() + STOP_BUDGET);
+                    if Instant::now() >= deadline {
+                        abandon_cleanup(&mut reporter);
+                    }
                     if let Err(error) = reporter.publish(ServiceState::StopPending, false) {
                         // A scoped worker must be cancelled before returning, otherwise
                         // its pending pipe read would keep scope teardown waiting forever.
@@ -150,9 +169,62 @@ fn start() -> io::Result<()> {
         com.shutdown()?;
         Ok(())
     })();
+    if let Err(error) = &result {
+        log.broker_message(format_args!("service failed: {error}"), true);
+    }
+    let _ = log.flush(LOG_FLUSH_TIMEOUT);
+    drop(log);
     reporter
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .publish(ServiceState::Stopped, result.is_err())?;
     result
+}
+
+/// Creates the pipe server, retrying while another process holds its name. The
+/// broker stays Running so plain BFD sessions, which never contact it, can start.
+/// Returns None if Stop arrives first.
+fn acquire_listener(stop: &StopSignal, log: &mut Logger) -> io::Result<Option<ipc::Listener>> {
+    let mut last_report = None;
+    loop {
+        match ipc::Listener::new() {
+            Ok(listener) => return Ok(Some(listener)),
+            Err(error) if ipc::is_name_in_use(&error) => {
+                let now = Instant::now();
+                if last_report
+                    .is_none_or(|last: Instant| now.duration_since(last) >= SQUAT_REPORT_INTERVAL)
+                {
+                    last_report = Some(now);
+                    log.broker_message(
+                        format_args!(
+                            "another process holds the BGP pipe name; BGP control waits for it to close: {error}"
+                        ),
+                        true,
+                    );
+                }
+                stop.wait(LISTENER_RETRY)?;
+                if stop.is_requested() {
+                    return Ok(None);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Ends the process when a provider call keeps cleanup running past the stop
+/// budget. The BFD service reconciles BGP state when the broker next starts.
+fn abandon_cleanup(reporter: &mut Reporter) -> ! {
+    if let Ok(mut log) = Logger::new(false) {
+        log.broker_message(
+            format_args!(
+                "cleanup did not finish within {} seconds; ending the broker process",
+                STOP_BUDGET.as_secs()
+            ),
+            true,
+        );
+        let _ = log.flush(LOG_FLUSH_TIMEOUT);
+    }
+    let _ = reporter.publish(ServiceState::Stopped, true);
+    process::exit(1);
 }

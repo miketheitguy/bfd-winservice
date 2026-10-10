@@ -1,5 +1,8 @@
 //! RFC 5880 section 4 wire format and section 6.7 authentication.
-use crate::error::{AuthError, ConfigError, PacketError};
+use crate::{
+    config::wipe,
+    error::{AuthError, ConfigError, PacketError},
+};
 use clap::ValueEnum;
 use sha1::{Digest, Sha1};
 use subtle::ConstantTimeEq;
@@ -125,18 +128,21 @@ impl AuthConfig {
     ///
     /// # Errors
     /// Returns an error for a missing, oversized, or unexpected key.
-    pub fn new(kind: AuthType, key_id: u8, key: Vec<u8>) -> Result<Self, ConfigError> {
+    pub fn new(kind: AuthType, key_id: u8, mut key: Vec<u8>) -> Result<Self, ConfigError> {
         let max = if kind == AuthType::SimplePassword {
             16
         } else {
             kind.hash_len()
         };
-        if kind == AuthType::None {
-            if !key.is_empty() {
-                return Err(ConfigError::UnexpectedKey);
-            }
-        } else if key.is_empty() || key.len() > max {
-            return Err(ConfigError::InvalidKeyLength { kind, max });
+        let error = if kind == AuthType::None {
+            (!key.is_empty()).then_some(ConfigError::UnexpectedKey)
+        } else {
+            (key.is_empty() || key.len() > max)
+                .then_some(ConfigError::InvalidKeyLength { kind, max })
+        };
+        if let Some(error) = error {
+            wipe(&mut key);
+            return Err(error);
         }
         Ok(Self { kind, key_id, key })
     }
@@ -144,23 +150,24 @@ impl AuthConfig {
     fn digest(&self, header: &[u8]) -> [u8; 20] {
         let mut padded_key = [0; 20];
         padded_key[..self.key.len()].copy_from_slice(&self.key);
-        let padded_key = &padded_key[..self.kind.hash_len()];
+        let key = &padded_key[..self.kind.hash_len()];
         let mut digest = [0; 20];
         match self.kind {
             AuthType::KeyedMd5 | AuthType::MeticulousMd5 => {
                 let mut context = md5::Context::new();
                 context.consume(header);
-                context.consume(padded_key);
+                context.consume(key);
                 digest[..16].copy_from_slice(&context.finalize().0);
             }
             AuthType::KeyedSha1 | AuthType::MeticulousSha1 => {
                 let mut context = Sha1::new();
                 context.update(header);
-                context.update(padded_key);
+                context.update(key);
                 digest.copy_from_slice(&context.finalize());
             }
             _ => unreachable!("digest only used for keyed authentication"),
         }
+        wipe(&mut padded_key);
         digest
     }
 
@@ -227,6 +234,13 @@ impl AuthConfig {
         }
         // Return the accepted sequence only after cryptographic verification succeeds.
         Ok(Some(seq))
+    }
+}
+
+impl Drop for AuthConfig {
+    fn drop(&mut self) {
+        // Each clone owns a separate key allocation; clear it before release.
+        wipe(&mut self.key);
     }
 }
 

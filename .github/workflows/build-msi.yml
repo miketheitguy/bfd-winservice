@@ -47,6 +47,16 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Load the repository Rust toolchain
         run: rustup show
+      - name: Audit dependencies for security advisories
+        run: |
+          # Build the auditor outside the repository so its build-std hardening
+          # configuration doesn't apply; the audit itself reads Cargo.lock.
+          Push-Location $env:RUNNER_TEMP
+          try { cargo +stable install cargo-audit --locked }
+          finally { Pop-Location }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install cargo-audit.' }
+          cargo audit
+          if ($LASTEXITCODE -ne 0) { throw 'cargo audit reported a dependency advisory.' }
       - name: Check release version stamping
         run: ./scripts/Test-ReleaseVersion.ps1
       - name: Check installer ACL validation

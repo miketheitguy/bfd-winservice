@@ -12,8 +12,9 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::{
-        LocalFree, ERROR_IO_PENDING, ERROR_NOT_FOUND, ERROR_PIPE_CONNECTED, HANDLE,
-        INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        LocalFree, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_NOT_FOUND,
+        ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        WAIT_TIMEOUT,
     },
     Security::{
         Authorization::{
@@ -31,7 +32,7 @@ use windows_sys::Win32::{
     System::{
         Pipes::{
             ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId,
-            ImpersonateNamedPipeClient, PeekNamedPipe, PIPE_READMODE_MESSAGE,
+            ImpersonateNamedPipeClient, PeekNamedPipe, WaitNamedPipeW, PIPE_READMODE_MESSAGE,
             PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE,
         },
         Threading::{
@@ -49,6 +50,11 @@ pub(crate) const BROKER_NAME: &str = "BfdBgpBroker";
 const PIPE: &str = r"\\.\pipe\BfdWinService.Bgp.v1";
 const FRAME_SIZE: usize = 24;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bounds each call of the final action during BFD shutdown, including a wait
+/// for the broker to finish a cancelled call and accept the new connection.
+const SHUTDOWN_CALL_TIMEOUT: Duration = Duration::from_secs(20);
+/// Ordinary connections wait this long for the single pipe instance to free up.
+const BUSY_PIPE_WAIT: Duration = Duration::from_secs(1);
 pub(crate) const NOT_CONFIGURED: u32 = ERROR_NOT_FOUND;
 
 fn invalid(message: &'static str) -> io::Error {
@@ -333,11 +339,21 @@ fn read(
     Frame::decode(&bytes)
 }
 
-fn write(pipe: &OwnedHandle, frame: Frame, stop: Option<&StopSignal>) -> io::Result<()> {
-    write_bytes(pipe, &frame.encode(), stop)
+fn write(
+    pipe: &OwnedHandle,
+    frame: Frame,
+    deadline: Instant,
+    stop: Option<&StopSignal>,
+) -> io::Result<()> {
+    write_bytes(pipe, &frame.encode(), deadline, stop)
 }
 
-fn write_bytes(pipe: &OwnedHandle, bytes: &[u8], stop: Option<&StopSignal>) -> io::Result<()> {
+fn write_bytes(
+    pipe: &OwnedHandle,
+    bytes: &[u8],
+    deadline: Instant,
+    stop: Option<&StopSignal>,
+) -> io::Result<()> {
     let (event, mut overlap) = operation()?;
     let length = u32::try_from(bytes.len()).map_err(|_| invalid("BGP frame is too large"))?;
     // SAFETY: live buffer/OVERLAPPED retained until complete drains native I/O.
@@ -352,14 +368,7 @@ fn write_bytes(pipe: &OwnedHandle, bytes: &[u8], stop: Option<&StopSignal>) -> i
     } != 0;
     // Capture GetLastError before consulting the clock or doing any other work.
     let initiated = initiation(immediate);
-    let count = complete(
-        pipe,
-        &mut overlap,
-        &event,
-        initiated,
-        Some(Instant::now() + IO_TIMEOUT),
-        stop,
-    )?;
+    let count = complete(pipe, &mut overlap, &event, initiated, Some(deadline), stop)?;
     if count as usize != bytes.len() {
         return Err(invalid("partial BGP write"));
     }
@@ -413,6 +422,7 @@ pub(crate) mod fixtures {
                 status: 0,
                 value: 0,
             },
+            Instant::now() + IO_TIMEOUT,
             None,
         )?;
         read(pipe, Some(Instant::now() + Duration::from_secs(3)), None)
@@ -524,7 +534,11 @@ mod tests {
     #[test]
     fn pipe_acl_denies_unrelated_clients_and_additional_server_instances() {
         let (listener, name) = fixtures::listener("S-1-1-0");
-        assert!(Listener::with_policy(&name, "S-1-1-0", "S-1-1-0").is_err());
+        let error = Listener::with_policy(&name, "S-1-1-0", "S-1-1-0")
+            .err()
+            .expect("a second first instance must fail");
+        assert!(is_name_in_use(&error), "{error}");
+        assert!(!is_name_in_use(&io::Error::from_raw_os_error(2)));
         let other_name = format!("{name}.restricted");
         let restricted = Listener::with_policy(&other_name, SERVICE_SID, "S-1-5-19").unwrap();
         assert_eq!(
@@ -577,7 +591,7 @@ mod tests {
             .encode()
             .to_vec();
             bytes.push(0);
-            let _ = write_bytes(&client, &bytes, None);
+            let _ = write_bytes(&client, &bytes, Instant::now() + IO_TIMEOUT, None);
             server.join().unwrap();
         });
     }
@@ -611,6 +625,83 @@ mod tests {
     }
 
     #[test]
+    fn connections_wait_for_a_busy_instance_and_optionally_for_a_missing_broker() {
+        let (listener, name) = fixtures::listener("S-1-1-0");
+        let stop = StopSignal::new().unwrap();
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                listener.accept(&stop).unwrap();
+                // Ends when the first client disconnects, then serves the next one.
+                assert!(listener.request(0, &stop).is_err());
+                listener.disconnect();
+                listener.accept(&stop).unwrap();
+            });
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let first = fixtures::connect_pipe(&name);
+            assert_eq!(
+                connect(&name).unwrap_err().raw_os_error(),
+                Some(ERROR_PIPE_BUSY as i32)
+            );
+            let releaser = scope.spawn(move || {
+                thread::sleep(Duration::from_millis(200));
+                drop(first);
+            });
+            let started = Instant::now();
+            let second =
+                connect_within(&name, Instant::now() + Duration::from_secs(5), false).unwrap();
+            assert!(started.elapsed() >= Duration::from_millis(150));
+            releaser.join().unwrap();
+            server.join().unwrap();
+            drop(second);
+        });
+        let missing = format!("{name}.missing");
+        let started = Instant::now();
+        let error =
+            connect_within(&missing, Instant::now() + Duration::from_secs(5), false).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(ERROR_FILE_NOT_FOUND as i32));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let started = Instant::now();
+        let error = connect_within(&missing, Instant::now() + Duration::from_millis(300), true)
+            .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(ERROR_FILE_NOT_FOUND as i32));
+        assert!(started.elapsed() >= Duration::from_millis(250));
+    }
+
+    #[test]
+    fn cancellation_interrupts_a_pending_client_read_promptly() {
+        let (listener, name) = fixtures::listener("S-1-1-0");
+        let stop = StopSignal::new().unwrap();
+        let cancel = StopSignal::new().unwrap();
+        thread::scope(|scope| {
+            // The server reads the request but never responds.
+            let server = scope.spawn(|| {
+                listener.accept(&stop).unwrap();
+                listener.request(0, &stop).unwrap();
+            });
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let client = fixtures::connect_pipe(&name);
+            let frame = Frame {
+                method: Method::Start,
+                sequence: 1,
+                status: 0,
+                value: 0,
+            };
+            write(&client, frame, Instant::now() + IO_TIMEOUT, None).unwrap();
+            let canceller = scope.spawn(|| {
+                thread::sleep(Duration::from_millis(100));
+                cancel.signal().unwrap();
+            });
+            let started = Instant::now();
+            let error =
+                read(&client, Some(Instant::now() + IO_TIMEOUT), Some(&cancel)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+            assert!(started.elapsed() < Duration::from_secs(5));
+            canceller.join().unwrap();
+            server.join().unwrap();
+        });
+    }
+
+    #[test]
     fn client_rejects_a_pipe_outside_the_scm_broker_process() {
         let (_listener, name) = fixtures::listener("S-1-1-0");
         let client = fixtures::connect_pipe(&name);
@@ -622,15 +713,33 @@ mod tests {
 pub(crate) struct Client {
     pipe: Option<OwnedHandle>,
     sequence: u64,
+    /// Signalled when shutdown queues a final action; it cancels running I/O.
+    cancel: Option<StopSignal>,
 }
 impl Client {
     pub(crate) fn new() -> Self {
         Self {
             pipe: None,
             sequence: 0,
+            cancel: None,
         }
     }
+    /// Creates a client whose running calls end promptly once `cancel` is
+    /// signalled. Calls made afterwards are the final action and run within a
+    /// shutdown budget.
+    pub(crate) fn with_cancel(cancel: StopSignal) -> Self {
+        Self {
+            cancel: Some(cancel),
+            ..Self::new()
+        }
+    }
+    fn closing(&self) -> bool {
+        self.cancel.as_ref().is_some_and(StopSignal::is_requested)
+    }
     pub(crate) fn maintain(&mut self) -> io::Result<bool> {
+        self.maintain_until(Instant::now() + BUSY_PIPE_WAIT, false)
+    }
+    fn maintain_until(&mut self, deadline: Instant, wait_for_broker: bool) -> io::Result<bool> {
         if let Some(pipe) = &self.pipe {
             // SAFETY: peek only checks the live overlapped pipe; no buffers are supplied.
             if unsafe {
@@ -648,36 +757,52 @@ impl Client {
             }
             self.pipe = None;
         }
-        let pipe = connect(PIPE)?;
+        let pipe = connect_within(PIPE, deadline, wait_for_broker)?;
         verify_server(&pipe)?;
         self.pipe = Some(pipe);
         self.sequence = 0;
         Ok(true)
     }
     fn exchange(&mut self, method: Method) -> io::Result<Frame> {
-        self.maintain()?;
+        // A call made after shutdown began is the final action. It runs within its
+        // own budget and may wait for the broker to finish a cancelled call or to
+        // restart. Only calls that were already running can be cancelled.
+        let closing = self.closing();
+        let deadline = Instant::now()
+            + if closing {
+                SHUTDOWN_CALL_TIMEOUT
+            } else {
+                IO_TIMEOUT
+            };
+        if closing {
+            self.maintain_until(deadline, true)?;
+        } else {
+            self.maintain()?;
+        }
         self.sequence = self
             .sequence
             .checked_add(1)
             .ok_or_else(|| invalid("BGP sequence exhausted"))?;
+        let sequence = self.sequence;
         let pipe = self
             .pipe
             .as_ref()
             .ok_or_else(|| invalid("missing BGP pipe"))?;
+        let cancel = self.cancel.as_ref().filter(|_| !closing);
         let result = (|| {
             write(
                 pipe,
                 Frame {
                     method,
-                    sequence: self.sequence,
+                    sequence,
                     status: 0,
                     value: 0,
                 },
-                None,
+                deadline,
+                cancel,
             )?;
-            let response = read(pipe, Some(Instant::now() + IO_TIMEOUT), None)?;
-            if response.sequence != self.sequence || response.method != method || response.value > 1
-            {
+            let response = read(pipe, Some(deadline), cancel)?;
+            if response.sequence != sequence || response.method != method || response.value > 1 {
                 return Err(invalid("invalid BGP response"));
             }
             Ok(response)
@@ -706,8 +831,12 @@ impl Client {
     }
 }
 
+#[cfg(test)]
 fn connect(name: &str) -> io::Result<OwnedHandle> {
-    let name = wide(name);
+    connect_wide(&wide(name))
+}
+
+fn connect_wide(name: &[u16]) -> io::Result<OwnedHandle> {
     // Individual write rights exclude FILE_CREATE_PIPE_INSTANCE, unlike GENERIC_WRITE.
     // SAFETY: terminated name; no inherited handle; identification prevents token misuse.
     let raw = unsafe {
@@ -726,6 +855,34 @@ fn connect(name: &str) -> io::Result<OwnedHandle> {
     }
     // SAFETY: successful open transferred unique handle ownership.
     Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
+}
+
+/// Opens the pipe, waiting until `deadline` while its single instance is busy,
+/// for example while the broker finishes a previous client's cleanup. With
+/// `wait_for_broker`, also waits for a broker that is restarting.
+fn connect_within(name: &str, deadline: Instant, wait_for_broker: bool) -> io::Result<OwnedHandle> {
+    let name = wide(name);
+    loop {
+        let error = match connect_wide(&name) {
+            Ok(pipe) => return Ok(pipe),
+            Err(error) => error,
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let busy = error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32);
+        let missing = error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32);
+        if remaining.is_zero() || !(busy || wait_for_broker && missing) {
+            return Err(error);
+        }
+        let pause = remaining.min(Duration::from_secs(1));
+        if busy {
+            let milliseconds = u32::try_from(pause.as_millis()).unwrap_or(1000).max(1);
+            // SAFETY: terminated name. A failed or timed-out wait is resolved by
+            // the next connection attempt and the deadline check above.
+            unsafe { WaitNamedPipeW(name.as_ptr(), milliseconds) };
+        } else {
+            std::thread::sleep(pause.min(Duration::from_millis(100)));
+        }
+    }
 }
 
 fn verify_server(pipe: &OwnedHandle) -> io::Result<()> {
@@ -750,6 +907,15 @@ fn verify_server(pipe: &OwnedHandle) -> io::Result<()> {
         return Err(denied());
     }
     Ok(())
+}
+
+/// Returns whether creating the first pipe instance failed because another
+/// process already holds the name.
+pub(crate) fn is_name_in_use(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(code) if code == ERROR_ACCESS_DENIED as i32 || code == ERROR_PIPE_BUSY as i32
+    )
 }
 
 pub(crate) struct Listener {
@@ -844,7 +1010,7 @@ impl Listener {
         frame.validate_request(previous)
     }
     pub(crate) fn respond(&self, frame: Frame, stop: &StopSignal) -> io::Result<()> {
-        write(&self.pipe, frame, Some(stop))
+        write(&self.pipe, frame, Instant::now() + IO_TIMEOUT, Some(stop))
     }
     pub(crate) fn disconnect(&self) {
         // SAFETY: all I/O has completed/drained before resetting this owned pipe instance.

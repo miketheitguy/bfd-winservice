@@ -4,11 +4,23 @@
 use super::{Mode, Options, SessionType, Timing, ValidatedOptions, PARAMETERS_KEY};
 use crate::packet::AuthType;
 use clap::ValueEnum;
-use std::{io, net::IpAddr, ptr};
+use std::{
+    io,
+    net::IpAddr,
+    os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
+    ptr,
+};
 use windows_sys::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS},
-    System::Registry::{
-        RegGetValueW, HKEY, HKEY_LOCAL_MACHINE, RRF_NOEXPAND, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    Foundation::{
+        ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    },
+    System::{
+        Registry::{
+            RegCloseKey, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY,
+            HKEY_LOCAL_MACHINE, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_THREAD_AGNOSTIC,
+            RRF_NOEXPAND, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+        },
+        Threading::{CreateEventW, ResetEvent, WaitForSingleObject},
     },
 };
 
@@ -31,6 +43,98 @@ pub fn load_registry(console: bool) -> io::Result<ValidatedOptions> {
 
 pub(crate) fn load_sbfd_settings(options: &Options) -> io::Result<(Timing, bool)> {
     Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY).sbfd_settings(options)
+}
+
+/// Signals an event when a value in the Parameters key changes, so live S-BFD
+/// settings reload on demand instead of through periodic registry reads.
+pub(crate) struct SettingsWatch {
+    // Field order closes the key, which cancels its notification, before the event.
+    key: OwnedKey,
+    event: OwnedHandle,
+}
+
+struct OwnedKey(HKEY);
+
+// SAFETY: an opened registry key is a process-wide kernel handle, usable and
+// closable from any thread. Its notification is registered thread-agnostic, and
+// the key is owned exclusively, so moving it with the engine is sound.
+unsafe impl Send for OwnedKey {}
+
+impl Drop for OwnedKey {
+    fn drop(&mut self) {
+        // SAFETY: this owner closes its successfully opened key exactly once.
+        unsafe { RegCloseKey(self.0) };
+    }
+}
+
+impl SettingsWatch {
+    pub(crate) fn open() -> io::Result<Self> {
+        Self::open_at(HKEY_LOCAL_MACHINE, PARAMETERS_KEY)
+    }
+
+    fn open_at(root: HKEY, path: &str) -> io::Result<Self> {
+        let path = wide(path);
+        let mut key = ptr::null_mut();
+        // SAFETY: root is a valid borrowed key, path is terminated, and the
+        // output is writable. KEY_NOTIFY grants only change notification.
+        let status = unsafe { RegOpenKeyExW(root, path.as_ptr(), 0, KEY_NOTIFY, &mut key) };
+        check(status, "Parameters", "a change-notification key")?;
+        let key = OwnedKey(key);
+        // SAFETY: unnamed manual-reset event, no borrowed security/name storage.
+        let raw = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: CreateEventW returned a new valid handle owned by this function.
+        let event = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let watch = Self { key, event };
+        watch.arm()?;
+        Ok(watch)
+    }
+
+    fn arm(&self) -> io::Result<()> {
+        // SAFETY: the key and event stay alive until Drop closes the key first.
+        // Thread-agnostic registration survives the creating thread.
+        check(
+            unsafe {
+                RegNotifyChangeKeyValue(
+                    self.key.0,
+                    0,
+                    REG_NOTIFY_CHANGE_LAST_SET | REG_NOTIFY_THREAD_AGNOSTIC,
+                    self.event.as_raw_handle(),
+                    1,
+                )
+            },
+            "Parameters",
+            "a change notification",
+        )
+    }
+
+    /// The manual-reset event that becomes signalled after a value changes.
+    pub(crate) fn event(&self) -> BorrowedHandle<'_> {
+        self.event.as_handle()
+    }
+
+    /// Consumes a pending change and rearms before the caller reads the settings,
+    /// so a later write signals again rather than being lost.
+    ///
+    /// # Errors
+    /// Returns wait or registration errors, including deletion of the watched key.
+    pub(crate) fn take_change(&self) -> io::Result<bool> {
+        // SAFETY: the owned event is alive; a zero timeout only samples its state.
+        match unsafe { WaitForSingleObject(self.event.as_raw_handle(), 0) } {
+            WAIT_TIMEOUT => Ok(false),
+            WAIT_OBJECT_0 => {
+                // SAFETY: the owned manual-reset event is alive.
+                if unsafe { ResetEvent(self.event.as_raw_handle()) } == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                self.arm()?;
+                Ok(true)
+            }
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
 }
 
 /// The privileged broker reads its target from protected HKLM configuration,
@@ -230,7 +334,9 @@ impl Registry {
             if status == ERROR_FILE_NOT_FOUND {
                 return Ok(None);
             }
+            // Values can hold authentication keys; clear every native buffer we release.
             if status == ERROR_MORE_DATA {
+                super::wipe(&mut buffer);
                 if bytes > 65536 || !bytes.is_multiple_of(2) {
                     return Err(invalid(name, "has an invalid or oversized string length"));
                 }
@@ -240,9 +346,12 @@ impl Registry {
                 );
                 continue;
             }
-            check(status, name, "REG_SZ")?;
-            return decode_string(name, &buffer, bytes).map(Some);
+            let result = check(status, name, "REG_SZ")
+                .and_then(|()| decode_string(name, &buffer, bytes).map(Some));
+            super::wipe(&mut buffer);
+            return result;
         }
+        super::wipe(&mut buffer);
         Err(invalid(name, "changed size repeatedly while reading"))
     }
 }
@@ -486,6 +595,24 @@ mod tests {
             fixture.dword("DetectMult", 5);
             fixture.dword("MinRxUs", 0);
             assert!(registry.sbfd_settings(&options).is_err());
+        }
+
+        #[test]
+        fn settings_watch_signals_each_value_change_once_and_rearms() {
+            let fixture = Fixture::new();
+            let watch = SettingsWatch::open_at(fixture.key, "").unwrap();
+            assert!(!watch.take_change().unwrap());
+            let signalled = |watch: &SettingsWatch| {
+                // SAFETY: the borrowed event stays alive for this bounded wait.
+                let result = unsafe { WaitForSingleObject(watch.event().as_raw_handle(), 2000) };
+                result == WAIT_OBJECT_0
+            };
+            for value in [250_000, 500_000] {
+                fixture.dword("MinTxUs", value);
+                assert!(signalled(&watch), "value change was not signalled");
+                assert!(watch.take_change().unwrap());
+                assert!(!watch.take_change().unwrap(), "a change was reported twice");
+            }
         }
 
         #[test]

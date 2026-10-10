@@ -4,6 +4,7 @@ use crate::bgp::ipc::BROKER_NAME;
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
+    mem::size_of,
     path::PathBuf,
     ptr,
 };
@@ -11,9 +12,15 @@ use windows_service::{
     service::{Service, ServiceAccess, ServiceSidType},
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
-use windows_sys::Win32::System::Services::{ChangeServiceConfigW, SERVICE_NO_CHANGE};
+use windows_sys::Win32::System::Services::{
+    ChangeServiceConfigW, QueryServiceConfig2W, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
+    SERVICE_DELAYED_AUTO_START_INFO, SERVICE_NO_CHANGE,
+};
 
 const NAMES: [&str; 2] = ["BfdWinService", BROKER_NAME];
+const SNAPSHOT_MAGIC: &[u8; 4] = b"BSI2";
+/// Account, SID type, delayed automatic start, and non-crash failure recovery.
+const RECORD_LEN: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Account {
@@ -54,6 +61,32 @@ impl Account {
     }
 }
 
+/// The service settings this installer changes and restores on rollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Policy {
+    account: Account,
+    sid: ServiceSidType,
+    /// Start automatic services after other automatic services, plus a delay.
+    delayed: bool,
+    /// Run failure actions when the service stops with a nonzero exit code.
+    non_crash_recovery: bool,
+}
+
+impl Policy {
+    fn encode(self) -> [u8; RECORD_LEN] {
+        [
+            self.account.byte(),
+            match self.sid {
+                ServiceSidType::None => 0,
+                ServiceSidType::Unrestricted => 1,
+                ServiceSidType::Restricted => 3,
+            },
+            u8::from(self.delayed),
+            u8::from(self.non_crash_recovery),
+        ]
+    }
+}
+
 fn snapshot_path() -> io::Result<PathBuf> {
     // This location is fixed relative to the MSI-installed, administrator-protected
     // binary. No installer command accepts a caller-provided path or service name.
@@ -77,8 +110,56 @@ fn open(manager: &ServiceManager, name: &str) -> io::Result<Service> {
         .map_err(io::Error::other)
 }
 
-fn set(service: &Service, account: Account, sid: ServiceSidType) -> io::Result<()> {
-    let account: Vec<u16> = account.name().encode_utf16().chain(Some(0)).collect();
+fn delayed_auto_start(service: &Service) -> io::Result<bool> {
+    let mut info = SERVICE_DELAYED_AUTO_START_INFO {
+        fDelayedAutostart: 0,
+    };
+    let mut needed = 0;
+    // SAFETY: live service handle with QUERY_CONFIG; the output is a correctly
+    // sized, aligned, writable SERVICE_DELAYED_AUTO_START_INFO.
+    if unsafe {
+        QueryServiceConfig2W(
+            service.raw_handle(),
+            SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
+            (&mut info as *mut SERVICE_DELAYED_AUTO_START_INFO).cast(),
+            u32::try_from(size_of::<SERVICE_DELAYED_AUTO_START_INFO>())
+                .map_err(io::Error::other)?,
+            &mut needed,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(info.fDelayedAutostart != 0)
+}
+
+fn query(service: &Service) -> io::Result<Policy> {
+    let config = service.query_config().map_err(io::Error::other)?;
+    let account = config
+        .account_name
+        .ok_or_else(|| io::Error::other("missing service account"))?;
+    let account = account
+        .to_str()
+        .ok_or_else(|| io::Error::other("invalid service account"))?;
+    Ok(Policy {
+        account: Account::parse(account)?,
+        sid: service
+            .get_config_service_sid_info()
+            .map_err(io::Error::other)?,
+        delayed: delayed_auto_start(service)?,
+        non_crash_recovery: service
+            .get_failure_actions_on_non_crash_failures()
+            .map_err(io::Error::other)?,
+    })
+}
+
+fn set(service: &Service, policy: Policy) -> io::Result<()> {
+    let account: Vec<u16> = policy
+        .account
+        .name()
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
     // SAFETY: live service handle has CHANGE_CONFIG; terminated account name;
     // all other configuration fields remain unchanged. Built-in accounts have no password.
     if unsafe {
@@ -100,61 +181,67 @@ fn set(service: &Service, account: Account, sid: ServiceSidType) -> io::Result<(
         return Err(io::Error::last_os_error());
     }
     service
-        .set_config_service_sid_info(sid)
+        .set_config_service_sid_info(policy.sid)
+        .map_err(io::Error::other)?;
+    service
+        .set_delayed_auto_start(policy.delayed)
+        .map_err(io::Error::other)?;
+    service
+        .set_failure_actions_on_non_crash_failures(policy.non_crash_recovery)
         .map_err(io::Error::other)
 }
 
-fn decode(bytes: &[u8]) -> io::Result<[Option<(Account, ServiceSidType)>; 2]> {
-    if bytes.len() != 8 || &bytes[..4] != b"BSI1" {
+fn decode(bytes: &[u8]) -> io::Result<[Option<Policy>; 2]> {
+    if bytes.len() != SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len()
+        || &bytes[..SNAPSHOT_MAGIC.len()] != SNAPSHOT_MAGIC
+    {
         return Err(io::Error::other("invalid service rollback snapshot"));
     }
     let mut values = [None, None];
-    for index in 0..2 {
-        let account = match bytes[4 + index * 2] {
+    let (records, _) = bytes[SNAPSHOT_MAGIC.len()..].as_chunks::<RECORD_LEN>();
+    for (value, record) in values.iter_mut().zip(records) {
+        let account = match record[0] {
             0 => Account::System,
             1 => Account::LocalService,
             2 => Account::NetworkService,
-            255 if bytes[5 + index * 2] == 0 => continue,
+            255 if record[1..] == [0, 0, 0] => continue,
             _ => return Err(io::Error::other("invalid rollback account")),
         };
-        let sid = match bytes[5 + index * 2] {
+        let sid = match record[1] {
             0 => ServiceSidType::None,
             1 => ServiceSidType::Unrestricted,
             3 => ServiceSidType::Restricted,
             _ => return Err(io::Error::other("invalid rollback SID type")),
         };
-        values[index] = Some((account, sid));
+        let flag = |byte: u8| match byte {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(io::Error::other("invalid rollback service flag")),
+        };
+        *value = Some(Policy {
+            account,
+            sid,
+            delayed: flag(record[2])?,
+            non_crash_recovery: flag(record[3])?,
+        });
     }
     Ok(values)
 }
 
 pub(super) fn prepare() -> io::Result<()> {
     let manager = manager()?;
-    let mut bytes = *b"BSI1\xff\0\xff\0";
-    for (index, name) in NAMES.iter().enumerate() {
+    let mut bytes = Vec::with_capacity(SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len());
+    bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    for name in NAMES {
         let service = match manager.open_service(name, ServiceAccess::QUERY_CONFIG) {
             Ok(service) => service,
             Err(windows_service::Error::Winapi(error)) if error.raw_os_error() == Some(1060) => {
-                continue
+                bytes.extend_from_slice(&[255, 0, 0, 0]);
+                continue;
             }
             Err(error) => return Err(io::Error::other(error)),
         };
-        let config = service.query_config().map_err(io::Error::other)?;
-        let account = config
-            .account_name
-            .ok_or_else(|| io::Error::other("missing service account"))?;
-        let account = account
-            .to_str()
-            .ok_or_else(|| io::Error::other("invalid service account"))?;
-        bytes[4 + index * 2] = Account::parse(account)?.byte();
-        bytes[5 + index * 2] = match service
-            .get_config_service_sid_info()
-            .map_err(io::Error::other)?
-        {
-            ServiceSidType::None => 0,
-            ServiceSidType::Unrestricted => 1,
-            ServiceSidType::Restricted => 3,
-        };
+        bytes.extend_from_slice(&query(&service)?.encode());
     }
     let path = snapshot_path()?;
     let mut file = OpenOptions::new()
@@ -175,15 +262,25 @@ pub(super) fn configure() -> io::Result<()> {
     // A valid snapshot is required before changing either installed service.
     decode(&fs::read(snapshot_path()?)?)?;
     let manager = manager()?;
+    // Both start after the boot-critical automatic services, when interface
+    // addresses are more likely to exist. BFD recovery also covers nonzero exits.
     set(
         &open(&manager, NAMES[0])?,
-        Account::LocalService,
-        ServiceSidType::Unrestricted,
+        Policy {
+            account: Account::LocalService,
+            sid: ServiceSidType::Unrestricted,
+            delayed: true,
+            non_crash_recovery: true,
+        },
     )?;
     set(
         &open(&manager, NAMES[1])?,
-        Account::System,
-        ServiceSidType::Unrestricted,
+        Policy {
+            account: Account::System,
+            sid: ServiceSidType::Unrestricted,
+            delayed: true,
+            non_crash_recovery: false,
+        },
     )
 }
 
@@ -198,9 +295,8 @@ pub(super) fn rollback() -> io::Result<()> {
     // Restore every previously existing service, even if restoring the first fails.
     let mut failure = None;
     for (name, old) in NAMES.iter().zip(decode(&bytes)?) {
-        if let Some((account, sid)) = old {
-            if let Err(error) = open(&manager, name).and_then(|service| set(&service, account, sid))
-            {
+        if let Some(policy) = old {
+            if let Err(error) = open(&manager, name).and_then(|service| set(&service, policy)) {
                 failure = Some(error);
             }
         }
@@ -219,22 +315,40 @@ pub(super) fn commit() -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn rollback_snapshot_rejects_unknown_accounts_sid_types_and_extra_data() {
+    fn rollback_snapshot_rejects_unknown_accounts_sid_types_flags_and_extra_data() {
+        let system = Policy {
+            account: Account::System,
+            sid: ServiceSidType::None,
+            delayed: false,
+            non_crash_recovery: false,
+        };
+        let local = Policy {
+            account: Account::LocalService,
+            sid: ServiceSidType::Unrestricted,
+            delayed: true,
+            non_crash_recovery: true,
+        };
         assert_eq!(
-            decode(b"BSI1\0\0\x01\x01").unwrap(),
-            [
-                Some((Account::System, ServiceSidType::None)),
-                Some((Account::LocalService, ServiceSidType::Unrestricted))
-            ]
+            decode(b"BSI2\0\0\0\0\x01\x01\x01\x01").unwrap(),
+            [Some(system), Some(local)]
         );
-        assert_eq!(decode(b"BSI1\xff\0\xff\0").unwrap(), [None, None]);
+        let mut encoded = SNAPSHOT_MAGIC.to_vec();
+        encoded.extend_from_slice(&system.encode());
+        encoded.extend_from_slice(&local.encode());
+        assert_eq!(decode(&encoded).unwrap(), [Some(system), Some(local)]);
+        assert_eq!(decode(b"BSI2\xff\0\0\0\xff\0\0\0").unwrap(), [None, None]);
         for bytes in [
-            &b"BSI1\x03\0\0\0"[..],
-            &b"BSI1\0\x02\0\0"[..],
-            &b"BSI1\xff\x01\0\0"[..],
-            &b"BSI1\0\0\0\0\0"[..],
+            &b"BSI2\x03\0\0\0\0\0\0\0"[..],
+            &b"BSI2\0\x02\0\0\0\0\0\0"[..],
+            &b"BSI2\0\0\x02\0\0\0\0\0"[..],
+            &b"BSI2\0\0\0\x02\0\0\0\0"[..],
+            &b"BSI2\xff\x01\0\0\0\0\0\0"[..],
+            &b"BSI2\xff\0\x01\0\0\0\0\0"[..],
+            &b"BSI2\0\0\0\0\0\0\0\0\0"[..],
+            &b"BSI1\0\0\0\0\0\0\0\0"[..],
+            &b"BSI1\0\0\x01\x01"[..],
         ] {
-            assert!(decode(bytes).is_err());
+            assert!(decode(bytes).is_err(), "{bytes:?}");
         }
         assert!(Account::parse("DOMAIN\\custom-service-user").is_err());
     }

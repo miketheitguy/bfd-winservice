@@ -95,7 +95,8 @@ Transmit (TX) and receive (RX) behavior follows these rules:
 
 - One process runs one local/peer session. The receive address/port is exclusively bound; multiple peers sharing it are unsupported. Another process can use a different local address or transport profile.
 - Incoming packets must pass peer/path metadata, discriminator, and authentication checks before affecting the session. Point-to-point mode permits source-address changes on the configured single-hop interface. Missing required receive metadata is discarded.
-- Outside Up, the base desired TX is `max(StartupTxUs, MinTxUs)`. Classical multihop doubles the greater of this base and its preceding negotiated interval after an unanswered discovery window or detection timeout, using saturating arithmetic. A valid peer packet clears backoff. Single-hop keeps the base interval.
+- Outside Up, the base desired TX is `max(StartupTxUs, MinTxUs)`. Classical multihop doubles the greater of this base and its preceding negotiated interval after an unanswered discovery window or detection timeout, up to 30 seconds or that greater interval, whichever is longer. A valid peer packet clears backoff. Single-hop keeps the base interval.
+- Transient network faults, such as an adapter reset or a removed route, don't stop the engine. Socket use pauses with a 10–250 millisecond backoff while protocol timers continue, so an unusable path still expires detection. Other socket errors end the engine; SCM then restarts the service.
 - Entering Up starts a Poll sequence when desired TX changes. A received Final completes only a Poll that has been transmitted. Valid peer timer changes are honored; timeouts move Init/Up to Down.
 - Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Both clocks use accepted, authenticated packets, including reception in AdminDown. Passive transmission stops when the learned discriminator expires.
 - State changes trigger immediate notifications when the active/passive role
@@ -121,11 +122,15 @@ probing; reflectors answer requests and send no periodic packets.
 
 On normal classical shutdown with a communicating peer, the service sends an
 immediate AdminDown notification and continues permitted periodic announcements
-for the detection period, capped at five seconds. The cap bounds the BFD portion
-of shutdown when peers advertise long detection times; it limits the
-recommendation in [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16).
+for at least one Detection Time, as recommended by
+[RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16)
+and [RFC 5882 section 8](https://www.rfc-editor.org/rfc/rfc5882.html#section-8).
+The period is the longer of the local Detection Time and the peer's Detection
+Time for this system's packets, both measured before AdminDown, so a peer with
+long timers lengthens the stop. During Windows shutdown, the service's
+preshutdown timeout can cut the period short.
 Zero-RX suppression and passive-role restrictions still apply to periodic traffic.
-Without a communicating peer, after a fatal transport error, or for an S-BFD
+Without a communicating peer, after a fatal (non-transient) transport error, or for an S-BFD
 initiator, shutdown attempts one role-permitted notification. Passive sessions
-with no learned discriminator and S-BFD reflectors send none. BGP Stop is queued
-before these announcements; waiting for its provider can extend total shutdown.
+with no learned discriminator and S-BFD reflectors send none. Shutdown leaves BGP
+unchanged; only a Stop already queued by an earlier Down can extend total shutdown.

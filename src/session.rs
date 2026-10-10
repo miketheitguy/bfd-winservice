@@ -14,6 +14,11 @@ use crate::{
     packet::{AuthConfig, AuthType, ControlPacket, Diagnostic, State},
 };
 
+/// Congestion backoff stops doubling at 30 seconds, so a recovered path is
+/// probed, and BGP control can resume, within one interval. A slower base
+/// interval, such as a peer's advertised receive limit, remains the floor.
+const MAX_BACKOFF_TX_US: u32 = 30_000_000;
+
 /// One validated classical or S-BFD initiator session, driven by its caller.
 /// Reflector options provide logging context; use Reflector for stateless replies.
 pub struct Session {
@@ -223,6 +228,15 @@ impl Session {
         self.remote_diagnostic
     }
 
+    /// Returns whether the session is Down because the peer signalled AdminDown,
+    /// for example when its BFD service stopped. RFC 5882 section 3.2 treats this
+    /// as administrative rather than a path failure.
+    pub(crate) fn down_by_peer_admin(&self) -> bool {
+        self.state == State::Down
+            && self.diagnostic == Diagnostic::NeighborDown
+            && self.remote_state == State::AdminDown
+    }
+
     /// Applies S-BFD timing settings while retaining state and discriminators.
     /// Wire timing changes start a Poll when the initiator is Up. A TX increase
     /// is advertised immediately but takes effect only after its Final reply.
@@ -253,7 +267,8 @@ impl Session {
     }
 
     /// Returns the Up rate, or the greater of the startup and Up rates otherwise.
-    /// S-BFD and unanswered classical multihop probes apply saturating backoff.
+    /// S-BFD and unanswered classical multihop probes double their interval up
+    /// to 30 seconds, or to the base interval when that is already longer.
     pub fn desired_min_tx_us(&self) -> u32 {
         let interval = if self.state == State::Up {
             self.timing.min_tx_us
@@ -271,6 +286,7 @@ impl Session {
                 interval.max(self.remote_min_rx_us)
             };
             base.saturating_mul(1u32 << self.congestion_backoff.min(31))
+                .min(base.max(MAX_BACKOFF_TX_US))
         } else {
             interval
         }
@@ -304,6 +320,12 @@ impl Session {
             u64::from(self.timing.min_rx_us.max(self.remote_min_tx_us))
                 * u64::from(self.remote_detect_mult),
         )
+    }
+
+    /// Returns the peer's Detection Time for this system's packets: the local
+    /// multiplier times the negotiated transmit interval.
+    pub(crate) fn peer_detection_time(&self) -> Duration {
+        self.transmit_interval() * u32::from(self.timing.detect_mult)
     }
 
     /// Returns the receive-expiry deadline, if monitoring has begun.
@@ -781,6 +803,82 @@ mod tests {
             assert!(session.receive(&reply, now).is_err());
         }
         assert_eq!(session.state(), State::Up);
+    }
+
+    #[test]
+    fn only_a_peer_admin_down_is_distinguished_from_path_failures() {
+        let now = Instant::now();
+        for (signal, administrative) in [(State::AdminDown, true), (State::Down, false)] {
+            let mut session = session();
+            session
+                .receive(&wire(&test_packet(State::Init)), now)
+                .unwrap();
+            assert_eq!(session.state, State::Up);
+            assert!(!session.down_by_peer_admin());
+            session.receive(&wire(&test_packet(signal)), now).unwrap();
+            assert_eq!(session.state, State::Down);
+            assert_eq!(session.down_by_peer_admin(), administrative, "{signal:?}");
+        }
+        let mut session = session();
+        session
+            .receive(&wire(&test_packet(State::Init)), now)
+            .unwrap();
+        assert!(session.expire(now + session.detection_time()));
+        assert!(!session.down_by_peer_admin());
+
+        // An S-BFD reflector in maintenance answers AdminDown.
+        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+        options.session_type = SessionType::SbfdInitiator;
+        options.remote_discriminator = Some(99);
+        let auth = options.validate().unwrap();
+        let mut reflector =
+            crate::seamless::Reflector::new(Options::reflector(options.peer, 99), auth.clone())
+                .unwrap();
+        let mut initiator = Session::new(options, auth).unwrap();
+        let request = initiator.packet_at(false, now);
+        initiator
+            .receive(&reflector.respond(&request).unwrap(), now)
+            .unwrap();
+        assert_eq!(initiator.state, State::Up);
+        reflector.set_admin_down(true);
+        let request = initiator.packet_at(false, now);
+        initiator
+            .receive(&reflector.respond(&request).unwrap(), now)
+            .unwrap();
+        assert_eq!(initiator.state, State::Down);
+        assert!(initiator.down_by_peer_admin());
+    }
+
+    #[test]
+    fn congestion_backoff_stops_at_thirty_seconds_unless_the_base_is_slower() {
+        let mut options = (*session().options).clone();
+        options.mode = Mode::SingleHop;
+        options.multihop = false;
+        options.session_type = SessionType::SbfdInitiator;
+        options.remote_discriminator = Some(99);
+        let mut seamless = Session::from_config(options.into_validated().unwrap());
+        let mut now = Instant::now();
+        seamless.packet_at(false, now);
+        let mut previous = seamless.desired_min_tx_us();
+        for _ in 0..40 {
+            now = seamless.detection_deadline().unwrap();
+            seamless.expire(now);
+            let current = seamless.desired_min_tx_us();
+            assert!(current >= previous && current <= MAX_BACKOFF_TX_US);
+            previous = current;
+        }
+        assert_eq!(seamless.transmit_interval(), Duration::from_secs(30));
+        assert!(seamless.detection_time() < Duration::from_secs(30 * 4));
+
+        // A slow peer's advertised receive limit stays the classical floor.
+        let now = Instant::now();
+        let mut classical = session();
+        let mut peer = test_packet(State::Init);
+        peer.required_min_rx_us = 60_000_000;
+        classical.receive(&wire(&peer), now).unwrap();
+        assert_eq!(classical.transmit_interval(), Duration::from_secs(60));
+        assert!(classical.expire(now + classical.detection_time()));
+        assert_eq!(classical.transmit_interval(), Duration::from_secs(60));
     }
 
     fn session() -> Session {

@@ -7,7 +7,7 @@ use std::process;
 #[cfg(windows)]
 use bfd_winservice::{
     config::load_registry,
-    runtime::{Engine, Logger, StopSignal},
+    runtime::{drop_privileges, Engine, Logger, StopSignal},
 };
 #[cfg(windows)]
 use std::{error::Error, io, io::Write};
@@ -45,6 +45,14 @@ fn run_console() -> Result<(), Box<dyn Error>> {
         let _ = writeln!(io::stderr().lock(), "unable to start BFD logger: {error}");
     })?;
     let result = (|| -> io::Result<()> {
+        // The engine needs no privileges beyond traverse checking and global objects.
+        let removed = drop_privileges()?;
+        if !removed.is_empty() {
+            log.log(format_args!(
+                "removed unused process privileges: {}",
+                removed.join(", ")
+            ));
+        }
         let options = load_registry(true)?;
         log.open_file(&options)?;
         let stop = StopSignal::new()?;

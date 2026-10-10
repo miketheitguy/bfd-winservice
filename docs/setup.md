@@ -50,12 +50,18 @@ The MSI installs the following resources for all users:
 - Both executables, the manifest, and logging script in
   `C:\Program Files\BfdWinService`.
 - The `BfdWinService` service with display name **BFD Windows Service**,
-  the LocalService account, and **Automatic** startup. The MSI leaves it stopped;
-  configure it before starting the service or restarting Windows.
-- The `BfdBgpBroker` service with **Manual** startup and the LocalSystem account.
-  BFD depends on the broker, so starting BFD starts the broker even when BGP
-  control is disabled. Both services have their own enabled service SID.
-  SCM restarts the broker after a crash with a five-second delay.
+  the LocalService account, and **Automatic (Delayed Start)** startup. The MSI
+  leaves it stopped; configure it before starting the service or restarting
+  Windows. Delayed start runs after boot-time services, when interface addresses
+  are more likely to be assigned.
+- The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
+  LocalSystem account. BFD depends on the broker, so starting BFD also starts the
+  broker. Without `BgpPeerName`, BFD never contacts it. Both services have their
+  own enabled service SID.
+- SCM recovery: the broker restarts five seconds after a crash. BFD restarts
+  10 seconds after a crash or an unrequested failure exit, such as a local address
+  that isn't assigned yet. A Stop request always ends BFD with exit code `0`, so
+  recovery never restarts a service that an administrator stopped.
 - The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
   with message and resource paths pointing to the installed executable.
 - The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
@@ -69,7 +75,8 @@ The MSI installs the following resources for all users:
 - Four executable-specific UDP firewall rules for classical and Seamless BFD.
 - The read-only `BfdWinService.SessionState` COM Automation class and the
   `RpcSs` service dependency. [Query the current BFD state through COM](com.md)
-  after configuring the service; activating the class starts a stopped service.
+  after configuring the service. An administrator's activation starts a stopped
+  service; standard users can query only a running service.
 
 ### 1. Install the package
 
@@ -101,7 +108,8 @@ Get-WinEvent -ListLog 'BFD-Service/Operational'
 
 Replace `MSI_PATH` with the local `.msi` path, such as
 `C:\Temp\BfdWinService-1.1.0-x64.msi`. Successful installation reports a **Stopped**,
-**Automatic** service and the registered provider/channel. Exit code `3010`
+**Automatic** service, which `Get-Service` also reports for delayed start, and the
+registered provider/channel. Exit code `3010`
 means installation succeeded and Windows requests a restart.
 
 ### 2. Configure and start the session
@@ -232,9 +240,10 @@ $installDirectory = Join-Path $env:ProgramFiles 'BfdWinService'
 $exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
 ```
 
-All session settings belong in the BFD Parameters registry key. `Automatic`
-starts BFD and its broker dependency when Windows starts; finish configuration
-before starting the service. The MSI already registers the event manifest.
+All session settings belong in the BFD Parameters registry key. Automatic
+(Delayed Start) starts BFD and its broker dependency shortly after Windows starts;
+finish configuration before starting the service. The MSI already registers the
+event manifest.
 
 ### 2. Configure the session
 
@@ -320,13 +329,16 @@ Name          Status  StartType
 BfdWinService Running Automatic
 ```
 
-Confirm `StartType` is `Automatic`. SCM `Running` means configuration is valid,
+Confirm `StartType` is `Automatic`; Windows reports delayed automatic services
+with this value. SCM `Running` means configuration is valid,
 sockets are open, and any configured
 Border Gateway Protocol (BGP) worker has started. BFD reaches `Up` separately;
 the initial BGP status query can also still be pending.
 
-Configuration, file-log, and engine failures produce a nonzero SCM
-service-specific exit status. For failure details, see
+Configuration, file-log, and engine failures that end the service without a
+Stop request produce a nonzero SCM service-specific exit status, and SCM restarts
+the service after 10 seconds. A requested Stop always reports exit code `0`; a
+failed cleanup is still recorded as event 3. For failure details, see
 [Operational events](logging.md#operational-events).
 
 ### 6. Verify peer communication
@@ -367,9 +379,10 @@ Stop-Service BfdWinService
 
 The service reports `StopPending` with advancing checkpoints during cleanup,
 then `Stopped`. Stop and Shutdown initiate this status transition immediately.
-The engine sets `AdminDown` and queues any configured BGP Stop. With a
-communicating classical peer, it continues permitted announcements for the
-detection period, capped at five seconds, before finishing cleanup. Other roles
+The engine sets `AdminDown` and never stops a configured BGP peer; if BFD had
+stopped the peer after a failure, the engine starts it again, as RFC 5882
+requires while BFD is disabled. With a communicating classical peer, it continues
+permitted announcements for at least one Detection Time before finishing cleanup. Other roles
 or sessions without a communicating peer attempt one role-permitted notification.
 See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 

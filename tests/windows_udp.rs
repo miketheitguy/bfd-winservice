@@ -678,6 +678,50 @@ fn normal_shutdown_announces_admin_down_for_the_detection_period() {
 }
 
 #[test]
+fn shutdown_announces_for_the_peers_full_detection_time_without_a_cap() {
+    let mut options = options("127.0.0.92", "127.0.0.93", "multihop");
+    options.source_port = Some(55092);
+    let peer = UdpSocket::bind("127.0.0.93:4784").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+    let sender = bfd_sender("127.0.0.93");
+    let mut engine = RunningEngine::start(options);
+    let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+    let mut buffer = [0; 512];
+    peer.recv_from(&mut buffer).unwrap();
+    let mut packet = peer_packet(State::Init);
+    packet.desired_min_tx_us = 1_000_000;
+    packet.detect_mult = 3; // Local Detection Time: 3 × 1 s.
+                            // The peer's Detection Time for our packets: local DetectMult 3 × 2.5 s.
+    packet.required_min_rx_us = 2_500_000;
+    sender
+        .send_to(&packet.encode(&auth, 0), "127.0.0.92:4784")
+        .unwrap();
+    loop {
+        let (length, _) = peer.recv_from(&mut buffer).unwrap();
+        if ControlPacket::decode(&buffer[..length]).unwrap().state == State::Up {
+            break;
+        }
+    }
+    let started = Instant::now();
+    engine.stop.signal().unwrap();
+    let mut announcements = 0;
+    while announcements < 2 {
+        let (length, _) = peer.recv_from(&mut buffer).unwrap();
+        if ControlPacket::decode(&buffer[..length]).unwrap().state == State::AdminDown {
+            announcements += 1;
+        }
+    }
+    engine.worker.take().unwrap().join().unwrap().unwrap();
+    // RFC 5880 section 6.8.16: at least the longer Detection Time, beyond the former 5 s cap.
+    assert!(
+        started.elapsed() >= Duration::from_millis(7400),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
 fn peer_polls_do_not_starve_the_local_periodic_poll_sequence() {
     let mut options = options("127.0.0.30", "127.0.0.31", "multihop");
     options.min_tx_us = 300000;

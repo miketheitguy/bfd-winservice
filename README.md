@@ -42,7 +42,7 @@ Use **PowerShell as Administrator** for installation and configuration.
 ### 1. Install the service
 
 Follow [Install with an MSI](docs/setup.md#install-with-an-msi) to install the
-files and Automatic service, register the Operational provider, and create
+files and Automatic (Delayed Start) services, register the Operational provider, and create
 firewall rules. The service remains stopped for configuration.
 
 Supplied loose files support [foreground console execution](docs/setup.md#run-in-a-console).

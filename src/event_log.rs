@@ -23,6 +23,7 @@ const OPERATIONAL_KEYWORD: u64 = 0x8000_0000_0000_0000;
 const SERVICE_STARTED: EVENT_DESCRIPTOR = descriptor(1, 4, 1, 0x1);
 const SERVICE_STOPPED: EVENT_DESCRIPTOR = descriptor(2, 4, 1, 0x1);
 const SERVICE_FAILED: EVENT_DESCRIPTOR = descriptor(3, 2, 1, 0x1);
+const SERVICE_WARNING: EVENT_DESCRIPTOR = descriptor(4, 3, 1, 0x1);
 const BROKER_INFORMATION: EVENT_DESCRIPTOR = descriptor(300, 4, 4, 0x4);
 const BROKER_ERROR: EVENT_DESCRIPTOR = descriptor(301, 2, 4, 0x4);
 const PEER_COMMUNICATION_STARTED: EVENT_DESCRIPTOR = descriptor(100, 4, 2, 0x2);
@@ -186,6 +187,19 @@ impl Record {
             event: &SERVICE_FAILED,
             payload,
             text: None,
+        }
+    }
+    pub(crate) fn service_warning(console: bool, warning: &str) -> Self {
+        let mut payload = vec![u8::from(console)];
+        append_unicode(&mut payload, warning);
+        Self {
+            event: &SERVICE_WARNING,
+            payload,
+            text: Some(format!(
+                "event_id={} level={} {warning}",
+                SERVICE_WARNING.Id,
+                level_name(&SERVICE_WARNING)
+            )),
         }
     }
     pub(crate) fn session_event(
@@ -498,6 +512,7 @@ mod tests {
             ("SERVICE_STARTED", SERVICE_STARTED),
             ("SERVICE_STOPPED", SERVICE_STOPPED),
             ("SERVICE_FAILED", SERVICE_FAILED),
+            ("SERVICE_WARNING", SERVICE_WARNING),
             ("BROKER_INFORMATION", BROKER_INFORMATION),
             ("BROKER_ERROR", BROKER_ERROR),
             ("PEER_COMMUNICATION_STARTED", PEER_COMMUNICATION_STARTED),
@@ -650,12 +665,28 @@ mod tests {
     }
 
     #[test]
+    fn service_warning_payload_and_text_use_the_warning_level() {
+        let record = Record::service_warning(false, "configure AllowedPeers");
+        assert_eq!(record.identity(), (4, 3));
+        let mut expected = vec![0];
+        append_unicode(&mut expected, "configure AllowedPeers");
+        assert_eq!(record.payload, expected);
+        assert_eq!(
+            record.text.as_deref(),
+            Some("event_id=4 level=Warning configure AllowedPeers")
+        );
+    }
+
+    #[test]
     #[cfg(not(miri))]
     fn native_provider_registration_and_lifecycle_writes_succeed() {
         let provider = Provider::register().unwrap();
         provider.emit(&Record::service_started(true)).unwrap();
         provider
             .emit(&Record::service_failed(true, "synthetic ETW smoke test"))
+            .unwrap();
+        provider
+            .emit(&Record::service_warning(true, "synthetic ETW warning"))
             .unwrap();
         provider.emit(&Record::service_stopped(true, 1)).unwrap();
     }

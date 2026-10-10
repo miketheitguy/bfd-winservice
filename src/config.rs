@@ -19,7 +19,26 @@ pub(crate) use registry::load_bgp_target;
 #[cfg(windows)]
 pub use registry::load_registry;
 #[cfg(windows)]
-pub(crate) use registry::load_sbfd_settings;
+pub(crate) use registry::{load_sbfd_settings, SettingsWatch};
+
+/// Overwrites values that held secret material before their storage is released.
+/// Volatile writes keep the optimizer from removing stores to memory about to be freed.
+#[allow(unsafe_code)] // Volatile writes are the only portable way to keep these stores.
+pub(crate) fn wipe<T: Copy + Default>(values: &mut [T]) {
+    for value in values {
+        // SAFETY: value is a valid, aligned, exclusive reference to an initialized T.
+        unsafe { std::ptr::write_volatile(value, T::default()) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Clears a string that held key text, keeping it valid (and empty) UTF-8.
+#[allow(unsafe_code)] // Zero bytes are valid UTF-8, preserving the String invariant.
+pub(crate) fn wipe_string(text: &mut String) {
+    // SAFETY: wipe stores only zero bytes, which keep the contents valid UTF-8.
+    wipe(unsafe { text.as_mut_vec() });
+    text.clear();
+}
 
 /// Windows Service Control Manager service name.
 pub const SERVICE_NAME: &str = "BfdWinService";
@@ -418,6 +437,10 @@ impl Options {
             if hex.len() % 2 != 0 || !hex.is_ascii() {
                 return Err(ConfigError::InvalidHexKey);
             }
+            // from_str_radix also accepts a sign, so check digits explicitly.
+            if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(ConfigError::InvalidHexByte);
+            }
             (0..hex.len())
                 .step_by(2)
                 .map(|i| {
@@ -491,6 +514,52 @@ impl Options {
         Timing::new(self.min_tx_us, self.min_rx_us, self.detect_mult)
     }
 
+    /// Returns valid but weak settings that let a spoofed or replayed packet
+    /// change BFD state, and therefore any BGP action. Call after validation,
+    /// which normalizes the transport profile.
+    pub fn security_warnings(&self) -> Vec<&'static str> {
+        let mut warnings = Vec::new();
+        match self.session_type {
+            SessionType::Classical => {
+                if self.mode == Mode::Multihop
+                    && self.auth == AuthType::None
+                    && self.min_ttl.is_none()
+                {
+                    warnings.push(
+                        "multihop BFD without authentication or MinTtl accepts packets spoofed \
+                         from any network path; configure meticulous keyed authentication or MinTtl",
+                    );
+                }
+                if matches!(
+                    self.auth,
+                    AuthType::SimplePassword | AuthType::KeyedMd5 | AuthType::KeyedSha1
+                ) {
+                    warnings.push(
+                        "simple-password, keyed-md5, and keyed-sha1 authentication accept \
+                         replayed packets that can hold a failed session Up; use meticulous-sha1",
+                    );
+                }
+            }
+            SessionType::SbfdInitiator => {
+                if matches!(self.auth, AuthType::None | AuthType::SimplePassword) {
+                    warnings.push(
+                        "an S-BFD initiator without keyed authentication accepts forged or \
+                         replayed reflector responses; configure a keyed authentication type",
+                    );
+                }
+            }
+            SessionType::SbfdReflector => {
+                if self.allowed_peers.is_empty() {
+                    warnings.push(
+                        "the S-BFD reflector answers requests from any source address; \
+                         configure AllowedPeers to limit reflection",
+                    );
+                }
+            }
+        }
+        warnings
+    }
+
     /// Build a socket address, adding the configured scope only for link-local IPv6.
     /// Does not validate configuration; a missing interface becomes scope zero.
     pub fn address(&self, ip: IpAddr, port: u16) -> SocketAddr {
@@ -507,6 +576,18 @@ impl Options {
                 },
             )
             .into(),
+        }
+    }
+}
+
+impl Drop for Options {
+    fn drop(&mut self) {
+        // Validation copies keys into AuthConfig, which clears its own copy.
+        for key in [&mut self.auth_key, &mut self.auth_key_hex]
+            .into_iter()
+            .flatten()
+        {
+            wipe_string(key);
         }
     }
 }
@@ -663,6 +744,68 @@ mod tests {
         options.auth = AuthType::SimplePassword;
         options.auth_key_hex = Some("zz".into());
         assert!(options.validate().is_err());
+        // u8::from_str_radix alone would accept these signed pairs.
+        for signed in ["+f", "+f+f", "-0", "0+"] {
+            options.auth_key_hex = Some(signed.into());
+            assert_eq!(options.validate().err(), Some(ConfigError::InvalidHexByte));
+        }
+        options.auth_key_hex = Some("0aFf".into());
+        assert!(options.validate().is_ok());
+    }
+
+    #[test]
+    fn weak_but_valid_security_settings_produce_warnings() {
+        let mut classical = multihop();
+        classical.validate().unwrap();
+        assert_eq!(classical.security_warnings().len(), 1);
+        classical.min_ttl = Some(250);
+        assert!(classical.security_warnings().is_empty());
+        for (kind, warnings) in [
+            (AuthType::SimplePassword, 1),
+            (AuthType::KeyedMd5, 1),
+            (AuthType::KeyedSha1, 1),
+            (AuthType::MeticulousMd5, 0),
+            (AuthType::MeticulousSha1, 0),
+        ] {
+            classical.auth = kind;
+            classical.min_ttl = None;
+            assert_eq!(classical.security_warnings().len(), warnings, "{kind:?}");
+        }
+        let mut single_hop = options();
+        single_hop.interface_index = Some(2);
+        single_hop.validate().unwrap();
+        assert!(single_hop.security_warnings().is_empty());
+
+        let mut initiator = options();
+        initiator.session_type = SessionType::SbfdInitiator;
+        initiator.remote_discriminator = Some(7);
+        for (kind, warnings) in [
+            (AuthType::None, 1),
+            (AuthType::SimplePassword, 1),
+            (AuthType::KeyedSha1, 0),
+            (AuthType::MeticulousSha1, 0),
+        ] {
+            initiator.auth = kind;
+            assert_eq!(initiator.security_warnings().len(), warnings, "{kind:?}");
+        }
+
+        let mut reflector = Options::reflector("192.0.2.1".parse().unwrap(), 99);
+        assert_eq!(reflector.security_warnings().len(), 1);
+        reflector.allowed_peers = vec!["192.0.2.2".parse().unwrap()];
+        assert!(reflector.security_warnings().is_empty());
+    }
+
+    #[test]
+    fn wiping_clears_secret_storage_and_keeps_strings_valid() {
+        let mut bytes = *b"secret";
+        wipe(&mut bytes);
+        assert_eq!(bytes, [0; 6]);
+        let mut units = [0x73u16, 0x65];
+        wipe(&mut units);
+        assert_eq!(units, [0, 0]);
+        let mut text = String::from("hidden-key");
+        wipe_string(&mut text);
+        assert!(text.is_empty());
     }
 
     #[test]

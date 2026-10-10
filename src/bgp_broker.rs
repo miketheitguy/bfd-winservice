@@ -110,27 +110,7 @@ fn serve_with_backend(
     log: &mut Logger,
     mut execute: impl FnMut(Method, &mut Logger) -> io::Result<u32>,
 ) -> io::Result<()> {
-    let mut cleanup_pending = false;
     while !stop.is_requested() {
-        // Do not accept a new owner while a disconnected owner's Stop is unresolved.
-        if cleanup_pending {
-            match execute(Method::Stop, log) {
-                Ok(_) => cleanup_pending = false,
-                Err(error) => {
-                    log.broker_message(
-                        format_args!("BGP broker disconnected-client Stop retry failed: {error}"),
-                        true,
-                    );
-                    for _ in 0..10 {
-                        if stop.is_requested() {
-                            return Err(error);
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                    continue;
-                }
-            }
-        }
         if let Err(error) = listener.accept(stop) {
             if stop.is_requested() {
                 break;
@@ -138,7 +118,6 @@ fn serve_with_backend(
             return Err(error);
         }
         let mut sequence = 0;
-        let mut managed = false;
         let result = (|| -> io::Result<()> {
             while !stop.is_requested() {
                 let request = listener.request(sequence, stop)?;
@@ -150,16 +129,8 @@ fn serve_with_backend(
                     value: 0,
                 };
                 if configured {
-                    // Even a failed Start may have taken effect remotely. Once a
-                    // mutation is attempted, disconnection requires a Stop attempt.
-                    managed |= request.method != Method::Get;
                     match execute(request.method, log) {
-                        Ok(value) => {
-                            response.value = value;
-                            if request.method == Method::Stop {
-                                managed = false;
-                            }
-                        }
+                        Ok(value) => response.value = value,
                         Err(error) => {
                             response.status = error
                                 .raw_os_error()
@@ -188,25 +159,9 @@ fn serve_with_backend(
                 );
             }
         }
-        // Identification was reverted before reaching this privileged policy action.
-        // Query-only/cold-start connections never change the peer on disconnect.
-        if managed {
-            if let Err(error) = execute(Method::Stop, log) {
-                log.broker_message(
-                    format_args!("BGP broker disconnected-client Stop failed: {error}"),
-                    true,
-                );
-                listener.disconnect();
-                if stop.is_requested() {
-                    return Err(error);
-                }
-                cleanup_pending = true;
-            }
-        }
+        // The BFD service stopping, failing, or crashing is not a path failure:
+        // a disconnection, like broker shutdown, leaves the peer unchanged.
         listener.disconnect();
-    }
-    if cleanup_pending {
-        execute(Method::Stop, log)?;
     }
     Ok(())
 }
@@ -253,66 +208,43 @@ mod tests {
     }
 
     #[test]
-    fn failed_start_disconnect_retries_stop_before_a_new_client_can_query() {
-        let (listener, name) = fixtures::listener("S-1-1-0");
-        let stop = StopSignal::new().unwrap();
-        let (called, calls) = mpsc::channel();
-        thread::scope(|scope| {
-            let server = scope.spawn(|| {
-                let mut log = Logger::new(true).unwrap();
-                let mut stops = 0;
-                serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
-                    called.send(method).unwrap();
-                    match method {
-                        Method::Start => Err(io::Error::from_raw_os_error(5)),
-                        Method::Stop => {
-                            stops += 1;
-                            if stops == 1 {
-                                Err(io::Error::other("temporary Stop failure"))
-                            } else {
-                                Ok(0)
-                            }
+    fn disconnect_after_a_mutation_leaves_the_peer_and_serves_the_next_client() {
+        for start_fails in [false, true] {
+            let (listener, name) = fixtures::listener("S-1-1-0");
+            let stop = StopSignal::new().unwrap();
+            let (called, calls) = mpsc::channel();
+            thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    let mut log = Logger::new(true).unwrap();
+                    serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
+                        called.send(method).unwrap();
+                        match method {
+                            Method::Start if start_fails => Err(io::Error::from_raw_os_error(5)),
+                            Method::Start => Ok(1),
+                            Method::Stop | Method::Get => Ok(0),
                         }
-                        Method::Get => Ok(0),
-                    }
-                })
-            });
-            let _cleanup = fixtures::StopOnDrop(stop.clone());
-            let client = fixtures::connect_pipe(&name);
-            assert_eq!(
-                fixtures::request(&client, Method::Start, 1).unwrap().status,
-                5
-            );
-            assert_eq!(
-                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                Method::Start
-            );
-            drop(client);
-            for _ in 0..2 {
+                    })
+                });
+                let _cleanup = fixtures::StopOnDrop(stop.clone());
+                let client = fixtures::connect_pipe(&name);
+                let response = fixtures::request(&client, Method::Start, 1).unwrap();
+                assert_eq!(response.status, if start_fails { 5 } else { 0 });
+                // The BFD service stopping or failing must not stop the peer.
+                drop(client);
+                let next = fixtures::connect_pipe(&name);
+                assert_eq!(fixtures::request(&next, Method::Get, 1).unwrap().status, 0);
+                stop.signal().unwrap();
+                server.join().unwrap().unwrap();
                 assert_eq!(
-                    calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                    Method::Stop
+                    calls.try_iter().collect::<Vec<_>>(),
+                    [Method::Start, Method::Get]
                 );
-            }
-            let recovered = fixtures::connect_pipe(&name);
-            assert_eq!(
-                fixtures::request(&recovered, Method::Get, 1)
-                    .unwrap()
-                    .status,
-                0
-            );
-            assert_eq!(
-                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                Method::Get
-            );
-            stop.signal().unwrap();
-            server.join().unwrap().unwrap();
-            assert!(calls.try_recv().is_err());
-        });
+            });
+        }
     }
 
     #[test]
-    fn replay_is_rejected_before_backend_and_managed_disconnect_stops_peer() {
+    fn replay_is_rejected_before_backend_and_disconnect_leaves_the_peer() {
         let (listener, name) = fixtures::listener("S-1-1-0");
         let stop = StopSignal::new().unwrap();
         let (called, calls) = mpsc::channel();
@@ -327,67 +259,37 @@ mod tests {
             let _cleanup = fixtures::StopOnDrop(stop.clone());
             let client = fixtures::connect_pipe(&name);
             fixtures::request(&client, Method::Start, 1).unwrap();
-            assert_eq!(
-                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                Method::Start
-            );
             assert!(fixtures::request(&client, Method::Get, 1).is_err());
-            assert_eq!(
-                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                Method::Stop
-            );
+            // Confirm the broker finished with the rejected connection.
+            drop(client);
+            let next = fixtures::connect_pipe(&name);
+            drop(next);
             stop.signal().unwrap();
             server.join().unwrap().unwrap();
-            assert!(calls.try_recv().is_err());
+            assert_eq!(calls.try_iter().collect::<Vec<_>>(), [Method::Start]);
         });
     }
 
     #[test]
-    fn successful_stop_clears_disconnect_cleanup_and_shutdown_failure_is_reported() {
-        for final_stop_fails in [false, true] {
-            let (listener, name) = fixtures::listener("S-1-1-0");
-            let stop = StopSignal::new().unwrap();
-            let (called, calls) = mpsc::channel();
-            thread::scope(|scope| {
-                let server = scope.spawn(|| {
-                    let mut log = Logger::new(true).unwrap();
-                    serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
-                        called.send(method).unwrap();
-                        if method == Method::Stop && final_stop_fails {
-                            Err(io::Error::from_raw_os_error(5))
-                        } else {
-                            Ok(0)
-                        }
-                    })
-                });
-                let _cleanup = fixtures::StopOnDrop(stop.clone());
-                let client = fixtures::connect_pipe(&name);
-                fixtures::request(&client, Method::Start, 1).unwrap();
-                assert_eq!(
-                    calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                    Method::Start
-                );
-                if !final_stop_fails {
-                    fixtures::request(&client, Method::Stop, 2).unwrap();
-                    assert_eq!(
-                        calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                        Method::Stop
-                    );
-                }
-                stop.signal().unwrap();
-                let result = server.join().unwrap();
-                if final_stop_fails {
-                    assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
-                    assert_eq!(
-                        calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                        Method::Stop
-                    );
-                } else {
-                    result.unwrap();
-                }
-                assert!(calls.try_recv().is_err());
+    fn broker_shutdown_leaves_a_started_peer_unchanged() {
+        let (listener, name) = fixtures::listener("S-1-1-0");
+        let stop = StopSignal::new().unwrap();
+        let (called, calls) = mpsc::channel();
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut log = Logger::new(true).unwrap();
+                serve_with_backend(&listener, true, &stop, &mut log, |method, _| {
+                    called.send(method).unwrap();
+                    Ok(1)
+                })
             });
-        }
+            let _cleanup = fixtures::StopOnDrop(stop.clone());
+            let client = fixtures::connect_pipe(&name);
+            fixtures::request(&client, Method::Start, 1).unwrap();
+            stop.signal().unwrap();
+            server.join().unwrap().unwrap();
+            assert_eq!(calls.try_iter().collect::<Vec<_>>(), [Method::Start]);
+        });
     }
 
     #[test]

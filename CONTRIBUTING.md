@@ -13,8 +13,10 @@ You need:
 
 - 64-bit Windows 10 or later, or a corresponding Windows Server release, on an
   x64 processor.
-- Rust installed through rustup. The repository's `rust-toolchain.toml` selects
-  nightly Rust, `x86_64-pc-windows-msvc`, Clippy, rustfmt, and `rust-src`.
+- Rust installed through rustup. The repository's `rust-toolchain.toml` pins a
+  dated nightly Rust, `x86_64-pc-windows-msvc`, Clippy, rustfmt, and `rust-src`,
+  so every build and release uses the same compiler. Update the date deliberately
+  and rerun the full test, ASan, and hardening checks when you do.
 - Visual Studio's **Desktop development with C++** workload, including the Microsoft Visual C++ (MSVC) toolchain and Windows Software Development Kit (SDK).
 
 ## Build the executable
@@ -362,7 +364,7 @@ Administrators don't need Rust, the MSVC toolchain, or the Windows SDK to
 follow that guide.
 
 Loose files support console execution. Use the MSI for SCM execution: it
-provisions the LocalService BFD process, demand-start LocalSystem broker, enabled
+provisions the LocalService BFD process, Automatic (Delayed Start) LocalSystem broker, enabled
 service SIDs, service dependency, and scoped registry/file/log ACLs. Native MI
 code is confined to `src/bgp_broker/mi.rs`; the BFD worker uses `src/bgp/ipc.rs`.
 Broker operations accept only fixed Get/Start/Stop frames and load their target
@@ -442,22 +444,25 @@ namespace, which WiX 7 retains, and uses
 WiX handles manifest/firewall installation, rollback, and removal through its
 native extension actions. Resource paths resolve to the installed executable.
 Separate registry-value components preserve administrator values during repair.
-Fixed-target native SCM custom actions provision accounts and service SID types.
-They snapshot previous built-in account/SID settings in the protected installation
-directory, restore them during MSI rollback, and remove the snapshot on commit.
+Fixed-target native SCM custom actions provision accounts, service SID types,
+delayed automatic start for both services, and recovery after a nonzero BFD exit.
+They snapshot the previous settings in the protected installation directory,
+restore them during MSI rollback, and remove the snapshot on commit.
 WiX documents limitations in the native MSI service-configuration action; these
 settings therefore use explicit SCM calls instead of `MsiServiceConfig` authoring.
 See [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/wxs/serviceconfig/).
-The installed service is Automatic and remains stopped for address configuration
+The installed service is Automatic (Delayed Start) and remains stopped for address configuration
 and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-with-an-msi).
 
 ### Build with GitHub Actions
 
 The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
 of version tags matching `v*` and supports manual dispatch. The build job runs
-only when the selected ref is a version tag. It checks version stamping, Rust
+only when the selected ref is a version tag. It audits `Cargo.lock` against the
+RustSec advisory database with `cargo audit`, then checks version stamping, Rust
 formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
-`rust-toolchain.toml`.
+`rust-toolchain.toml`. The auditor is built with stable Rust outside the
+repository, so the repository's build-std configuration doesn't apply to it.
 
 Only builds of version tags package an MSI. Before compilation, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
@@ -479,7 +484,7 @@ executable so it doesn't rebuild the packaged service or its matching PDB.
 The installation test runs only on a GitHub-hosted runner. It checks fresh
 installation, actual service configuration, registry types, firewall rules,
 rendered Operational events, disabled/enabled file output, repair without
-resetting settings, COM queries and activation of a stopped service, and uninstall
+resetting settings, COM queries and administrator activation of a stopped service, and uninstall
 while removing COM registration and retaining generated logs. It provisions
 loopback addresses and SEHOP before starting the service. It doesn't run on
 developer machines. It also checks the installed executable's versions and the
@@ -488,10 +493,11 @@ read-only and can run locally.
 
 The tests check both service accounts and SIDs, broker startup authorization
 from the actual LocalService token, denial of unrelated pipe clients, both
-executable versions, SCM recovery after a broker crash, and log writes through
-the BFD service SID.
+executable versions, delayed start and recovery settings, SCM recovery after a
+broker crash, and log writes through the BFD service SID.
 `Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
-copy to exercise fresh-install and existing LocalSystem-account rollback. It
+copy to exercise fresh-install and existing LocalSystem-account rollback, including
+the delayed-start and non-crash recovery flags. It
 runs only on a disposable GitHub-hosted runner.
 
 To inspect the package without installing it, run:

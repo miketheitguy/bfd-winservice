@@ -37,9 +37,9 @@ implementation or its regression tests:
 | 6.8.4 | Asynchronous detection time and failure transition | Classical detection is `peer DetectMult × max(local required RX, peer desired TX)`. Expiry in Init/Up sets Down and diagnostic 1. Invalid packets never refresh detection. |
 | 6.8.7 | TX negotiation, jitter, suppression, and state notifications | TX uses the greater of effective local TX and peer required RX. Per-packet jitter is 75–100%, or 75–90% with local multiplier 1. Passive discovery requires a known peer. Zero-RX suppresses periodic traffic. State notifications keep P clear and don't consume a pending Poll. Native UDP tests cover authentication and scheduling. |
 | 6.8.15, 6.8.17 | Forwarding-plane reset and concatenated-path signals | No external reset or concatenated-path notification API is implemented. C remains clear. Diagnostics 4, 5, 6, and 8 aren't originated; received diagnostic values are preserved as peer information rather than copied to LocalDiag. |
-| 6.8.16 | Administrative shutdown and continued announcements | Shutdown sets AdminDown/diagnostic 7 and queues BGP Stop. A communicating classical session repeats permitted announcements for the detection period, capped at five seconds. The native shutdown regression checks repeated wire announcements and the grace period. See the cap below. |
+| 6.8.16 | Administrative shutdown and continued announcements | Shutdown sets AdminDown/diagnostic 7 and never stops BGP; per RFC 5882 sections 3.2 and 4.1, a peer's AdminDown never stops BGP either, and either end's AdminDown withdraws a Stop that BFD imposed. A communicating classical session repeats permitted announcements for at least one Detection Time in both directions, without a cap. Native shutdown regressions check repeated wire announcements, the grace period, and a period beyond five seconds. |
 | 6.8.18 | Retain RX limits while peers communicate; release stale suppression | Peer required RX is retained until a detection time passes without valid packets, then resets to 1. Active probing resumes after an expired zero-RX advertisement; passive sessions still require a learned discriminator. |
-| 7 | Multihop congestion control and time-critical scheduling | Unanswered classical multihop discovery and detection loss double the desired interval using saturating arithmetic. Valid reception clears backoff. The runtime handles one datagram per pass, keeping timers and Stop processing responsive under floods. Single-hop retains the startup floor without exponential backoff. |
+| 7 | Multihop congestion control and time-critical scheduling | Unanswered classical multihop discovery and detection loss double the desired interval up to 30 seconds, or the preceding negotiated interval when longer. Valid reception clears backoff. The runtime handles one datagram per pass, keeping timers and Stop processing responsive under floods. Single-hop retains the startup floor without exponential backoff. |
 | 8–9 | Assigned authentication/diagnostic values; replay and spoofing considerations | Wire values follow the RFC. Both SHA-1 variants are available; keys accept ASCII and hexadecimal provisioning. Sequence windows, random initial sequences, and transport source/TTL/interface checks reduce spoofing and replay exposure. No confidentiality is provided. |
 | Appendix A | Non-normative version 0 compatibility | Only version 1 is supported; version 0 is rejected without automatic downgrade. |
 
@@ -73,11 +73,12 @@ or TTL policy checks. Out-of-band discriminator signaling, automatic routing
 protocol advertisement, Echo, local Demand mode, and external forwarding-plane
 notifications require additional integration.
 
-The five-second classical shutdown cap limits the section 6.8.16 recommendation
-when a peer advertises a longer detection period. Fatal transport errors,
-sessions without a communicating peer, and S-BFD initiators use one permitted
-notification. Passive and zero-RX restrictions remain in force. BGP provider
-cleanup can extend total stop time beyond the BFD grace period.
+Classical shutdown honors the full section 6.8.16 announcement period, so a peer
+advertising long timers lengthens the stop; the service extends its stop budget
+by that period. During Windows shutdown, the service's preshutdown timeout can
+cut it short. Fatal transport errors, sessions without a communicating peer, and
+S-BFD initiators use one permitted notification. Passive and zero-RX restrictions
+remain in force. A final BGP action can extend total stop time.
 
 The public `Session::packet` convenience APIs treat returned bytes as a
 transmission for sequence and probe tracking. Callers must deliver those bytes;
