@@ -39,6 +39,9 @@ Use Developer PowerShell if the MSVC linker is unavailable on `PATH`. The build 
 
 ## Build security
 
+For the runtime authentication boundaries, diagrams, and the security benefits
+of each build option, see [Security, authentication, and build hardening](docs/security.md).
+
 Windows builds support only `x86_64-pc-windows-msvc`. This is the default target;
 the build rejects other Windows targets, including 32-bit x86 and ARM64.
 
@@ -308,7 +311,7 @@ loss. Do not call `flush` from the protocol timer loop. See
 ## Initialize broker management security
 
 The BFD service sends fixed-target BGP requests through the authenticated local
-pipe. See [Service communication and privilege boundaries](docs/service-communication.md)
+pipe. See [Security, authentication, and build hardening](docs/security.md)
 for caller and server identity checks, and [Monitor service status and BFD
 events](docs/monitoring.md) for lifecycle queries and event-log monitoring.
 
@@ -323,6 +326,26 @@ checks duplicate initialization and rejects preexisting security defaults. The
 release workflow also runs a read-only native MI schema query under this policy
 to check compatibility with Windows management providers. In-process state
 observers remain available to library users and UDP integration tests.
+
+## Update the security diagrams
+
+Edit [the two-page draw.io source](docs/service-communication.drawio), then export
+both PNGs embedded in [the security page](docs/security.md). With draw.io Desktop
+installed in its default Windows location, run these commands from the repository
+root:
+
+```powershell
+& 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 1 -b 20 `
+    -o docs/images/service-communication-runtime.png `
+    docs/service-communication.drawio
+& 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 2 -b 20 `
+    -o docs/images/service-communication-lifecycle.png `
+    docs/service-communication.drawio
+```
+
+The page numbers are one-based, and `-e` embeds the editable diagram XML. Confirm
+that both images match the source and update the corresponding ASCII diagrams
+and authentication checks in `docs/security.md` when boundaries change.
 
 ## Prepare installation files
 

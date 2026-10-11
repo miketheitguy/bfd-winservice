@@ -110,6 +110,8 @@ Use these guides for the next task:
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
 | Query service status and read BFD state events | [Monitor service status and BFD events](docs/monitoring.md) |
 | Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
+| Understand authentication, privilege boundaries, and compiler/linker protections | [Security, authentication, and build hardening](docs/security.md) |
+| Trace service inputs, outputs, and BGP actions | [Service communication](docs/service-communication.md) |
 | Review RFC 5880, RFC 7419, and RFC 7880 requirements, test coverage, and limits | [RFC conformance tests](docs/rfc-conformance.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |
 

@@ -224,7 +224,7 @@
         <mxCell id="bgpWire" value="OS-managed BGP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;dashed=1;dashPattern=6 4;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="rras" target="remoteBgp">
           <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
         </mxCell>
-        <mxCell id="scope" value="&lt;b&gt;SCOPE AND REFERENCES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Two executable processes; background threads keep their process identity.&lt;br&gt;Authenticated users can read service status and logs; see page 2.&lt;br&gt;Dashed connection: outside-repository BGP behavior. A-E: docs/service-communication.md&lt;/span&gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;align=left;" vertex="1" parent="1">
+        <mxCell id="scope" value="&lt;b&gt;SCOPE AND REFERENCES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Two executable processes; background threads keep their process identity.&lt;br&gt;Authenticated users can read service status and logs; see page 2.&lt;br&gt;Dashed connection: outside-repository BGP behavior. A-E: docs/security.md&lt;/span&gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;align=left;" vertex="1" parent="1">
           <mxGeometry x="40" y="1450" width="1240" height="100" as="geometry" />
         </mxCell>
       </root>
@@ -437,7 +437,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="footer2" value="Source map and authentication checks A-E: docs/service-communication.md  |  Host-specific provider and Event Log permissions remain Windows configuration." style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;" vertex="1" parent="1">
+        <mxCell id="footer2" value="Source map and authentication checks A-E: docs/security.md  |  Host-specific provider and Event Log permissions remain Windows configuration." style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;" vertex="1" parent="1">
           <mxGeometry x="40" y="1670" width="1630" height="45" as="geometry" />
         </mxCell>
         <object id="reader" Source="installer/Package.wxs: ServiceSecurity; LogSecurity" tooltip="Authenticated users retain SCM queries and existing event/file log reads." label="&lt;b&gt;AUTHENTICATED LOCAL USER  |  read-only monitoring&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Read Windows service status and configuration&lt;br&gt;Read event / file logs under their existing permissions&lt;br&gt;No Start / Stop, reconfiguration, or custom service controls&lt;/span&gt;">
