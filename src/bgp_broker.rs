@@ -1,5 +1,6 @@
 //! Privileged, fixed-target BGP management hosted by BfdBgpBroker.
 //! This service has no UDP listener or public COM class factory.
+mod com;
 mod install;
 mod mi;
 mod service;

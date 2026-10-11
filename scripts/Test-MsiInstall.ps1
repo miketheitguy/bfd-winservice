@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Assert-RestrictedAcl.ps1')
+. (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
 # Installation changes SCM, HKLM, Event Log, and firewall state. Exercise it only
 # on the disposable machine provided by this workflow, never the developer PC.
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
@@ -43,26 +44,14 @@ function Invoke-Msi {
     }
 }
 
-function Assert-ComRegistration {
-    $mappings = @(
-        [pscustomobject]@{ Path=$comClass; Name='AppID'; Value='{EBF04871-D193-4CDF-ABBC-DCD7D220224B}' },
-        [pscustomobject]@{ Path=$comApp; Name='LocalService'; Value='BfdWinService' },
-        [pscustomobject]@{ Path=$comExeApp; Name='AppID'; Value='{EBF04871-D193-4CDF-ABBC-DCD7D220224B}' },
-        [pscustomobject]@{ Path="$comProgId\CLSID"; Name=''; Value='{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}' }
-    )
+function Assert-NoComRegistration {
     $registry = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
         [Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
     try {
-        foreach ($mapping in $mappings) {
-            $key = $registry.OpenSubKey($mapping.Path.Substring('HKLM:\'.Length))
-            Assert-Installed ($null -ne $key) "Missing 64-bit HKLM COM registration: $($mapping.Path)"
-            try {
-                Assert-Installed ($mapping.Name -in $key.GetValueNames() -and
-                    $key.GetValueKind($mapping.Name) -eq [Microsoft.Win32.RegistryValueKind]::String -and
-                    $key.GetValue($mapping.Name) -ceq $mapping.Value) `
-                    "Expected REG_SZ '$($mapping.Name)' = '$($mapping.Value)' at $($mapping.Path)."
-            }
-            finally { $key.Dispose() }
+        foreach ($path in @($comClass, $comApp, $comProgId, $comExeApp)) {
+            $key = $registry.OpenSubKey($path.Substring('HKLM:\'.Length))
+            try { Assert-Installed ($null -eq $key) "Unexpected public COM registration: $path" }
+            finally { if ($null -ne $key) { $key.Dispose() } }
         }
     }
     finally { $registry.Dispose() }
@@ -74,10 +63,6 @@ function Assert-InstallationSecurity {
         $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $object).Sddl)
         $flags = if ($object -eq $installDirectory) { 'ObjectInherit, ContainerInherit' } else { 'None' }
         Assert-RestrictedAcl -Descriptor $acl -ObjectName $object -FullAccess 0x1f01ff -ReadAccess 0x1200a9 -InheritanceFlags $flags -AdditionalAccess @{$serviceSid=0x1200a9}
-    }
-    foreach ($object in @($comClass, "$comClass\ProgID", $comProgId, "$comProgId\CLSID", $comApp, $comExeApp)) {
-        $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $object).Sddl)
-        Assert-RestrictedAcl -Descriptor $acl -ObjectName $object -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -AdditionalAccess @{$serviceSid=0x20019}
     }
     $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $parameters).Sddl)
     Assert-RestrictedAcl -Descriptor $acl -ObjectName $parameters -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
@@ -94,6 +79,9 @@ function Assert-ServicePolicy {
         Assert-Installed ($installed.DelayedAutoStart -eq $true) "Expected Automatic (Delayed Start): $($installed.Name)"
     }
     foreach ($name in @('BfdWinService','BfdBgpBroker')) {
+        $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new([BfdServiceAccess]::ReadDescriptor($name), 0)
+        Assert-RestrictedAcl -Descriptor $descriptor -ObjectName $name -FullAccess 0xf01ff -ReadAccess 0x2008d -ReadSid 'S-1-5-11'
+        Assert-ServiceReaderAccess -Descriptor $descriptor
         $key = Get-Item -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$name"
         Assert-Installed ($key.GetValueKind('ServiceSidType') -eq 'DWord' -and $key.GetValue('ServiceSidType') -eq 1) "Missing enabled service SID: $name"
         # Only BFD recovers from a nonzero exit; its requested stops always exit with 0.
@@ -102,8 +90,9 @@ function Assert-ServicePolicy {
         if ($name -eq 'BfdWinService') {
             Assert-Installed ($key.GetValueKind('PreshutdownTimeout') -eq 'DWord' -and $key.GetValue('PreshutdownTimeout') -eq 125000) 'BFD needs 125 seconds for bounded preshutdown cleanup.'
         }
-        Assert-Installed ('RpcSs' -in @((Get-Service $name).ServicesDependedOn.Name)) "Missing RpcSs dependency: $name"
     }
+    Assert-Installed ('RpcSs' -in @((Get-Service BfdBgpBroker).ServicesDependedOn.Name)) 'The MI broker must depend on RpcSs.'
+    Assert-Installed ('RpcSs' -notin @((Get-Service BfdWinService).ServicesDependedOn.Name)) 'The BFD daemon must not have a direct COM dependency.'
     Assert-Installed ('BfdBgpBroker' -in @((Get-Service BfdWinService).ServicesDependedOn.Name)) 'BFD must depend on the broker.'
     Assert-Installed (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'service-policy.rollback'))) 'Installer policy snapshot was not committed.'
 }
@@ -140,7 +129,7 @@ try {
     $service = Get-CimInstance Win32_Service -Filter "Name='BfdWinService'"
     Assert-Installed ($service.StartMode -eq 'Auto' -and $service.State -eq 'Stopped') 'Expected an Automatic, stopped service.'
     Assert-ServicePolicy
-    Assert-ComRegistration
+    Assert-NoComRegistration
     foreach ($name in @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1')) {
         Assert-Installed (Test-Path -LiteralPath (Join-Path $installDirectory $name)) "Missing installed file: $name"
     }
@@ -184,32 +173,20 @@ try {
     Set-ProcessMitigation -Name bfd-bgp-broker.exe -Enable SEHOP
     Start-Service BfdWinService
     Assert-Installed ((Get-CimInstance Win32_Service -Filter "Name='BfdWinService'").State -eq 'Running') 'Configured service failed to start.'
-    # BFD startup performs a read-only pipe probe: reaching Running proves that
-    # the real LocalService/service-SID token passed the broker's authorization.
+    # Plain BFD runs without COM or an MI query. The broker rejects unrelated clients.
     Assert-BrokerRejectsUnrelatedClient
     $deadline = (Get-Date).AddSeconds(10)
     while (@(Get-BfdEvents 300).Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
     $brokerEvents = @(Get-BfdEvents 300)
     Assert-Installed ($brokerEvents.Count -gt 0 -and $brokerEvents[0].Level -eq 4 -and $brokerEvents[0].Message -like '*broker*ready*') 'No rendered broker readiness event.'
-    $session = New-Object -ComObject BfdWinService.SessionState
-    try {
-        Assert-Installed ($session.State -eq 1 -and $session.StateName -ceq 'Down' -and $session.GetState() -eq 1) 'Automation must report Down without an established peer.'
-    }
-    finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($session) }
+    Assert-NoComRegistration
     $deadline = (Get-Date).AddSeconds(10)
     while (@(Get-BfdEvents 1).Count -eq 0 -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 200
     }
     $events = @(Get-BfdEvents 1)
     Assert-Installed ($events.Count -gt 0 -and $events[0].Level -eq 4 -and $events[0].Message -like '*BFD service started*') 'No rendered Informational startup event.'
-    $retainedSession = New-Object -ComObject BfdWinService.SessionState
-    try {
-        Stop-Service BfdWinService
-        $disconnected = $false
-        try { [void]$retainedSession.GetState() } catch { $disconnected = $true }
-        Assert-Installed $disconnected 'A retained COM object must fail after service Stop instead of returning stale state.'
-    }
-    finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($retainedSession) }
+    Stop-Service BfdWinService
     Assert-Installed (-not (Test-Path -LiteralPath (Join-Path $logDirectory 'trace.log'))) 'Disabled file output wrote trace.log.'
     $deadline = (Get-Date).AddSeconds(10)
     while ((@(Get-BfdEvents 106).Count -eq 0 -or @(Get-BfdEvents 207).Count -eq 0) -and (Get-Date) -lt $deadline) {
@@ -221,7 +198,7 @@ try {
     Assert-Installed ($diagnostics.Count -gt 0 -and $diagnostics[0].Level -eq 3) 'Missing Warning administrative diagnostic.'
 
     # No provider is configured, so a broker restart must not require RRAS or
-    # mutate any peer. Starting BFD again rechecks the real service token/pipe.
+    # mutate any peer. Plain BFD can restart after broker recovery.
     $beforeCrash = Get-CimInstance Win32_Service -Filter "Name='BfdBgpBroker'"
     Assert-Installed ($beforeCrash.State -eq 'Running' -and $beforeCrash.PathName -eq ('"' + (Join-Path $installDirectory 'bfd-bgp-broker.exe') + '"')) 'Recovery test must target the installed broker.'
     & taskkill.exe /PID $beforeCrash.ProcessId /F | Out-Null
@@ -241,19 +218,14 @@ try {
     New-ItemProperty -Path $parameters -Name LogToFile -PropertyType DWord -Value 1 -Force
     New-ItemProperty -Path $parameters -Name LogFilePath -PropertyType String -Value $customLog -Force
     Invoke-Msi '/fomus' 'repair.log'
-    Assert-ComRegistration
+    Assert-NoComRegistration
     Assert-InstallationSecurity
     Assert-ServicePolicy
     $settings = Get-ItemProperty -Path $parameters
     Assert-Installed ($settings.Multihop -eq 1 -and $settings.LogToFile -eq 1 -and $settings.LogFilePath -eq $customLog) 'Repair reset administrator settings.'
-    # As an administrator, activate the stopped service through COM after repair,
-    # exercising LocalService. Standard users have activation but not launch rights.
-    $session = New-Object -ComObject BfdWinService.SessionState
-    try {
-        Assert-Installed ($session.GetState() -eq 1 -and $session.StateName -ceq 'Down') 'COM activation failed after repair.'
-        Assert-Installed ((Get-Service BfdWinService).Status -eq 'Running') 'COM did not start the configured service.'
-    }
-    finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($session) }
+    Start-Service BfdWinService
+    Assert-Installed ((Get-Service BfdWinService).Status -eq 'Running') 'Service failed to start after repair.'
+    Assert-NoComRegistration
     Stop-Service BfdWinService
     $deadline = (Get-Date).AddSeconds(10)
     do {
@@ -262,7 +234,7 @@ try {
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     Assert-Installed ($text -match '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z .*event_id=106 level=Information') 'Missing UTC file event after repair.'
-    Write-Output 'Installation, service accounts/SIDs, broker authorization/recovery, protected ACLs, versions, COM activation, firewall, rendered ETW, file logging, and repair checks passed.'
+    Write-Output 'Installation, service accounts/SIDs, broker authorization/recovery, protected ACLs, versions, absence of public COM registration, firewall, rendered ETW, file logging, and repair checks passed.'
 }
 finally {
     if ($installed) { Invoke-Msi '/x' 'uninstall.log' }
@@ -277,4 +249,4 @@ foreach ($path in @($comClass, $comApp, $comProgId, $comExeApp)) {
 Assert-Installed (@(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object DisplayName -Like 'BfdWinService - *').Count -eq 0) 'Firewall rules remained after uninstall.'
 Assert-Installed (@(Get-WinEvent -ListProvider BFD-Service -ErrorAction SilentlyContinue).Count -eq 0) 'Event provider remained after uninstall.'
 Assert-Installed (Test-Path -LiteralPath $customLog) 'Uninstall removed user-generated logs.'
-Write-Output 'Uninstall removed the service, payload, COM registration, event provider, and firewall rules while retaining logs.'
+Write-Output 'Uninstall removed the service, payload, event provider, and firewall rules while retaining logs.'

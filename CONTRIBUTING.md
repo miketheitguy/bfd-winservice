@@ -305,29 +305,24 @@ to read the output immediately, and `Logger::dropped_records()` reports queue
 loss. Do not call `flush` from the protocol timer loop. See
 [log destinations and queue limits](docs/logging.md#log-destinations).
 
-## Query live state through COM
+## Initialize broker management security
 
-The service exposes a read-only Automation interface using Microsoft's official
-`windows` crate. [Query the current BFD state through COM](docs/com.md) describes
-the ProgID, dispatch members, state codes, lifecycle, and client examples.
-The MSI registers the class and its service activation settings.
+The BFD service sends fixed-target BGP requests through the authenticated local
+pipe. See [Service communication and privilege boundaries](docs/service-communication.md)
+for caller and server identity checks, and [Monitor service status and BFD
+events](docs/monitoring.md) for lifecycle queries and event-log monitoring.
 
-The engine publishes state changes through one shared atomic value. COM clients
-never borrow or lock the session. A dedicated `bfd-com` MTA thread initializes
-process security and registers a multiple-use class factory. The supervisor waits
-for security initialization before opening background providers, then joins the
-COM thread after the BFD worker finishes. That thread revokes the class and
-uninitializes COM; startup errors trigger the same cleanup. Console mode does not
-host the class.
+`src/bgp_broker/com.rs` is private to the broker. Its dedicated MTA thread
+initializes explicit process security before native MI starts and remains alive
+until provider work finishes. Incoming COM access is local-only and grants only
+SYSTEM and administrators. Normal shutdown, startup errors, and unwinding join
+the owner thread, which calls `CoUninitialize`.
 
-The Rust suite tests late-bound Windows PowerShell 5.1, PowerShell 7 (when
-installed), and C# queries in a separate process
-without installing a service or writing COM registry keys. It checks that retained
-objects observe transitions and return a disconnected error after the engine exits.
-The tests also check apartment isolation, rejection of preexisting process
-security, and class revocation after explicit shutdown or Drop.
-The release workflow also runs the read-only native MI provider regression under
-the COM security defaults to check compatibility with BGP management access.
+The Rust suite isolates process-wide COM security tests in child processes. It
+checks duplicate initialization and rejects preexisting security defaults. The
+release workflow also runs a read-only native MI schema query under this policy
+to check compatibility with Windows management providers. In-process state
+observers remain available to library users and UDP integration tests.
 
 ## Prepare installation files
 
@@ -449,6 +444,13 @@ namespace, which WiX 7 retains, and uses
 [FirewallException](https://docs.firegiant.com/wix/schema/firewall/firewallexception/).
 WiX handles manifest/firewall installation, rollback, and removal through its
 native extension actions. Resource paths resolve to the installed executable.
+Core [PermissionEx](https://docs.firegiant.com/wix/schema/wxs/permissionex/)
+elements apply protected SCM ACLs through `MsiLockPermissionsEx`. SYSTEM and
+Administrators receive service full access (`0xf01ff`). Authenticated Users receive
+only query config/status, enumerate dependents, interrogate, and read-control
+rights (`0x2008d`); Start/Stop and configuration changes require elevation.
+See [Windows service access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights).
+File-log read permissions and the Event Log channel policy remain unchanged.
 Separate registry-value components preserve administrator values during repair.
 Fixed-target native SCM custom actions provision accounts, service SID types,
 delayed automatic start for both services, and recovery after a nonzero BFD exit.
@@ -490,8 +492,14 @@ executable so it doesn't rebuild the packaged service or its matching PDB.
 The installation test runs only on a GitHub-hosted runner. It checks fresh
 installation, actual service configuration, registry types, firewall rules,
 rendered Operational events, disabled/enabled file output, repair without
-resetting settings, COM queries and administrator activation of a stopped service, and uninstall
-while removing COM registration and retaining generated logs. It provisions
+resetting settings, administrator service start/stop, installed service ACLs,
+and uninstall while retaining generated logs.
+`scripts/Assert-ServiceAccess.ps1` uses Windows `AccessCheck` with a temporary
+Authenticated Users restricted token to verify query rights and reject Start/Stop,
+pause, configuration changes, deletion, ACL changes, and custom controls. These
+checks run on descriptor fixtures locally and the actual service descriptors in
+the installation test. The migration rollback test also checks restoration of the
+previous service security descriptor. It provisions
 loopback addresses and SEHOP before starting the service. It doesn't run on
 developer machines. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is

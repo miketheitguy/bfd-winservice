@@ -8,14 +8,19 @@ The peer must already exist on a Windows Server with Remote Access/BGP configure
 Install the MSI: BGP control requires the installed service identities and is
 unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
 native MI query is started. The broker still starts as a service dependency and
-answers the BFD service's read-only startup authorization probe.
+answers a read-only startup authorization probe when BGP control is configured.
 
 ## Service identities and authorization
 
-`BfdWinService` handles UDP and the read-only COM interface as **LocalService**.
-`BfdBgpBroker` runs as **LocalSystem** and hosts the native MI client. It has no
-UDP listener or public COM class. RRAS management requires administrative access;
-the broker retains that access while the packet-processing service does not.
+`BfdWinService` handles UDP as **LocalService**. `BfdBgpBroker` runs as
+**LocalSystem** and hosts the native Management Infrastructure (MI) client.
+The broker's private COM initialization supports native MI and grants local
+execute rights only to SYSTEM and administrators, with packet integrity. It
+excludes Authenticated Users and the generic Service group. Outgoing proxies
+default to identification; the local MI destination explicitly requests
+impersonation so Windows providers can use the broker's LocalSystem identity.
+RRAS management requires administrative access; the broker retains that access
+while the packet-processing service does not.
 See [Microsoft's router management requirements](https://learn.microsoft.com/en-us/windows/win32/rras/understanding-router-management-functions).
 
 The local pipe `\\.\pipe\BfdWinService.Bgp.v1` accepts only the enabled
@@ -25,6 +30,12 @@ before calling MI. Unrelated LocalService processes and administrator clients
 are denied. Remote clients are rejected. The client checks the pipe server's
 Windows-reported process ID against the broker's running SCM process ID; the
 broker checks its own LocalSystem account and enabled service SID at startup.
+
+The MSI separately protects Windows service control: authenticated users can
+query either service's status, while SYSTEM and elevated Administrators can
+Start/Stop or reconfigure the services. This SCM permission does not authorize a
+caller to submit BGP pipe requests. Event/file log reads remain available to
+non-administrators under the existing log permissions.
 
 Only Get, Start, and Stop operations are accepted, in fixed-size messages with
 strictly increasing connection sequence numbers. Requests contain no peer name,

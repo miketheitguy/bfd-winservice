@@ -18,13 +18,13 @@ use windows_sys::Win32::{
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
-/// Directory traversal and global object creation remain available to COM, RPC,
+/// Directory traversal and global object creation remain available to RPC,
 /// file logging, and Winsock. No BFD operation needs any other privilege.
 const RETAINED: [&str; 2] = ["SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege"];
 
 /// Permanently removes every other privilege from the process token, including
 /// SeImpersonatePrivilege and SeAssignPrimaryTokenPrivilege, before the service
-/// accepts network traffic or COM calls. Removed privileges cannot be restored.
+/// accepts network traffic. Removed privileges cannot be restored.
 /// Returns the removed privilege names; a second call returns none.
 ///
 /// # Errors

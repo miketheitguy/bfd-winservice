@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
     throw 'This rollback test runs only on a GitHub-hosted Actions runner.'
 }
+. (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
 $resolvedMsi = (Resolve-Path -LiteralPath $Path).Path
 $outputDirectory = Split-Path $resolvedMsi -Parent
 $installDirectory = Join-Path $env:ProgramFiles 'BfdWinService'
@@ -27,6 +28,8 @@ try {
             New-Service -Name BfdWinService -BinaryPathName ('"' + $fixtureExe + '"') -StartupType Manual | Out-Null
             & sc.exe sidtype BfdWinService none | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Could not create the migration SID fixture.' }
+            $oldDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new([BfdServiceAccess]::ReadDescriptor('BfdWinService'), 0)
+            $oldSecurity = $oldDescriptor.GetSddlForm([Security.AccessControl.AccessControlSections]::All)
         }
         $label = if ($migration) { 'migration' } else { 'fresh' }
         $log = Join-Path $outputDirectory "rollback-$label.log"
@@ -44,6 +47,10 @@ try {
         if ($migration) {
             if ($null -eq $service -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Stopped') {
                 throw 'Rollback did not restore the existing service account.'
+            }
+            $restoredDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new([BfdServiceAccess]::ReadDescriptor('BfdWinService'), 0)
+            if ($restoredDescriptor.GetSddlForm([Security.AccessControl.AccessControlSections]::All) -cne $oldSecurity) {
+                throw 'Rollback did not restore the previous service permissions.'
             }
             $key = Get-Item -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService'
             if ($key.GetValue('ServiceSidType', 0) -ne 0) { throw 'Rollback did not restore the previous service SID setting.' }

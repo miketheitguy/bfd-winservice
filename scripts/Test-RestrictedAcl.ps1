@@ -2,18 +2,22 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Assert-RestrictedAcl.ps1')
+. (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
 
 # These fixtures inspect descriptors only; no file or registry ACL is changed.
 $file = 'O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)'
 $folder = 'O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)'
 $registry = 'O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)'
+$service = 'O:SYG:SYD:P(A;;0xf01ff;;;SY)(A;;0xf01ff;;;BA)(A;;0x2008d;;;AU)'
 $cases = @(
     @{Sddl=$file; Full=0x1f01ff; Read=0x1200a9; Flags='None'},
     @{Sddl=$folder; Full=0x1f01ff; Read=0x1200a9; Flags='ObjectInherit, ContainerInherit'},
-    @{Sddl=$registry; Full=0xf003f; Read=0x20019; Flags='ContainerInherit'}
+    @{Sddl=$registry; Full=0xf003f; Read=0x20019; Flags='ContainerInherit'},
+    @{Sddl=$service; Full=0xf01ff; Read=0x2008d; Flags='None'; ReadSid='S-1-5-11'}
 )
 foreach ($case in $cases) {
-    Assert-RestrictedAcl -Descriptor ([Security.AccessControl.RawSecurityDescriptor]::new($case.Sddl)) -ObjectName 'valid fixture' -FullAccess $case.Full -ReadAccess $case.Read -InheritanceFlags $case.Flags
+    $readSid = if ($case.ContainsKey('ReadSid')) { $case.ReadSid } else { 'S-1-5-32-545' }
+    Assert-RestrictedAcl -Descriptor ([Security.AccessControl.RawSecurityDescriptor]::new($case.Sddl)) -ObjectName 'valid fixture' -FullAccess $case.Full -ReadAccess $case.Read -InheritanceFlags $case.Flags -ReadSid $readSid
 }
 $unsafeDescriptors = @(
     $file.Replace('D:P', 'D:'),                         # Inherited grants could permit writes.
@@ -53,4 +57,19 @@ foreach ($sddl in @($logFolder.Replace('0x1301bf', 'FA'), $logFolder.Replace($se
     } catch { $rejected = $true }
     if (-not $rejected) { throw 'Service log permissions accepted excessive access or a shared account grant.' }
 }
-Write-Output 'Protected ACL validation passed, including service-specific configuration and log permissions.'
+foreach ($sddl in @(
+    $service.Replace('0x2008d', '0x2009d'), # Start.
+    $service.Replace('0x2008d', '0x200ad'), # Stop.
+    $service.Replace('0x2008d', '0x2008f'), # Change configuration.
+    $service.Replace('0x2008d', '0x2018d'), # Custom control.
+    $service.Replace('0x2008d', '0x6008d'), # Change DACL.
+    $service.Replace('D:P', 'D:')
+)) {
+    $rejected = $false
+    try {
+        Assert-RestrictedAcl -Descriptor ([Security.AccessControl.RawSecurityDescriptor]::new($sddl)) -ObjectName 'unsafe service fixture' -FullAccess 0xf01ff -ReadAccess 0x2008d -ReadSid 'S-1-5-11'
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Service permissions accepted non-administrator control rights or inheritance.' }
+}
+Assert-ServiceReaderAccess -Descriptor ([Security.AccessControl.RawSecurityDescriptor]::new($service))
+Write-Output 'Protected ACL validation and native service access checks passed, including service control, configuration, and log permissions.'

@@ -72,13 +72,13 @@ try {
     Assert-Package ($launch.Count -eq 1 -and $initialize.Count -eq 1 -and [int]$launch[0].Sequence -gt 0 -and [int]$launch[0].Sequence -lt [int]$initialize[0].Sequence) 'Silent installation must check privileges before changing the machine.'
     $uiLaunch = @(Get-MsiRows 'SELECT `Sequence` FROM `InstallUISequence` WHERE `Action` = ''LaunchConditions''' @('Sequence'))
     Assert-Package ($uiLaunch.Count -eq 1 -and [int]$uiLaunch[0].Sequence -gt 0) 'Interactive installation must check privileges.'
-    $services = @(Get-MsiRows 'SELECT `Name`, `DisplayName`, `ServiceType`, `StartType`, `StartName`, `Arguments`, `Component_`, `Dependencies` FROM `ServiceInstall`' @('Name','DisplayName','Type','Start','Account','Arguments','Component','Dependencies'))
+    $services = @(Get-MsiRows 'SELECT `ServiceInstall`, `Name`, `DisplayName`, `ServiceType`, `StartType`, `StartName`, `Arguments`, `Component_`, `Dependencies` FROM `ServiceInstall`' @('Id','Name','DisplayName','Type','Start','Account','Arguments','Component','Dependencies'))
     Assert-Package ($services.Count -eq 2) 'Expected the BFD service and BGP broker.'
     $service = @($services | Where-Object Name -EQ 'BfdWinService')[0]
     Assert-Package ($service.Name -eq 'BfdWinService' -and $service.DisplayName -eq 'BFD Windows Service') 'Service names differ from documentation.'
     Assert-Package ($service.Type -eq '16' -and $service.Start -eq '2' -and $service.Account -eq 'NT AUTHORITY\LocalService') 'Expected an Automatic LocalService own-process service.'
     Assert-Package ([string]::IsNullOrEmpty($service.Arguments)) 'Service command line must have no console or configuration arguments.'
-    Assert-Package ($service.Dependencies -ceq 'RpcSs[~]BfdBgpBroker[~][~]') 'BFD must depend on RpcSs and the broker.'
+    Assert-Package ($service.Dependencies -ceq 'BfdBgpBroker[~][~]') 'BFD must depend on the broker without a direct COM dependency.'
     $broker = @($services | Where-Object Name -EQ 'BfdBgpBroker')[0]
     Assert-Package ($broker.Type -eq '16' -and $broker.Start -eq '2' -and $broker.Account -eq 'LocalSystem' -and $broker.Dependencies -ceq 'RpcSs[~][~]' -and [string]::IsNullOrEmpty($broker.Arguments)) 'Expected an Automatic, own-process LocalSystem BGP broker.'
     $controls = @(Get-MsiRows 'SELECT `Event`, `Wait` FROM `ServiceControl`' @('Event','Wait'))
@@ -103,7 +103,7 @@ try {
     $registry = @(Get-MsiRows 'SELECT `Registry`, `Root`, `Key`, `Name`, `Value`, `Component_` FROM `Registry`' @('Id','Root','Key','Name','Value','Component'))
     Assert-Package (@($registry | Where-Object Root -NE '2').Count -eq 0) 'All registry entries must use HKLM.'
     $defaults = @{ Multihop='#0'; LogToFile='#0'; LogFilePath='[LOGFOLDER]trace.log' }
-    Assert-Package ($registry.Count -eq ($defaults.Count + 10)) 'Expected registry defaults, security marker, and COM registration.'
+    Assert-Package ($registry.Count -eq ($defaults.Count + 1)) 'Expected registry defaults and the security marker only.'
     $policy = @($registry | Where-Object Id -EQ 'ParametersPolicyValue')
     Assert-Package ($policy.Count -eq 1 -and $policy[0].Component -eq 'ParametersSecurityComponent' -and $policy[0].Root -eq '2' -and $policy[0].Key -eq 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters' -and $policy[0].Name -eq '_InstallerPolicy' -and $policy[0].Value -eq '#1') 'Missing repairable Parameters security component.'
     $policyComponent = @($components | Where-Object Id -EQ 'ParametersSecurityComponent')[0]
@@ -116,42 +116,9 @@ try {
         $component = @($components | Where-Object Id -EQ $row.Component)[0]
         Assert-Package (([int]$component.Attributes -band 128) -ne 0) "Default must preserve existing configuration: $name"
     }
-    $comClass = 'SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}'
-    $comApp = 'SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}'
-    $comProgId = 'SOFTWARE\Classes\BfdWinService.SessionState'
-    $comValues = @(
-        @($comClass, '', 'BFD session state'),
-        @($comClass, 'AppID', '{EBF04871-D193-4CDF-ABBC-DCD7D220224B}'),
-        @("$comClass\ProgID", '', 'BfdWinService.SessionState'),
-        @($comProgId, '', 'BFD session state'),
-        @("$comProgId\CLSID", '', '{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}'),
-        @($comApp, '', 'BFD Windows Service'),
-        @($comApp, 'LocalService', 'BfdWinService'),
-        @('SOFTWARE\Classes\AppID\bfd-winservice.exe', 'AppID', '{EBF04871-D193-4CDF-ABBC-DCD7D220224B}')
-    )
-    foreach ($expected in $comValues) {
-        $rows = @($registry | Where-Object { $_.Key -ceq $expected[0] -and $_.Name -ceq $expected[1] })
-        Assert-Package ($rows.Count -eq 1 -and $rows[0].Root -eq '2' -and $rows[0].Value -ceq $expected[2] -and $rows[0].Component -eq 'ComRegistrationComponent') "Incorrect COM registration: $($expected[0]) $($expected[1])"
-    }
-    $launchPermission = @($registry | Where-Object { $_.Key -ceq $comApp -and $_.Name -eq 'LaunchPermission' })
-    Assert-Package ($launchPermission.Count -eq 1 -and $launchPermission[0].Root -eq '2' -and $launchPermission[0].Component -eq 'ComRegistrationComponent' -and $launchPermission[0].Value -match '^#x[0-9A-Fa-f]+$') 'Expected a binary COM launch permission.'
-    $hex = $launchPermission[0].Value.Substring(2)
-    $bytes = [byte[]]::new($hex.Length / 2)
-    for ($index = 0; $index -lt $bytes.Length; $index++) {
-        $bytes[$index] = [Convert]::ToByte($hex.Substring($index * 2, 2), 16)
-    }
-    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($bytes, 0)
-    Assert-Package ($descriptor.DiscretionaryAcl.Count -eq 3) 'COM launch ACL must contain exactly three grants.'
-    # Execute, local launch, and local activation (11) for SYSTEM and administrators;
-    # execute and local activation only (9) for authenticated users, so they cannot
-    # start a service that an administrator stopped.
-    $expectedMasks = @{ 'S-1-5-18' = 11; 'S-1-5-32-544' = 11; 'S-1-5-11' = 9 }
-    foreach ($ace in $descriptor.DiscretionaryAcl) {
-        $sid = $ace.SecurityIdentifier.Value
-        Assert-Package ($ace.AceType -eq 'AccessAllowed' -and $expectedMasks.ContainsKey($sid) -and $ace.AccessMask -eq $expectedMasks[$sid]) 'COM launch must be limited to SYSTEM and administrators; authenticated users may only activate locally.'
-    }
+    Assert-Package (@($registry | Where-Object { $_.Key -like 'SOFTWARE\Classes*' }).Count -eq 0) 'The daemon must not install a COM endpoint.'
     $permissions = @(Get-MsiRows 'SELECT `LockObject`, `Table`, `SDDLText`, `Condition` FROM `MsiLockPermissionsEx`' @('Object','Table','Sddl','Condition'))
-    Assert-Package ($permissions.Count -eq 13) 'Expected explicit permissions for both folders, four files, six COM keys, and service parameters.'
+    Assert-Package ($permissions.Count -eq 9) 'Expected explicit permissions for both folders, four files, service parameters, and both services.'
     $serviceSid = 'S-1-5-80-1071555646-3639003188-2623042311-1024194528-3093158512'
     foreach ($permission in $permissions) {
         Assert-Package ([string]::IsNullOrEmpty($permission.Condition)) 'Installation security must apply unconditionally.'
@@ -169,23 +136,24 @@ try {
             'Registry' {
                 $secured = @($registry | Where-Object Id -EQ $permission.Object)
                 Assert-Package ($secured.Count -eq 1 -and $secured[0].Root -eq '2') 'Registry ACL must target machine-wide registration or parameters.'
-                if ($secured[0].Key -eq 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters') {
-                    Assert-RestrictedAcl -Descriptor $acl -ObjectName $permission.Object -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
-                } else {
-                    Assert-Package ($secured[0].Component -eq 'ComRegistrationComponent') 'Unexpected registry ACL target.'
-                    Assert-RestrictedAcl -Descriptor $acl -ObjectName $permission.Object -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -AdditionalAccess @{$serviceSid=0x20019}
-                }
+                Assert-Package ($secured[0].Key -eq 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters') 'Unexpected registry ACL target.'
+                Assert-RestrictedAcl -Descriptor $acl -ObjectName $permission.Object -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
+            }
+            'ServiceInstall' {
+                Assert-Package (@($services | Where-Object Id -EQ $permission.Object).Count -eq 1) 'Service ACL must target an installed service.'
+                Assert-RestrictedAcl -Descriptor $acl -ObjectName $permission.Object -FullAccess 0xf01ff -ReadAccess 0x2008d -ReadSid 'S-1-5-11'
             }
             default { throw "Unexpected permission target: $($permission.Table)" }
         }
     }
     Assert-Package (@($permissions | Where-Object Table -EQ 'CreateFolder').Count -eq 2 -and @($permissions | Where-Object Table -EQ 'File').Count -eq 4) 'Missing folder or file protection.'
+    Assert-Package (@($permissions | Where-Object Table -EQ 'ServiceInstall').Count -eq 2) 'Both services must restrict Start/Stop to SYSTEM and administrators.'
     $securedKeys = @($permissions | Where-Object Table -EQ 'Registry' | ForEach-Object {
         $id = $_.Object
         ($registry | Where-Object Id -EQ $id).Key
     } | Sort-Object -Unique)
-    $expectedKeys = @($comClass, "$comClass\ProgID", $comProgId, "$comProgId\CLSID", $comApp, 'SOFTWARE\Classes\AppID\bfd-winservice.exe', 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
-    Assert-Package (@(Compare-Object $expectedKeys $securedKeys).Count -eq 0) 'Every COM registration key must have its own protected ACL.'
+    $expectedKeys = @('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
+    Assert-Package (@(Compare-Object $expectedKeys $securedKeys).Count -eq 0) 'The Parameters key must have a protected ACL.'
     $manifest = @(Get-MsiRows 'SELECT `File`, `Component_` FROM `Wix4EventManifest`' @('File','Component'))
     Assert-Package ($manifest.Count -eq 1 -and $manifest[0].File -eq '[#EventManifest]' -and $manifest[0].Component -eq 'ManifestComponent') 'Expected installed-manifest registration.'
     $manifestPaths = @(Get-MsiRows 'SELECT `File`, `Name`, `Value` FROM `Wix4XmlFile`' @('File','Name','Value'))
@@ -236,7 +204,7 @@ try {
     foreach ($name in @('Wix4RegisterEventManifest_X64','Wix4UnregisterEventManifest_X64','Wix4RollbackRegisterEventManifest_X64','Wix4RollbackUnregisterEventManifest_X64','Wix5SchedFirewallExceptionsInstall_X64','Wix5SchedFirewallExceptionsUninstall_X64','Wix5RollbackFirewallExceptionsInstall_X64','Wix5RollbackFirewallExceptionsUninstall_X64')) {
         Assert-Package (@($actions | Where-Object Name -EQ $name).Count -eq 1) "Missing transactional x64 action: $name"
     }
-    Write-Output "Validated x64 MSI version $productVersion, elevation, service, payload, COM registration, protected ACLs, registry defaults, firewall rules, and manifest lifecycle: $resolvedPath"
+    Write-Output "Validated x64 MSI version $productVersion, elevation, service, payload, absence of public COM registration, protected ACLs, registry defaults, firewall rules, and manifest lifecycle: $resolvedPath"
 }
 finally {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)

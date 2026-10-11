@@ -58,6 +58,12 @@ The MSI installs the following resources for all users:
   LocalSystem account. BFD depends on the broker, so starting BFD also starts the
   broker. Without `BgpPeerName`, BFD never contacts it. Both services have their
   own enabled service SID.
+- Protected service ACLs for both services: SYSTEM and Administrators have full
+  control. Authenticated users can query configuration/status, enumerate
+  dependents, interrogate status, and read the service ACL. They cannot Start/Stop,
+  pause, reconfigure, delete, or send custom controls to either service. Use an
+  elevated Administrator session for lifecycle commands. Log reads remain
+  available to non-administrators under the existing log permissions.
 - SCM recovery: the broker restarts five seconds after a crash. BFD restarts
   10 seconds after a crash or an unrequested failure exit, such as a local address
   that isn't assigned yet. A Stop request always ends BFD with exit code `0`, so
@@ -70,13 +76,12 @@ The MSI installs the following resources for all users:
 - The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
   Only the BFD service SID receives Modify access; shared LocalService processes
   receive no write grant. The Parameters key permits reads only by SYSTEM,
-  administrators, and that service SID. Installed code and COM registration
-  remain writable only by SYSTEM and administrators.
+  administrators, and that service SID. Installed code remains writable only by
+  SYSTEM and administrators.
 - Four executable-specific UDP firewall rules for classical and Seamless BFD.
-- The read-only `BfdWinService.SessionState` COM Automation class and the
-  `RpcSs` service dependency. [Query the current BFD state through COM](com.md)
-  after configuring the service. An administrator's activation starts a stopped
-  service; standard users can query only a running service.
+- The broker's `RpcSs` service dependency for native MI. The BFD service depends
+  on the broker. See [Monitor service status and BFD events](monitoring.md) for
+  lifecycle queries and event-log monitoring.
 
 ### 1. Install the package
 
@@ -226,7 +231,7 @@ Before creating or starting the service, complete
 ### 1. Install the services
 
 Follow [Install with an MSI](#install-with-an-msi) to create both services with
-their accounts, service SIDs, dependencies, protected ACLs, and COM registration.
+their accounts, service SIDs, dependencies, and protected ACLs.
 The installer migrates an existing built-in service account to LocalService and
 restores its previous account/SID settings if the transaction rolls back. Custom
 service accounts are rejected because their passwords cannot be restored safely.
@@ -367,7 +372,7 @@ A successful first handshake produces entries such as:
 Event `1` confirms engine startup. Event `100` confirms valid peer communication;
 event `102` confirms BFD reached `Up`. Service startup alone doesn't establish
 peer communication. For other events, see [Logs and events](logging.md).
-For an MSI installation, you can also [query the current state through COM](com.md).
+For monitoring scripts, see [Monitor service status and BFD events](monitoring.md).
 
 ### 7. Optional: Stop the service
 
@@ -392,7 +397,7 @@ See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 
 Console execution reads the same Parameters registry values as service execution.
 Run it as Administrator when using the MSI-protected key. Console mode does not
-host COM or authorize BGP operations; leave `BgpPeerName` and `BgpRoutingDomain`
+authorize BGP operations; leave `BgpPeerName` and `BgpRoutingDomain`
 unset for foreground execution.
 
 ### 1. Configure the registry values

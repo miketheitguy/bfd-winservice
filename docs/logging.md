@@ -1,6 +1,8 @@
 # Logs and events
 
-This guide is for Windows administrators choosing a log destination and interpreting Bidirectional Forwarding Detection (BFD) events. Use [Set up a BFD session](setup.md) to provision a fresh installation.
+This guide is for Windows operators reading Bidirectional Forwarding Detection
+(BFD) events and administrators configuring log destinations. Use [Set up a BFD
+session](setup.md) to provision a fresh installation.
 
 ## Log destinations
 
@@ -43,6 +45,21 @@ Queued events can be lost in this case; abrupt termination can also lose
 buffered file entries. File timestamps record when the writer formats each
 entry. Slow output can delay that timestamp relative to the underlying BFD
 state change, and buffering can delay when the entry becomes visible.
+
+## Read logs without service-control privileges
+
+Non-administrators can read logs without permission to Start/Stop the services.
+The MSI keeps Users read access to the default ProgramData log folder and grants
+Modify access only to the BFD service SID, alongside SYSTEM/Administrator full
+control. A custom `LogFilePath` uses the permissions provisioned for that location.
+The Operational channel retains Windows Event Log access control; the manifest
+does not install a custom channel ACL.
+
+Authenticated users can also run `Get-Service` to query Windows lifecycle status.
+`Running` does not mean the BFD session is `Up`. An elevated Administrator is
+required to Start/Stop either installed service or change BFD settings; SYSTEM
+retains Windows lifecycle access. See [Monitor service status and BFD
+events](monitoring.md).
 
 ## Configure file logging
 
@@ -168,8 +185,7 @@ Events 100–104, 110–113, and 201–208 share a budget of 32 records per seco
 so a flapping peer or spoofed packets cannot flood the log. Records beyond the
 budget are suppressed, and Warning event 4 reports the suppressed count at most
 once a minute and at shutdown. Local AdminDown records (106 and 207) are always
-written. Suppression affects logging only; BFD state, the COM state, and BGP
-actions are unchanged.
+written. Suppression affects logging only; BFD state and BGP actions are unchanged.
 
 ### Diagnostic events
 

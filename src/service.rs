@@ -1,5 +1,4 @@
 use bfd_winservice::{
-    com::ComServer,
     config::{load_registry, SERVICE_NAME},
     runtime::{drop_privileges, Engine, Logger, StopSignal},
 };
@@ -91,9 +90,9 @@ fn run_service() -> Result<(), Box<dyn Error>> {
     };
     let result = (|| -> Result<(), Box<dyn Error>> {
         // Startup can wait for the broker; advance StartPending checkpoints meanwhile.
-        let (mut com, mut engine) = with_progress(&reporter, || -> Result<_, Box<dyn Error>> {
+        let mut engine = with_progress(&reporter, || -> Result<_, Box<dyn Error>> {
             // Drop unused privileges, including SeImpersonatePrivilege, before
-            // accepting network traffic or COM calls.
+            // accepting network traffic.
             let removed = drop_privileges()?;
             if !removed.is_empty() {
                 log.log(format_args!(
@@ -101,19 +100,14 @@ fn run_service() -> Result<(), Box<dyn Error>> {
                     removed.join(", ")
                 ));
             }
-            // The dedicated COM thread acknowledges process security initialization
-            // before Engine construction can start any background management providers.
-            let com = ComServer::initialize()?;
             let options = load_registry(false)?;
             // Only BGP control needs the broker; plain BFD starts without it.
             if options.bgp_peer_name.is_some() {
                 bfd_winservice::bgp_broker::verify_connection()?;
             }
             log.open_file(&options)?;
-            let engine = Engine::from_config(options, &mut log)?;
-            Ok((com, engine))
+            Ok(Engine::from_config(options, &mut log)?)
         })?;
-        com.register(engine.state_observer())?;
         let started = {
             let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
             reporter.set(ServiceState::Running, ServiceExitCode::Win32(0))?;
@@ -168,7 +162,6 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             }
             result
         })?;
-        com.shutdown()?;
         Ok(())
     })();
     if let Err(error) = &result {

@@ -121,7 +121,8 @@ cargo asan --offline
 
 The focused suites use monotonic synthetic times for long periods and exact
 boundaries, avoiding real multi-minute waits. Native tests exercise actual
-Windows UDP, IPv4/IPv6 metadata, COM, pipe and temporary registry fixtures. ASan
+Windows UDP, IPv4/IPv6 metadata, private broker COM security, pipe, and temporary
+registry fixtures. ASan
 requires the MSVC sanitizer runtime on `PATH`; see
 [Run development checks](../CONTRIBUTING.md#run-development-checks).
 

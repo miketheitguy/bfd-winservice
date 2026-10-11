@@ -54,15 +54,12 @@ provider requests active for 20 seconds, including schema lookup and cleanup,
 while Running or stopping. Running timeouts exit without reporting Stopped so
 SCM crash recovery restarts the broker; requested stops remain final. Status
 reporting failures keep the worker under watchdog supervision until it ends.
-COM metadata is created once per class registration and shared through agile
-references, replacing the process-wide metadata quota.
 
 Regression coverage includes cancellation publication and final-action errors,
 native reconnect after a disconnect before acceptance, terminal broker status,
 live settings retry after Poll completion, active-provider timeout detection,
-bounded native UDP shutdown with a warning, and metadata reuse across an MTA and
-an STA. Installation tests check the preshutdown setting; rollback tests check
-restoration of the previous default.
+bounded native UDP shutdown with a warning. Installation tests check the
+preshutdown setting; rollback tests check restoration of the previous default.
 
 Validation: all 193 default tests pass in the release and AddressSanitizer
 profiles; the ignored read-only native MI schema test also passes. Formatting,
@@ -80,7 +77,6 @@ and `overflow-checks = true`. These findings were fixed:
 
 | Finding | Correction |
 | --- | --- |
-| The COM launch ACL let any authenticated user start a stopped service, restarting BFD and then BGP after an administrator's Stop. | Authenticated users keep local activation (`0x9`) but lose launch; SYSTEM and administrators keep `0xb`. |
 | Any receive or wait error other than WouldBlock or `WSAEMSGSIZE` ended the engine, stopping BGP, and BFD had no SCM recovery. | Network-condition Winsock errors pause socket use with a 10–250 ms backoff while timers continue. BFD restarts 10 seconds after a crash or unrequested failure exit; requested stops report exit code 0, so recovery never undoes a Stop. Both services use Automatic (Delayed Start). |
 | Shutdown could take minutes, and StopPending checkpoints advanced indefinitely, hiding hangs. | Closing cancels a superseded in-flight call; each call of the final BGP action has a 20-second budget. BFD ends its process 60 seconds plus its AdminDown announcement period after Stop; the broker after 60 seconds. BFD accepts preshutdown, so its final BGP action reaches the broker before the shutdown phase. |
 | Final events were written after SERVICE_STOPPED, when the process can end. | Both services flush logs before reporting Stopped; the broker creates its logger first. |
@@ -88,12 +84,12 @@ and `overflow-checks = true`. These findings were fixed:
 | Congestion backoff grew to about 71 minutes. | Backoff stops at 30 seconds, or a slower negotiated base. |
 | Weak authentication settings were silent; peer events were unbounded; the file log never rotated; the reflector replied without limit. | Warning event 4 reports weak settings; session events are limited to 32 per second; the file rotates at 64 MiB to one backup; the reflector replies at most 1,000 times per second per source. |
 | MI function-table entries were transmuted from `isize` to non-null function pointers. | `entry` rejects zero entries before conversion, so a missing entry is an error rather than undefined behavior. |
-| The LocalService process kept SeImpersonatePrivilege; the broker shared the BFD COM access list; `GetTypeInfo` rebuilt metadata without bound. | Both run modes remove all but two privileges at startup; the broker admits only SYSTEM, administrators, and services; metadata builds are limited to 64 per second. |
+| The LocalService process kept SeImpersonatePrivilege. | Both run modes remove all but two privileges at startup. |
 | Startup checkpoints never advanced; a probe/worker pipe race logged a spurious failure; S-BFD settings were read every second. | Startup advances checkpoints; clients wait briefly for a busy pipe instance; a registry change notification triggers reloads, with polling as a fallback. |
 | `AuthKeyHex` accepted `+` signs; key copies were never cleared; the nightly toolchain floated. | Hex digits are checked; key buffers are wiped with volatile writes; `rust-toolchain.toml` pins `nightly-2026-10-01`; CI runs `cargo audit`. |
 
 The `Restricted` service SID type was evaluated but not adopted: without a
-runtime check of COM registration and ETW under a write-restricted token, it
+runtime check of ETW under a write-restricted token, it
 could not be validated.
 
 Follow-up policy change: stopping BFD no longer stops BGP. Local AdminDown, set
@@ -120,12 +116,11 @@ broker's narrower COM policy. New tests cover transient-error classification,
 retry backoff and Stop-only pauses, notification wakeups, the event and reply
 limits, file rotation, registry change notification, IPC cancellation and busy
 pipes, privilege removal in a child process, the 30-second backoff ceiling,
-exit-code policy, startup checkpoints, `GetTypeInfo` limits, checked MI entries,
-the BSI2 rollback snapshot, and hex-key parsing. The cross-process PowerShell COM
-test now hosts its server after removing privileges, as the service does.
+exit-code policy, startup checkpoints, checked MI entries,
+the BSI2 rollback snapshot, and hex-key parsing.
 
 Not validated locally: building the MSI requires accepting the WiX OSMF EULA, so
-`Test-Msi.ps1` table checks (launch ACL, recovery rows, broker start type) were
+`Test-Msi.ps1` table checks (recovery rows, broker start type) were
 not run; their PowerShell syntax and the WiX XML were checked. The installation
 and rollback scripts, now covering delayed start and recovery flags, run only on
 GitHub-hosted runners. Transient Winsock faults have unit coverage but no fault

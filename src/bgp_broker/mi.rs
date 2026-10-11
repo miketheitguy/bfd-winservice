@@ -958,7 +958,7 @@ mod tests {
     fn native_mi_reads_enum_qualifiers_from_local_class_schema() {
         // The broker initializes private process-wide COM security before native MI.
         // Exercise a real provider under those defaults without changing BGP.
-        let _com = crate::com::ComServer::initialize_private().unwrap();
+        let _com = super::super::com::ComHost::initialize().unwrap();
         let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         let mut session = application.session().unwrap();
         let mut options = application.options().unwrap();

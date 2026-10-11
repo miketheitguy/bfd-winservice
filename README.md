@@ -46,7 +46,7 @@ files and Automatic (Delayed Start) services, register the Operational provider,
 firewall rules. The service remains stopped for configuration.
 
 Supplied loose files support [foreground console execution](docs/setup.md#run-in-a-console).
-Use the MSI for service execution, BGP management, and COM registration.
+Use the MSI for service execution and BGP management.
 
 ### 2. Configure a fresh installation
 
@@ -88,6 +88,10 @@ confirm event `102` in `BFD-Service/Operational` to verify BFD reached `Up`.
 See [Verify peer communication](docs/setup.md#6-verify-peer-communication)
 for the query and expected events.
 
+Non-administrators can query service status and read event/file logs. Start/Stop
+and configuration changes require an elevated Administrator; SYSTEM retains
+Windows service lifecycle access.
+
 For foreground execution that writes to standard output (STDOUT), see
 [Run in a console](docs/setup.md#run-in-a-console). The executable accepts
 `--console`, `--help`, and `--version`; session configuration comes from
@@ -104,7 +108,7 @@ Use these guides for the next task:
 | Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](docs/seamless.md) |
 | Enable file output or interpret Operational events | [Logs and events](docs/logging.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
-| Query the live session state from a monitoring client | [Query the current BFD state through COM](docs/com.md) |
+| Query service status and read BFD state events | [Monitor service status and BFD events](docs/monitoring.md) |
 | Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
 | Review RFC 5880, RFC 7419, and RFC 7880 requirements, test coverage, and limits | [RFC conformance tests](docs/rfc-conformance.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |

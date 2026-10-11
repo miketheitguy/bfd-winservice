@@ -1,13 +1,11 @@
 //! SCM lifecycle for the broker. Provider work stays off the control-handler thread.
 use super::{
+    com::ComHost,
     ipc, serve,
     watchdog::{ProviderWatch, PROVIDER_BUDGET},
     Target,
 };
-use crate::{
-    com::ComServer,
-    runtime::{Logger, StopSignal},
-};
+use crate::runtime::{Logger, StopSignal};
 use std::{
     ffi::OsString,
     io, process,
@@ -134,7 +132,7 @@ fn start() -> io::Result<()> {
         ipc::require_broker_identity()?;
         // Initialize process security before MI can marshal anything. This process
         // registers no COM factory, so interactive users get no COM access.
-        let com = ComServer::initialize_private()?;
+        let com = ComHost::initialize()?;
         let target = Target::load()?;
         reporter
             .lock()

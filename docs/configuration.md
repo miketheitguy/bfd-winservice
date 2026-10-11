@@ -15,9 +15,12 @@ The program reads this key without creating or modifying it. Missing optional va
 - **Apply changes:** restart to reload startup settings. S-BFD timing and maintenance settings reload when the Parameters key changes; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 The MSI protects this key: SYSTEM and administrators have full control, and the
-enabled BFD service SID has read access. Console configuration therefore requires
-an administrator account. The BGP broker reads only the configured BGP target;
-restart both services after changing either BGP value.
+enabled BFD service SID has read access. Console execution and configuration
+therefore require an elevated Administrator session. The BGP broker reads only
+the configured BGP target; restart both services after changing either BGP value.
+Service configuration changes and Start/Stop require elevation. Non-administrators
+can still query service status and read logs; see [Monitor service status and BFD
+events](monitoring.md).
 
 Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
 

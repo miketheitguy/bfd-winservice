@@ -7,9 +7,12 @@
   <?define BfdServiceSid = "S-1-5-80-1071555646-3639003188-2623042311-1024194528-3093158512" ?>
   <?define FileSecurity = "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)(A;;FRFX;;;$(var.BfdServiceSid))" ?>
   <?define DirectorySecurity = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OICI;FRFX;;;$(var.BfdServiceSid))" ?>
-  <?define RegistrySecurity = "O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;KR;;;$(var.BfdServiceSid))" ?>
   <?define ParametersSecurity = "O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;$(var.BfdServiceSid))" ?>
   <?define LogSecurity = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OICI;0x1301bf;;;$(var.BfdServiceSid))" ?>
+  <!-- Query config/status, enumerate dependents, interrogate, and read the DACL
+       remain available to authenticated users. Only SYSTEM and administrators
+       can start, stop, reconfigure, or send custom controls to either service. -->
+  <?define ServiceSecurity = "O:SYG:SYD:P(A;;0xf01ff;;;SY)(A;;0xf01ff;;;BA)(A;;0x2008d;;;AU)" ?>
   <Package Name="BFD Windows Service" Manufacturer="BFD Windows Service"
            Version="$(var.ProductVersion)" Language="1033" Scope="perMachine"
            UpgradeCode="F044EF3A-595B-4870-A9E0-96C1D315B073" InstallerVersion="500">
@@ -45,8 +48,8 @@
                           Description="Monitors a configured peer with Bidirectional Forwarding Detection."
                           Type="ownProcess" Start="auto" Account="NT AUTHORITY\LocalService"
                           ErrorControl="normal" Vital="yes">
-            <ServiceDependency Id="RpcSs" />
             <ServiceDependency Id="BfdBgpBroker" />
+            <PermissionEx Id="BfdServiceSecurity" Sddl="$(var.ServiceSecurity)" />
             <!-- ConfigureServicePolicy also enables delayed start and recovery after a
                  nonzero exit. Administrator Stop requests always exit with code 0. -->
             <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
@@ -82,47 +85,11 @@
                           Description="Controls the configured BGP peer through an authenticated local pipe."
                           Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Vital="yes">
             <ServiceDependency Id="RpcSs" />
+            <PermissionEx Id="BrokerServiceSecurity" Sddl="$(var.ServiceSecurity)" />
             <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
                                 ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
           </ServiceInstall>
           <ServiceControl Id="ControlBgpBroker" Name="BfdBgpBroker" Stop="both" Remove="uninstall" Wait="yes" />
-        </Component>
-        <Component Id="ComRegistrationComponent" Bitness="always64">
-          <RegistryValue Id="ComClassDescription" Root="HKLM" Key="SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}"
-                         Type="string" Value="BFD session state" KeyPath="yes">
-            <PermissionEx Id="ComClassSecurity" Sddl="$(var.RegistrySecurity)" />
-          </RegistryValue>
-          <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}"
-                         Name="AppID" Type="string" Value="{EBF04871-D193-4CDF-ABBC-DCD7D220224B}" />
-          <RegistryValue Id="ComClassProgId" Root="HKLM" Key="SOFTWARE\Classes\CLSID\{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}\ProgID"
-                         Type="string" Value="BfdWinService.SessionState">
-            <PermissionEx Id="ComClassProgIdSecurity" Sddl="$(var.RegistrySecurity)" />
-          </RegistryValue>
-          <RegistryValue Id="ComProgIdDescription" Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.SessionState"
-                         Type="string" Value="BFD session state">
-            <PermissionEx Id="ComProgIdSecurity" Sddl="$(var.RegistrySecurity)" />
-          </RegistryValue>
-          <RegistryValue Id="ComProgIdClass" Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.SessionState\CLSID"
-                         Type="string" Value="{4B19A10F-8CD1-46F1-A1EA-6C68ECBA7657}">
-            <PermissionEx Id="ComProgIdClassSecurity" Sddl="$(var.RegistrySecurity)" />
-          </RegistryValue>
-          <RegistryValue Id="ComAppDescription" Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
-                         Type="string" Value="BFD Windows Service">
-            <PermissionEx Id="ComAppSecurity" Sddl="$(var.RegistrySecurity)" />
-          </RegistryValue>
-          <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
-                         Name="LocalService" Type="string" Value="BfdWinService" />
-          <RegistryValue Id="ComExeAppId" Root="HKLM" Key="SOFTWARE\Classes\AppID\bfd-winservice.exe"
-                         Name="AppID" Type="string" Value="{EBF04871-D193-4CDF-ABBC-DCD7D220224B}">
-            <PermissionEx Id="ComExeAppSecurity" Sddl="$(var.RegistrySecurity)" />
-          </RegistryValue>
-          <!-- O:SYG:SYD:(A;;0xb;;;SY)(A;;0xb;;;BA)(A;;0x9;;;AU):
-               SYSTEM and administrators may launch (start) a stopped service through COM.
-               Authenticated users may only activate the running server, so they cannot
-               restart a service, and its BGP control, that an administrator stopped. -->
-          <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\AppID\{EBF04871-D193-4CDF-ABBC-DCD7D220224B}"
-                         Name="LaunchPermission" Type="binary"
-                         Value="010004801400000020000000000000002C0000000101000000000005120000000101000000000005120000000200480003000000000014000B000000010100000000000512000000000018000B00000001020000000000052000000020020000000014000900000001010000000000050B000000" />
         </Component>
         <Component Id="ManifestComponent" Bitness="always64">
           <File Id="EventManifest" Source="$(var.RepositoryRoot)\events\BFD-Service.man" KeyPath="yes">
@@ -186,7 +153,6 @@
       <ComponentRef Id="InstallDirectoryComponent" />
       <ComponentRef Id="ServiceComponent" />
       <ComponentRef Id="BrokerComponent" />
-      <ComponentRef Id="ComRegistrationComponent" />
       <ComponentRef Id="ManifestComponent" />
       <ComponentRef Id="LoggingScriptComponent" />
       <ComponentRef Id="MultihopDefault" />

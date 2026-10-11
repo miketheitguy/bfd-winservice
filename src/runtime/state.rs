@@ -1,4 +1,5 @@
-//! A read-only state snapshot shared with monitoring clients.
+//! An in-process state snapshot for library users and integration tests.
+//! The installed daemon exposes no IPC endpoint for this snapshot.
 #![forbid(unsafe_code)]
 
 use crate::packet::State;

@@ -19,8 +19,6 @@ mod bgp;
 #[cfg(windows)]
 pub mod bgp_broker;
 #[cfg(windows)]
-pub mod com;
-#[cfg(windows)]
 mod event_log;
 #[cfg(windows)]
 pub mod runtime;
