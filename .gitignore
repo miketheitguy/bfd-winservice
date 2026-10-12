@@ -1,3 +1,4 @@
 /target/
 /.wix/
 *.log
+/bird-anycast-lab/
