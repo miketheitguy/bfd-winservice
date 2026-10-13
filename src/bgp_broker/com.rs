@@ -1,8 +1,8 @@
 //! Private COM lifetime and security for the BGP broker's native MI client.
 //!
-//! This module registers no class factory or Automation interface. The UDP daemon
-//! does not initialize COM. Local SYSTEM and administrators are the only principals
-//! admitted by the broker's process security descriptor.
+//! This module registers no class factory or Automation interface. The BFD service
+//! hosts its status interface under separate process security. Local SYSTEM and
+//! administrators are the only principals admitted by the broker's descriptor.
 #![allow(unsafe_code)] // COM lifetime and Windows security calls are confined here.
 
 use std::{

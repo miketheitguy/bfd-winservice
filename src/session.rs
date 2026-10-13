@@ -228,6 +228,17 @@ impl Session {
         self.remote_diagnostic
     }
 
+    /// Last accepted advertised timing, copied into telemetry before expiry can
+    /// reset the session's operational receive interval.
+    #[cfg(windows)]
+    pub(crate) fn remote_timing(&self) -> (u32, u32, u8) {
+        (
+            self.remote_min_tx_us,
+            self.remote_min_rx_us,
+            self.remote_detect_mult,
+        )
+    }
+
     /// Returns whether the session is Down because the peer signalled AdminDown,
     /// for example when its BFD service stopped. RFC 5882 section 3.2 treats this
     /// as administrative rather than a path failure.

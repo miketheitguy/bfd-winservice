@@ -61,6 +61,10 @@ jobs:
         run: ./scripts/Test-ReleaseVersion.ps1
       - name: Check installer ACL validation
         run: ./scripts/Test-RestrictedAcl.ps1
+      - name: Check status COM registration and access permissions
+        run: |
+          ./scripts/Test-StatusComPermission.ps1
+          ./scripts/Test-StatusRegistration.ps1
       - name: Check Rust formatting
         run: cargo fmt --check
       - name: Check Rust lints in release mode
@@ -86,6 +90,18 @@ jobs:
           }
           "BFD_HARDENING_TEST_EXE=$($hardeningTests[0])" |
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+      - name: Check authorized PowerShell COM status output
+        env:
+          BFD_TEST_REQUIRE_STATUS_AUTHORIZED: '1'
+        run: |
+          cargo test-release --lib status_com::tests::powershell_queries_real_com_or_is_denied_by_caller_identity -- --exact --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Authorized PowerShell COM status output validation failed.' }
+      - name: Check deny-only Administrator authorization boundary
+        env:
+          BFD_TEST_REQUIRE_STATUS_DENY_ONLY: '1'
+        run: |
+          cargo test-release --lib status_com::tests::deny_only_administrator_sid_does_not_authorize_querying -- --exact --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Deny-only Administrator authorization validation failed.' }
       - name: Check native MI with COM security
         run: |
           cargo test-release --lib bgp_broker::mi::tests::native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored --exact

@@ -25,9 +25,9 @@ The installed services and local callers have these permissions:
 | --- | --- |
 | `BfdWinService`: LocalService with `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the private pipe. Removes all token privileges except `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege` before accepting network traffic. |
 | `BfdBgpBroker`: LocalSystem with `NT SERVICE\BfdBgpBroker` SID | Owns the pipe and invokes the local Windows BGP management provider. Startup requires both LocalSystem and the enabled broker service SID. |
-| Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, modify installed files and Parameters, and manage permissions. Membership in Administrators alone does not satisfy the broker pipe's BFD client identity checks. |
+| Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, query the local read-only COM session endpoint, modify installed files and Parameters, and manage permissions. Membership in Administrators alone does not satisfy the broker pipe's BFD client identity checks. |
 | Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot start, stop, reconfigure, or send custom controls to either installed service. |
-| Remote network peers | Can send UDP traffic through the configured firewall rules. Packets must pass protocol/path validation and any configured BFD authentication before affecting the session. No remote broker pipe access. |
+| Remote network peers | Can send UDP traffic through the configured firewall rules. Packets must pass protocol/path validation and any configured BFD authentication before affecting the session. No remote broker pipe or status COM access. |
 
 The BFD process permanently removes unused token privileges, including
 `SeImpersonatePrivilege` and `SeAssignPrimaryTokenPrivilege`. The retained
@@ -46,7 +46,9 @@ MSI-installed service.
 The editable [draw.io diagram](service-communication.drawio) contains two pages.
 The PNG exports embed editable XML so they can also be opened in draw.io. Open
 each image at full size to read its labels. The equivalent ASCII diagrams and
-the authentication sections provide the same boundaries in text.
+the authentication sections provide the same boundaries in text. The exports
+illustrate packet processing and BGP control; the administrative status COM
+boundary is described in [Administrative COM status access](#administrative-com-status-access).
 
 ### Runtime and security
 
@@ -77,7 +79,7 @@ EXTERNAL NETWORK / UNTRUSTED
 |   [A: path checks + optional BFD auth]                                         |
 |         | accepted packet                                                      |
 |         v                                                                      |
-|   [Session / timers / S-BFD reflector] --> [In-process state snapshot only]    |
+|   [Session / timers / S-BFD reflector] --> [Published immutable snapshots]     |
 |         |     |                                                                |
 |         |     +----> encode + configured auth ----> UDP TX                     |
 |         |                                                                      |
@@ -120,7 +122,9 @@ EXTERNAL NETWORK / UNTRUSTED
 
 Packet validation and authentication run before accepted traffic can change
 session state or refresh detection. Detection timeouts also change state and
-can cause BGP actions. The state snapshot is an in-process library/test observer.
+can cause BGP actions. The service publishes immutable session snapshots for
+its local read-only administrative COM endpoint. COM calls execute separately
+from the packet loop and read the published snapshot.
 
 ### Configuration, lifecycle, and logs
 
@@ -293,6 +297,8 @@ The MSI provisions protected permissions for these objects:
 | Both SCM service objects | SYSTEM and Administrators have full control, including Start/Stop and configuration changes. | Authenticated Users have query-config, query-status, enumerate-dependents, interrogate, and read-control rights (`0x2008d`). No Start/Stop, reconfiguration, or custom controls. |
 | Installed executables, manifest, logging script, and installation directory | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
 | `HKLM\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters` | SYSTEM and Administrators have full control. | BFD service SID has read access; the LocalSystem broker reads its BGP target. Ordinary users cannot read authentication keys. |
+| Status COM registration under 64-bit `HKLM\SOFTWARE\Classes` | SYSTEM and Administrators have full control over protected keys. | Users and LocalService can read activation metadata; this does not grant endpoint access. |
+| `BfdWinService.Status.1` COM endpoint | Provides read-only observations; no configuration or BGP mutation methods. | Local SYSTEM and tokens with the enabled Administrators SID only. Unelevated Administrator tokens and remote callers are denied. |
 | Default file-log directory | SYSTEM and Administrators have full control; BFD service SID has Modify access. | Users retain read access. Custom log paths use their provisioned filesystem ACLs. |
 | `BFD-Service/Operational` event channel | Windows Event Log permissions govern event publication and channel management. | The manifest supplies no custom channel access ACL; existing Windows log-read permissions remain in effect. |
 
@@ -308,6 +314,38 @@ SCM. A service-status query reports Running/Stopped and process lifecycle, rathe
 than the BFD session's Up/Down state. See
 [Monitor service status and BFD events](monitoring.md) and
 [Logs and events](logging.md).
+
+### Administrative COM status access
+
+`BfdWinService.Status.1` exposes `GetSnapshot()` through standard COM Automation
+(`IDispatch`) inside the LocalService BFD service process. The AppID's
+`LocalService` registry value names the SCM service `BfdWinService`; there is no
+alternate executable, DLL surrogate, or privileged status broker. See Microsoft's
+[LocalService COM registration](https://learn.microsoft.com/en-us/windows/win32/com/localservice).
+
+The MSI installs an explicit binary `LaunchPermission` descriptor granting only
+SYSTEM and Administrators `COM_RIGHTS_EXECUTE | COM_RIGHTS_EXECUTE_LOCAL |
+COM_RIGHTS_ACTIVATE_LOCAL` (`0xb`). Its `AccessPermission` grants those same
+principals `COM_RIGHTS_EXECUTE | COM_RIGHTS_EXECUTE_LOCAL` (`0x3`). Neither
+descriptor grants remote launch, activation, or calls. The five activation
+registry roots have protected ACLs so ordinary users cannot alter the policy.
+See Microsoft's [DCOM permission masks](https://learn.microsoft.com/en-us/windows/win32/com/dcom-security-enhancements-in-windows-xp-service-pack-2-and-windows-server-2003-service-pack-1).
+
+The process initializes COM security with an explicit local SYSTEM/Administrators
+descriptor, packet integrity, identification-level callers, and
+`EOAC_DISABLE_AAA | EOAC_NO_CUSTOM_MARSHAL`. Initialization failure closes the
+endpoint. Class creation and dispatch calls check local RPC provenance and the
+caller's enabled SYSTEM or Administrators SID. UAC's filtered Administrator
+token does not satisfy the Administrators check. Caller identification ends
+before reading the snapshot; no query performs work using the caller's token.
+
+Status reads clone an immutable `Arc` from an ArcSwap observer and never acquire
+a lock held by the BFD loop. The engine refreshes the snapshot at most once per
+second, so it can describe older protocol state. State telemetry contains no
+authentication keys or packet payloads. Engine shutdown makes subsequent reads
+unavailable; already-returned objects retain their historical values until the
+COM connection closes. For PowerShell access and field meanings, see
+[Query a session snapshot](monitoring.md#query-a-session-snapshot).
 
 ## Rust compiler and linker hardening
 
@@ -410,11 +448,12 @@ These files define the authentication and privilege boundaries:
 | Path | Relevant implementation |
 | --- | --- |
 | [installer/Package.wxs](../installer/Package.wxs) | Service accounts, dependencies, SCM control/query ACLs, Parameters ACL, and firewall rules |
-| [src/service.rs](../src/service.rs) and [src/bgp_broker/service.rs](../src/bgp_broker/service.rs) | SCM lifecycle, startup checks, private broker COM initialization, and conditional broker probe |
+| [src/service.rs](../src/service.rs) and [src/bgp_broker/service.rs](../src/bgp_broker/service.rs) | SCM lifecycle, startup checks, service-hosted status COM, private broker COM initialization, and conditional broker probe |
 | [src/runtime/privileges.rs](../src/runtime/privileges.rs) | `RETAINED` and `drop_privileges` |
 | [src/transport.rs](../src/transport.rs) | `Datagram::validate`, transport construction, `send`, and `send_reply` |
 | [src/session.rs](../src/session.rs), [src/packet.rs](../src/packet.rs), and [src/seamless.rs](../src/seamless.rs) | `receive_checked`, `receive_seamless`, `AuthConfig::verify_decoded`, and `respond_checked` |
-| [src/bgp_broker/com.rs](../src/bgp_broker/com.rs) and [src/runtime/state.rs](../src/runtime/state.rs) | Private broker COM security and the in-process atomic state observer |
+| [src/status_com.rs](../src/status_com.rs), [src/runtime/status.rs](../src/runtime/status.rs), and [src/runtime/state.rs](../src/runtime/state.rs) | Local administrative COM caller checks, immutable status publication, and the lightweight atomic state observer |
+| [src/bgp_broker/com.rs](../src/bgp_broker/com.rs) | Private broker COM security for native MI |
 | [src/bgp/ipc.rs](../src/bgp/ipc.rs) | `require_broker_identity`, `identify_client`, `verify_server`, frame validation, and pipe listener |
 | [src/bgp.rs](../src/bgp.rs) and [src/bgp_broker.rs](../src/bgp_broker.rs) | Bounded BGP mailbox, state-to-action policy, fixed target, and request dispatch |
 | [src/bgp_broker/mi.rs](../src/bgp_broker/mi.rs) | Local MI destination, impersonation option, namespace, and provider calls |

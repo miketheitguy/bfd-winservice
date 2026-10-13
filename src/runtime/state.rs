@@ -1,5 +1,6 @@
 //! An in-process state snapshot for library users and integration tests.
-//! The installed daemon exposes no IPC endpoint for this snapshot.
+//! This lightweight view stays in-process; the installed service's COM endpoint
+//! uses the separate rich StatusObserver.
 #![forbid(unsafe_code)]
 
 use crate::packet::State;

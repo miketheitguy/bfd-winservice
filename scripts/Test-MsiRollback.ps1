@@ -9,6 +9,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     throw 'This rollback test runs only on a GitHub-hosted Actions runner.'
 }
 . (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
+. (Join-Path $PSScriptRoot 'Assert-StatusComPermission.ps1')
 $resolvedMsi = (Resolve-Path -LiteralPath $Path).Path
 $outputDirectory = Split-Path $resolvedMsi -Parent
 $installDirectory = Join-Path $env:ProgramFiles 'BfdWinService'
@@ -16,6 +17,12 @@ foreach ($name in @('BfdWinService','BfdBgpBroker')) {
     if (Get-Service $name -ErrorAction SilentlyContinue) { throw "Rollback runner already has $name." }
 }
 if (Test-Path -LiteralPath $installDirectory) { throw 'Rollback runner already has the installation folder.' }
+$comRoots = @(Get-StatusComRegistryValues | Where-Object Id -In @(
+    'StatusClassName','StatusProgIdName','StatusVersionIndependentProgIdName','StatusAppName','StatusExeAppId') |
+    ForEach-Object { 'HKLM:\' + $_.Key })
+foreach ($path in $comRoots) {
+    if (Test-Path -LiteralPath $path) { throw "Rollback runner already has status COM registration: $path" }
+}
 $testMsi = Join-Path $env:RUNNER_TEMP ('BfdRollback-' + [Guid]::NewGuid().ToString('N') + '.msi')
 & (Join-Path $PSScriptRoot 'New-MsiRollbackFixture.ps1') -Path $resolvedMsi -Destination $testMsi
 
@@ -43,6 +50,9 @@ try {
         if (Get-Service BfdBgpBroker -ErrorAction SilentlyContinue) { throw 'Rollback left the newly installed broker.' }
         if (Test-Path -LiteralPath (Join-Path $installDirectory 'service-policy.rollback')) { throw 'Rollback left its service policy snapshot.' }
         if (Test-Path -LiteralPath (Join-Path $installDirectory 'bfd-bgp-broker.exe')) { throw 'Rollback left the broker executable.' }
+        foreach ($path in $comRoots) {
+            if (Test-Path -LiteralPath $path) { throw "Rollback left status COM registration: $path" }
+        }
         $service = Get-CimInstance Win32_Service -Filter "Name='BfdWinService'"
         if ($migration) {
             if ($null -eq $service -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Stopped') {

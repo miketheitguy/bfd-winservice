@@ -1,6 +1,7 @@
 use bfd_winservice::{
     config::{load_registry, SERVICE_NAME},
     runtime::{drop_privileges, Engine, Logger, StopSignal},
+    status_com::StatusComServer,
 };
 use std::{
     error::Error,
@@ -107,6 +108,12 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             }
             log.open_file(&options)?;
             Ok(Engine::from_config(options, &mut log)?)
+        })?;
+        // Register the Automation class before reporting Running. The dedicated
+        // COM host serves immutable snapshots on RPC threads; the UDP worker
+        // never waits for clients, marshaling, or endpoint shutdown.
+        let _status_com = with_progress(&reporter, || {
+            StatusComServer::start(engine.status_observer())
         })?;
         let started = {
             let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());

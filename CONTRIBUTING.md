@@ -327,6 +327,15 @@ release workflow also runs a read-only native MI schema query under this policy
 to check compatibility with Windows management providers. In-process state
 observers remain available to library users and UDP integration tests.
 
+`src/status_com.rs` hosts the BFD service's read-only Automation class on a
+dedicated MTA thread. Start the class before reporting the service as Running,
+and retain its host until the engine stops. Process COM security and each
+Automation call admit only local SYSTEM or enabled Administrators. The endpoint
+reads immutable `StatusObserver` snapshots published once per second; COM
+queries, formatting, and caller token checks run outside the UDP loop. Keep
+`StateObserver` as the existing lightweight local-state view. See
+[Query a session snapshot](docs/monitoring.md#query-a-session-snapshot) for client usage.
+
 ## Update the security diagrams
 
 Edit [the two-page draw.io source](docs/service-communication.drawio), then export

@@ -26,6 +26,29 @@ log. See [Configuration, lifecycle, and logs](security.md#configuration-lifecycl
 for those paths and [diagnostic access permissions](security.md#e-service-control-configuration-and-diagnostic-access)
 for administrative control and read-only monitoring.
 
+## Administrative status queries
+
+The LocalService BFD process also hosts the read-only
+`BfdWinService.Status.1` COM Automation endpoint. Local elevated Administrators
+and SYSTEM can call `GetSnapshot()` to obtain an immutable observation of session
+state, peer identity, active timing, communication timestamps, and packet/error
+counters. COM activation targets the installed SCM service, and status queries
+do not contact the BGP broker or provider.
+
+The engine replaces its published `Arc` at most once per second. COM query
+threads read that snapshot without requesting work from, or holding a lock on,
+the packet loop. Each returned object retains its values even after later
+publications; repeat `GetSnapshot()` for a later observation. Session data can
+lag BFD detection and peer reports preserve their last accepted values.
+
+Activation and call permissions grant local SYSTEM and enabled Administrators
+only. The endpoint checks caller identity on class creation and dispatch, and
+rejects remote calls. It has no mutation methods or secret authentication data.
+Use Windows service queries for lifecycle status. See
+[Query a session snapshot](monitoring.md#query-a-session-snapshot) for PowerShell
+examples and [Administrative COM status access](security.md#administrative-com-status-access)
+for activation registration and caller checks.
+
 ## UDP inputs and outputs
 
 The selected role determines the socket endpoints. `P` and `Q` denote the local

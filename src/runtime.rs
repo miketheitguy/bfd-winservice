@@ -21,18 +21,21 @@ use std::{
         Arc,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::GetSystemTime};
 
 mod logging;
 mod privileges;
 pub(crate) mod state;
+pub mod status;
 pub use crate::transport::StopSignal;
 pub use logging::Logger;
 pub use privileges::drop_privileges;
 pub use state::StateObserver;
 use state::StatePublisher;
+pub use status::{RejectionReason, StatusObserver, StatusSnapshot};
+use status::{StatusPublisher, StatusTelemetry};
 
 /// Loops also wake at least once per second, independent of protocol timers.
 const MAX_IDLE_WAIT: Duration = Duration::from_secs(1);
@@ -252,6 +255,8 @@ pub struct Engine {
     // Drop the publication before sockets/providers so retained readers cannot
     // report a live state while an engine that never ran is being torn down.
     state_publisher: StatePublisher,
+    status_publisher: StatusPublisher,
+    status_telemetry: StatusTelemetry,
     options: ValidatedOptions,
     timing: Timing,
     sbfd_admin_down: bool,
@@ -353,8 +358,14 @@ impl Engine {
         } else {
             LiveSettings::None
         };
+        let now = Instant::now();
+        let status_telemetry = StatusTelemetry::new(now, SystemTime::now(), &options);
+        let initial_status =
+            status_telemetry.snapshot(&session, &options, options.timing(), transport.source_port);
         Ok(Self {
             state_publisher: StatePublisher::new(session.state()),
+            status_publisher: StatusPublisher::new(initial_status, now),
+            status_telemetry,
             timing: options.timing(),
             sbfd_admin_down: options.sbfd_admin_down,
             options,
@@ -373,6 +384,25 @@ impl Engine {
     /// Returns a shared, read-only view of the current local BFD state.
     pub fn state_observer(&self) -> StateObserver {
         self.state_publisher.observer()
+    }
+
+    /// Returns immutable administrative snapshots refreshed at most once a second.
+    /// Queries read shared `Arc` snapshots without requesting packet-loop work.
+    pub fn status_observer(&self) -> StatusObserver {
+        self.status_publisher.observer()
+    }
+
+    fn publish_status(&mut self, now: Instant) {
+        if self.status_publisher.is_due(now) {
+            self.status_telemetry.calibrate(now, SystemTime::now());
+            let snapshot = self.status_telemetry.snapshot(
+                &self.session,
+                &self.options,
+                self.timing,
+                self.transport.source_port,
+            );
+            self.status_publisher.publish(snapshot, now);
+        }
     }
 
     /// Returns a handle that reports the AdminDown announcement period at shutdown.
@@ -401,6 +431,11 @@ impl Engine {
         if previous == self.session.state() {
             return;
         }
+        self.status_telemetry.transition(
+            self.session.state(),
+            self.session.diagnostic(),
+            Instant::now(),
+        );
         self.state_publisher.publish(self.session.state());
         if let Some(bgp) = &self.bgp {
             // Stopping a BFD service, here or at the peer, is administrative rather
@@ -516,9 +551,10 @@ impl Engine {
         self.state_changed(previous, log);
     }
     fn transmit(&mut self, kind: Transmission, log: &mut Logger, last_error: &mut Option<Instant>) {
-        let packet = self.session.prepare_packet(kind, Instant::now());
+        let now = Instant::now();
+        let packet = self.session.prepare_packet(kind, now);
         if let Err(error) = self.transport.send(&packet.data) {
-            let now = Instant::now();
+            self.status_telemetry.socket_error(&error, now);
             if last_error.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1)) {
                 log.log(format_args!(
                     "send to {} failed: {error}",
@@ -528,6 +564,7 @@ impl Engine {
             }
         } else {
             self.session.record_transmission(&packet);
+            self.status_telemetry.sent(now);
         }
     }
 
@@ -567,6 +604,8 @@ impl Engine {
             self.set_reflector_admin_down(admin_down, log);
             Ok(())
         });
+        self.status_telemetry
+            .configuration_reload(result.is_ok(), Instant::now());
         if let Err(error) = result {
             self.settings_retry = true;
             if due(
@@ -621,19 +660,27 @@ impl Engine {
 
     /// Bounds a wait so the fallback settings read and the idle wakeup still occur.
     fn idle_wait(&self, now: Instant, next_poll: Instant) -> Duration {
+        let status_wait = self
+            .status_publisher
+            .deadline()
+            .saturating_duration_since(now);
         if self.settings_retry {
-            return next_poll.saturating_duration_since(now).min(MAX_IDLE_WAIT);
+            return next_poll
+                .saturating_duration_since(now)
+                .min(MAX_IDLE_WAIT)
+                .min(status_wait);
         }
-        match self.live_settings {
+        let wait = match self.live_settings {
             LiveSettings::Poll => next_poll.saturating_duration_since(now).min(MAX_IDLE_WAIT),
             LiveSettings::None | LiveSettings::Notify(_) => MAX_IDLE_WAIT,
-        }
+        };
+        wait.min(status_wait)
     }
 
     /// Waits for traffic, a timer, Stop, or a settings change. A transient socket
     /// fault reported by the wait pauses the loop instead of ending the engine.
     fn wait_for_traffic(
-        &self,
+        &mut self,
         stop: StopRequest<'_>,
         timeout: Duration,
         faults: &mut SocketFaults,
@@ -644,13 +691,19 @@ impl Engine {
                 faults.recovered(log);
                 Ok(())
             }
-            Err(error) if is_transient(&error) => faults.pause(stop, &error, timeout, log),
-            Err(error) => Err(error),
+            Err(error) if is_transient(&error) => {
+                self.status_telemetry.socket_error(&error, Instant::now());
+                faults.pause(stop, &error, timeout, log)
+            }
+            Err(error) => {
+                self.status_telemetry.socket_error(&error, Instant::now());
+                Err(error)
+            }
         }
     }
 
     fn log_rejection(
-        &self,
+        &mut self,
         datagram: &Datagram,
         error: ReceiveError,
         log: &mut Logger,
@@ -658,6 +711,13 @@ impl Engine {
         last_auth_failure: &mut Option<Instant>,
     ) {
         let now = Instant::now();
+        self.status_telemetry.rejected(
+            match &error {
+                ReceiveError::Authentication(reason) => RejectionReason::Authentication(*reason),
+                ReceiveError::Packet(reason) => RejectionReason::Packet(*reason),
+            },
+            now,
+        );
         match error {
             ReceiveError::Authentication(reason) if log_due(last_auth_failure, now) => {
                 log.log(format_args!(
@@ -693,6 +753,7 @@ impl Engine {
             }
             let now = Instant::now();
             self.refresh_settings(now, &mut next_settings_poll, log);
+            self.publish_status(now);
             match self.transport.receive_into(&mut datagram) {
                 Ok(()) => {
                     faults.recovered(log);
@@ -707,17 +768,24 @@ impl Engine {
                         });
                     match reply {
                         // Requests over a source's reply limit are withheld, not answered.
-                        Ok(_) if !replies.admit(datagram.source.ip(), now) => {}
+                        Ok(_) if !replies.admit(datagram.source.ip(), now) => {
+                            self.status_telemetry.received(datagram.source, now);
+                            self.status_telemetry.withheld();
+                        }
                         Ok(reply) => {
+                            self.status_telemetry.received(datagram.source, now);
                             if let Err(error) =
                                 self.transport.send_reply(&reply, &datagram, &self.options)
                             {
+                                self.status_telemetry.socket_error(&error, now);
                                 if log_due(&mut last_error, now) {
                                     log.log(format_args!(
                                         "S-BFD reply to {} failed: {error}",
                                         datagram.source
                                     ));
                                 }
+                            } else {
+                                self.status_telemetry.sent(now);
                             }
                         }
                         Err(error) => self.log_rejection(
@@ -741,14 +809,22 @@ impl Engine {
                 }
                 Err(error)
                     if error.kind() == io::ErrorKind::InvalidData
-                        || error.raw_os_error() == Some(10040) => {}
+                        || error.raw_os_error() == Some(10040) =>
+                {
+                    self.status_telemetry
+                        .rejected(RejectionReason::InvalidDatagram, now);
+                }
                 Err(error) if is_transient(&error) => {
+                    self.status_telemetry.socket_error(&error, now);
                     let limit = self.idle_wait(Instant::now(), next_settings_poll);
                     if let Err(error) = faults.pause(stop, &error, limit, log) {
                         break Err(error);
                     }
                 }
-                Err(error) => break Err(error),
+                Err(error) => {
+                    self.status_telemetry.socket_error(&error, now);
+                    break Err(error);
+                }
             }
             // One request per pass keeps Stop and settings reload responsive under load.
         };
@@ -787,6 +863,9 @@ impl Engine {
         } else {
             self.run_session(stop, log)
         };
+        // Status is unavailable as soon as protocol processing exits, even while
+        // bounded shutdown announcements or BGP cleanup are still running.
+        self.status_publisher.close();
         // RFC 5880 section 6.8.16 and RFC 5882 section 8 recommend at least one
         // Detection Time. Measure both directions before AdminDown, then apply
         // the configured operational limit so a peer cannot delay Stop indefinitely.
@@ -915,6 +994,14 @@ impl Engine {
             let communicating = self.session.communicating();
             let old_interval = self.session.transmit_interval();
             self.refresh_settings(now, &mut next_settings_poll, log);
+            if self.session.state() != State::AdminDown
+                && self
+                    .session
+                    .detection_deadline()
+                    .is_some_and(|deadline| now >= deadline)
+            {
+                self.status_telemetry.detection_timeout();
+            }
             let state_changed = self.session.expire(now);
             if communicating && !self.session.communicating() {
                 self.last_peer_report = None;
@@ -939,6 +1026,9 @@ impl Engine {
                 last_periodic_tx = Some(now);
                 next_periodic_tx = now + self.session.jittered_interval();
             }
+            // Checked on every pass, before receive's flood-path `continue`.
+            // Protocol expiry and required transmissions take precedence.
+            self.publish_status(now);
             let before_interval = self.session.transmit_interval();
             let before_enabled = self.session.periodic_enabled();
             let mut fault = None;
@@ -954,6 +1044,11 @@ impl Engine {
                         .and_then(|()| self.session.receive_checked(&datagram.data, received_at));
                     match received {
                         Ok(result) => {
+                            self.status_telemetry.received_session(
+                                &self.session,
+                                datagram.source,
+                                received_at,
+                            );
                             self.peer_report_changed(log);
                             if !communicating && self.session.communicating() {
                                 self.peer_communication_changed(
@@ -1014,11 +1109,19 @@ impl Engine {
                     if error.kind() == io::ErrorKind::InvalidData
                         || error.raw_os_error() == Some(10040) =>
                 {
-                    continue
+                    self.status_telemetry
+                        .rejected(RejectionReason::InvalidDatagram, now);
+                    continue;
                 }
                 // Detection timers continue; an unusable path expires the session.
-                Err(error) if is_transient(&error) => fault = Some(error),
-                Err(error) => return Err(error),
+                Err(error) if is_transient(&error) => {
+                    self.status_telemetry.socket_error(&error, now);
+                    fault = Some(error);
+                }
+                Err(error) => {
+                    self.status_telemetry.socket_error(&error, now);
+                    return Err(error);
+                }
             }
             let now = Instant::now();
             let mut wait = self.idle_wait(now, next_settings_poll);
@@ -1069,6 +1172,39 @@ mod tests {
     use super::*;
     #[cfg(not(miri))]
     use std::{fs, io::Write};
+
+    #[cfg(not(miri))]
+    #[test]
+    fn status_deadline_bounds_idle_wait_and_transitions_are_coalesced() {
+        let options = Options::reflector("127.0.0.88".parse().unwrap(), 99)
+            .into_validated()
+            .unwrap();
+        let mut log = Logger::new(false).unwrap();
+        let mut engine = Engine::from_config(options, &mut log).unwrap();
+        let observer = engine.status_observer();
+        let original = observer.snapshot().unwrap();
+        let deadline = engine.status_publisher.deadline();
+        let shortly_before = deadline - Duration::from_millis(100);
+        assert_eq!(
+            engine.idle_wait(shortly_before, deadline + Duration::from_secs(10)),
+            Duration::from_millis(100)
+        );
+        engine.set_reflector_admin_down(true, &mut log);
+        engine.publish_status(shortly_before);
+        assert!(Arc::ptr_eq(&original, &observer.snapshot().unwrap()));
+        assert_eq!(engine.state_observer().current(), Some(State::AdminDown));
+        engine.publish_status(deadline);
+        assert_eq!(observer.snapshot().unwrap().local_state, State::AdminDown);
+        let published = observer.snapshot().unwrap();
+        engine.set_reflector_admin_down(false, &mut log);
+        engine.publish_status(deadline + Duration::from_millis(999));
+        assert!(Arc::ptr_eq(&published, &observer.snapshot().unwrap()));
+        engine.publish_status(deadline + Duration::from_secs(1));
+        assert_eq!(observer.snapshot().unwrap().local_state, State::Up);
+        assert_eq!(original.local_state, State::Up);
+        drop(engine);
+        assert!(observer.snapshot().is_none());
+    }
 
     #[cfg(not(miri))]
     #[test]
