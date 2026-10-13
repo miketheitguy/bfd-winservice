@@ -1,255 +1,355 @@
 <?xml version='1.0' encoding='utf-8'?>
-<mxfile host="Electron" agent="Codex using drawio plugin" type="device" compressed="false" pages="2">
+<mxfile host="Electron" agent="Codex using drawio plugin" compressed="false" pages="2">
   <diagram id="runtime-security" name="1 - Runtime and security">
-    <mxGraphModel dx="1700" dy="1500" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1740" pageHeight="1580" math="0" shadow="0" adaptiveColors="auto" background="#FFFFFF">
+    <mxGraphModel grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="0" page="0" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="title" value="BFD service communication and privilege boundaries" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=30;fontStyle=1;spacing=0;" vertex="1" parent="1">
-          <mxGeometry x="40" y="20" width="1590" height="55" as="geometry" />
+        <mxCell id="title" parent="1" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=30;fontStyle=1;spacing=0;" value="BFD service communication and privilege boundaries" vertex="1">
+          <mxGeometry height="55" width="2250" x="40" y="20" as="geometry" />
         </mxCell>
-        <mxCell id="subtitle" value="MSI service mode  |  Solid arrows: data or control  |  Double arrows: request/response  |  Amber: authentication or access checks" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;fontColor=#53657D;" vertex="1" parent="1">
-          <mxGeometry x="40" y="80" width="1630" height="35" as="geometry" />
+        <mxCell id="subtitle" parent="1" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;fontColor=#53657D;" value="MSI service mode  |  Solid arrows: data or control  |  Double arrows: request/response  |  Amber: authentication or access checks" vertex="1">
+          <mxGeometry height="35" width="2250" x="40" y="80" as="geometry" />
         </mxCell>
-        <mxCell id="network" value="UNTRUSTED NETWORK" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="40" y="145" width="720" height="165" as="geometry" />
+        <mxCell id="network" parent="1" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" value="UNTRUSTED NETWORK" vertex="1">
+          <mxGeometry height="165" width="720" x="40" y="145" as="geometry" />
         </mxCell>
-        <object id="peer" label="&lt;b&gt;Remote BFD / S-BFD peer&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Classical peer, initiator, or reflector&lt;/span&gt;" Source="src/transport.rs" tooltip="Source: src/transport.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="network">
-            <mxGeometry x="40" y="85" width="300" height="60" as="geometry" />
+        <object label="&lt;b&gt;Remote BFD / S-BFD peer&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Classical peer, initiator, or reflector&lt;/span&gt;" Source="src/transport.rs" tooltip="Source: src/transport.rs" id="peer">
+          <mxCell parent="network" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="60" width="300" x="40" y="85" as="geometry" />
           </mxCell>
         </object>
-        <mxCell id="ports" value="&lt;b&gt;UDP destinations&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Classical: 3784 / 4784&lt;br&gt;S-BFD requests: 7784; replies to initiator port&lt;/span&gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;" vertex="1" parent="network">
-          <mxGeometry x="380" y="75" width="300" height="80" as="geometry" />
+        <mxCell id="ports" parent="network" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;" value="&lt;b&gt;UDP destinations&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Classical: 3784 / 4784&lt;br&gt;S-BFD requests: 7784; replies to initiator port&lt;/span&gt;" vertex="1">
+          <mxGeometry height="80" width="300" x="380" y="75" as="geometry" />
         </mxCell>
-        <mxCell id="localAdministration" value="SYSTEM / ELEVATED ADMINISTRATORS" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="800" y="145" width="560" height="165" as="geometry" />
+        <mxCell id="localAdministration" parent="1" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" value="SYSTEM / ELEVATED ADMINISTRATORS" vertex="1">
+          <mxGeometry height="190" width="840" x="1460" y="145" as="geometry" />
         </mxCell>
-        <object id="localAdmin" label="&lt;b&gt;Local administration&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Windows SCM + protected registry&lt;br&gt;Manage services and configuration&lt;/span&gt;" Source="installer/Package.wxs; src/config/registry.rs" tooltip="Source: installer/Package.wxs; src/config/registry.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="localAdministration">
-            <mxGeometry x="30" y="75" width="260" height="80" as="geometry" />
+        <object label="&lt;b&gt;Local 64-bit PowerShell&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BfdWinService.Status.1&lt;br&gt;Caller token: SYSTEM or enabled Administrators&lt;br&gt;GetSnapshot() + read-only properties&lt;/span&gt;" Source="src/status_com.rs; docs/monitoring.md" tooltip="Source: src/status_com.rs; docs/monitoring.md" id="localAdmin">
+          <mxCell parent="localAdministration" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="95" width="380" x="30" y="80" as="geometry" />
           </mxCell>
         </object>
-        <object id="managementNote" label="&lt;b&gt;Boundary E&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;See page 2 for lifecycle&lt;br&gt;and provisioning paths.&lt;/span&gt;" Source="installer/Package.wxs" tooltip="Source: installer/Package.wxs">
-          <mxCell style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;" vertex="1" parent="localAdministration">
-            <mxGeometry x="310" y="75" width="225" height="80" as="geometry" />
+        <object label="&lt;b&gt;F0 | Windows COM activation / access&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;AppID LocalService = BfdWinService (SCM name)&lt;br&gt;Launch 0xB; access 0x3; SYSTEM / Admins only&lt;br&gt;No remote rights; SCM can start the service&lt;/span&gt;" Source="installer/Package.wxs: StatusAppIdRegistration" tooltip="Source: installer/Package.wxs: StatusAppIdRegistration" id="managementNote">
+          <mxCell parent="localAdministration" style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1">
+            <mxGeometry height="95" width="355" x="450" y="80" as="geometry" />
           </mxCell>
         </object>
-        <mxCell id="legend" value="&lt;b&gt;READ THE BOUNDARIES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Blue: BFD / LocalService&lt;br&gt;Purple: broker / LocalSystem&lt;br&gt;Gray: external or Windows-owned&lt;br&gt;A-E match the ASCII document&lt;/span&gt;" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFFFFF;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;align=left;fontSize=15;" vertex="1" parent="1">
-          <mxGeometry x="1400" y="145" width="270" height="165" as="geometry" />
+        <mxCell id="activateStatus" edge="1" parent="localAdministration" source="localAdmin" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="managementNote" value="activate">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <mxCell id="bfd" value="&lt;b&gt;LOCAL SERVICE  |  BfdWinService&lt;/b&gt;&lt;br&gt;bfd-winservice.exe  |  NT SERVICE\BfdWinService" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#DAE8FC;swimlaneFillColor=#FFFFFF;strokeColor=#6C8EBF;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="40" y="390" width="1320" height="480" as="geometry" />
+        <mxCell id="legend" parent="1" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFFFFF;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;align=left;fontSize=15;" value="&lt;b&gt;READ THE BOUNDARIES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Blue: BFD / LocalService; purple: broker / LocalSystem&lt;br&gt;Gray: external / Windows-owned; amber: security checks&lt;br&gt;A-E: packet, pipe, provider, and administrative ACLs&lt;br&gt;F0-F3: local status COM authentication / token checks&lt;br&gt;Double arrows: request / response&lt;/span&gt;" vertex="1">
+          <mxGeometry height="190" width="600" x="800" y="145" as="geometry" />
         </mxCell>
-        <object id="udp" label="&lt;b&gt;UDP transport&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Receive path metadata&lt;br&gt;Transmit probes / replies&lt;/span&gt;" Source="src/transport.rs: Transport" tooltip="Source: src/transport.rs: Transport">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="40" y="110" width="230" height="110" as="geometry" />
+        <mxCell id="bfd" parent="1" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#DAE8FC;swimlaneFillColor=#FFFFFF;strokeColor=#6C8EBF;strokeWidth=2;" value="&lt;b&gt;LOCAL SERVICE  |  BfdWinService&lt;/b&gt;&lt;br&gt;bfd-winservice.exe  |  NT SERVICE\BfdWinService" vertex="1">
+          <mxGeometry height="790" width="2260" x="40" y="410" as="geometry" />
+        </mxCell>
+        <object label="&lt;b&gt;UDP transport&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Receive path metadata&lt;br&gt;Transmit probes / replies&lt;/span&gt;" Source="src/transport.rs: Transport" tooltip="Source: src/transport.rs: Transport" id="udp">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="110" width="230" x="40" y="110" as="geometry" />
           </mxCell>
         </object>
-        <object id="a" label="&lt;b&gt;A  |  Validate + authenticate&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Path, packet, discriminator checks&lt;br&gt;Optional password / keyed digest&lt;br&gt;Before state or timer changes&lt;/span&gt;" Source="src/transport.rs: Datagram::validate; src/session.rs: receive_checked / receive_seamless; src/seamless.rs: respond_checked" tooltip="Source: src/transport.rs: Datagram::validate; src/session.rs: receive_checked / receive_seamless; src/seamless.rs: respond_checked">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="320" y="110" width="290" height="110" as="geometry" />
+        <object label="&lt;b&gt;A  |  Validate + authenticate&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Path, packet, discriminator checks&lt;br&gt;Optional password / keyed digest&lt;br&gt;Before state or timer changes&lt;/span&gt;" Source="src/transport.rs: Datagram::validate; src/session.rs: receive_checked / receive_seamless; src/seamless.rs: respond_checked" tooltip="Source: src/transport.rs: Datagram::validate; src/session.rs: receive_checked / receive_seamless; src/seamless.rs: respond_checked" id="a">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="110" width="290" x="320" y="110" as="geometry" />
           </mxCell>
         </object>
-        <object id="session" label="&lt;b&gt;Session / timers / reflector&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Validated input or timeout&lt;br&gt;Classical BFD or S-BFD role&lt;/span&gt;" Source="src/runtime.rs; src/session.rs; src/seamless.rs" tooltip="Source: src/runtime.rs; src/session.rs; src/seamless.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="680" y="110" width="250" height="110" as="geometry" />
+        <object label="&lt;b&gt;Session / timers / reflector&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Validated input or timeout&lt;br&gt;Classical BFD or S-BFD role&lt;/span&gt;" Source="src/runtime.rs; src/session.rs; src/seamless.rs" tooltip="Source: src/runtime.rs; src/session.rs; src/seamless.rs" id="session">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="110" width="250" x="680" y="110" as="geometry" />
           </mxCell>
         </object>
-        <object id="tx" label="&lt;b&gt;Packet encoding / UDP TX&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Apply configured authentication&lt;br&gt;TTL / hop limit = 255&lt;/span&gt;" Source="src/packet.rs; src/runtime.rs: transmit" tooltip="Source: src/packet.rs; src/runtime.rs: transmit">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="40" y="310" width="230" height="105" as="geometry" />
+        <object label="&lt;b&gt;Packet encoding / UDP TX&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Apply configured authentication&lt;br&gt;TTL / hop limit = 255&lt;/span&gt;" Source="src/packet.rs; src/runtime.rs: transmit" tooltip="Source: src/packet.rs; src/runtime.rs: transmit" id="tx">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="105" width="230" x="40" y="310" as="geometry" />
           </mxCell>
         </object>
-        <object id="worker" label="&lt;b&gt;Optional BGP worker&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BgpPeerName configured&lt;br&gt;Bounded state-to-action queue&lt;/span&gt;" Source="src/bgp.rs: Controller" tooltip="Source: src/bgp.rs: Controller">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="410" y="310" width="240" height="105" as="geometry" />
+        <object label="&lt;b&gt;Optional BGP worker&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BgpPeerName configured&lt;br&gt;Bounded state-to-action queue&lt;/span&gt;" Source="src/bgp.rs: Controller" tooltip="Source: src/bgp.rs: Controller" id="worker">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="105" width="240" x="410" y="310" as="geometry" />
           </mxCell>
         </object>
-        <object id="c" label="&lt;b&gt;B | Verify pipe server&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Pipe server PID must match&lt;br&gt;running broker's SCM PID&lt;/span&gt;" Source="src/bgp/ipc.rs: verify_server" tooltip="Source: src/bgp/ipc.rs: verify_server">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="720" y="310" width="210" height="105" as="geometry" />
+        <object label="&lt;b&gt;B | Verify pipe server&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Pipe server PID must match&lt;br&gt;running broker's SCM PID&lt;/span&gt;" Source="src/bgp/ipc.rs: verify_server" tooltip="Source: src/bgp/ipc.rs: verify_server" id="c">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="105" width="210" x="720" y="310" as="geometry" />
           </mxCell>
         </object>
-        <object id="snapshot" label="&lt;b&gt;In-process state snapshot&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Library / integration tests only&lt;br&gt;No IPC endpoint&lt;/span&gt;" Source="src/runtime/state.rs" tooltip="Source: src/runtime/state.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd">
-            <mxGeometry x="1000" y="110" width="280" height="110" as="geometry" />
+        <object label="&lt;b&gt;Immutable Arc status snapshot&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Engine-owned scalar telemetry&lt;br&gt;ArcSwapOption publishes every 1 second&lt;br&gt;Queries retain Arc; no caller-held engine lock&lt;br&gt;No authentication key material&lt;/span&gt;" Source="src/runtime/status.rs: StatusObserver / StatusPublisher" tooltip="Source: src/runtime/status.rs: StatusObserver / StatusPublisher" id="snapshot">
+          <mxCell parent="bfd" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="155" width="280" x="1000" y="110" as="geometry" />
           </mxCell>
         </object>
-        <object id="privileges" label="&lt;b&gt;BFD TOKEN PRIVILEGES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Retains only:&lt;br&gt;SeChangeNotifyPrivilege&lt;br&gt;SeCreateGlobalPrivilege&lt;br&gt;&lt;br&gt;Removes SeImpersonatePrivilege&lt;br&gt;before accepting UDP traffic.&lt;br&gt;&lt;br&gt;Account remains LocalService.&lt;br&gt;Service SID type: UNRESTRICTED.&lt;/span&gt;" Source="src/runtime/privileges.rs; src/bgp_broker/install.rs" tooltip="Source: src/runtime/privileges.rs; src/bgp_broker/install.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFFFFF;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;align=left;" vertex="1" parent="1">
-            <mxGeometry x="1400" y="390" width="270" height="240" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="authNote" label="&lt;b&gt;REMOTE AUTH IS SEPARATE&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BFD Auth defaults to none.&lt;br&gt;Password is cleartext; keyed&lt;br&gt;MD5 / SHA-1 modes add digests.&lt;br&gt;&lt;br&gt;The authenticated local pipe&lt;br&gt;does not authenticate BFD traffic.&lt;br&gt;&lt;br&gt;Failed checks reject input before&lt;br&gt;session effects or provider work.&lt;/span&gt;" Source="src/config.rs: Options::new; src/packet.rs: AuthConfig" tooltip="Source: src/config.rs: Options::new; src/packet.rs: AuthConfig">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;align=left;" vertex="1" parent="1">
-            <mxGeometry x="1400" y="660" width="270" height="210" as="geometry" />
-          </mxCell>
-        </object>
-        <mxCell id="wire" value="UDP RX / TX" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="peer" target="udp">
-          <mxGeometry relative="1" as="geometry" x="-0.3629" y="-12">
+        <mxCell id="rx" edge="1" parent="bfd" source="udp" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="a" value="receive">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="accept" edge="1" parent="bfd" source="a" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="session" value="accepted">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="encode" edge="1" parent="bfd" source="session" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.25;exitY=1.0;entryX=1.0;entryY=0.5;" target="tx" value="encode">
+          <mxGeometry relative="1" as="geometry" x="-0.2056910569105691" y="-12">
             <Array as="points">
-              <mxPoint x="230.0" y="374.0" />
-              <mxPoint x="24.0" y="374.0" />
-              <mxPoint x="24.0" y="482.0" />
-              <mxPoint x="195.0" y="482.0" />
+              <mxPoint x="742.5" y="236.0" />
+              <mxPoint x="286.0" y="236.0" />
+              <mxPoint x="286.0" y="362.5" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="rx" value="receive" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="udp" target="a">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <mxCell id="send" edge="1" parent="bfd" source="tx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=0.0;entryX=0.5;entryY=1.0;" target="udp" value="send">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <mxCell id="accept" value="accepted" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="a" target="session">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
-        </mxCell>
-        <mxCell id="encode" value="encode" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="session" target="tx">
-          <mxGeometry relative="1" as="geometry" x="-0.0463" y="-12">
+        <mxCell id="state" edge="1" parent="bfd" source="session" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="snapshot" value="1 second">
+          <mxGeometry relative="1" as="geometry" x="0.4162162162162162" y="-12">
             <Array as="points">
-              <mxPoint x="742.5" y="294.0" />
-              <mxPoint x="304.0" y="294.0" />
-              <mxPoint x="304.0" y="362.5" />
+              <mxPoint x="946.0" y="165.0" />
+              <mxPoint x="946.0" y="187.5" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="send" value="send" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="tx" target="udp">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
-        </mxCell>
-        <mxCell id="state" value="publish" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="session" target="snapshot">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
-        </mxCell>
-        <mxCell id="actions" value="state change" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="session" target="worker">
-          <mxGeometry relative="1" as="geometry" x="0.1263" y="-12">
+        <mxCell id="actions" edge="1" parent="bfd" source="session" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.75;exitY=1.0;entryX=0.5;entryY=0.0;" target="worker" value="state change">
+          <mxGeometry relative="1" as="geometry" x="0.13567251461988294" y="-12">
             <Array as="points">
-              <mxPoint x="867.5" y="292.0" />
-              <mxPoint x="530.0" y="292.0" />
+              <mxPoint x="867.5" y="294.0" />
+              <mxPoint x="530.0" y="294.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="clientVerify" value="connect" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd" source="worker" target="c">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <mxCell id="clientVerify" edge="1" parent="bfd" source="worker" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="c" value="connect">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <mxCell id="broker" value="&lt;b&gt;LOCAL SYSTEM  |  BfdBgpBroker&lt;/b&gt;&lt;br&gt;bfd-bgp-broker.exe  |  NT SERVICE\BfdBgpBroker" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#E1D5E7;swimlaneFillColor=#FFFFFF;strokeColor=#9673A6;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="40" y="990" width="960" height="420" as="geometry" />
+        <object label="&lt;b&gt;STATUS COM HOST / RPC CALLS&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;MTA thread owns registration; RPC workers handle queries&lt;/span&gt;" Source="src/status_com.rs: StatusComServer / Apartment" tooltip="Source: src/status_com.rs: StatusComServer / Apartment" id="comHost">
+          <mxCell parent="bfd" style="swimlane;horizontal=1;startSize=60;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=18;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#DAE8FC;swimlaneFillColor=#FFFFFF;strokeColor=#6C8EBF;strokeWidth=2;" vertex="1">
+            <mxGeometry height="665" width="860" x="1360" y="85" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;F1 | Authenticate COM calls&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Process security: SYSTEM / Admins, access 0x3&lt;br&gt;PKT_INTEGRITY (level 5); disable AAA / custom marshal&lt;br&gt;Require CoGetCallContext&amp;lt;IServerSecurity&amp;gt;&lt;br&gt;Factory + every IDispatch call checked&lt;/span&gt;" Source="src/status_com.rs: initialize_security / authorize_caller" tooltip="Source: src/status_com.rs: initialize_security / authorize_caller" id="comAuth">
+          <mxCell parent="comHost" style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1">
+            <mxGeometry height="155" width="360" x="30" y="100" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;F2 | Require an authenticated local caller&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;RPC call attributes: local ncalrpc / LRPC&lt;br&gt;Reject remote, unknown locality, and NullSession&lt;br&gt;ImpersonateClient only to inspect caller identity&lt;br&gt;No SeImpersonatePrivilege retained by service&lt;/span&gt;" Source="src/status_com.rs: authorize_caller" tooltip="Source: src/status_com.rs: authorize_caller" id="comLocal">
+          <mxCell parent="comHost" style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1">
+            <mxGeometry height="155" width="365" x="460" y="100" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;F2 | Inspect the actual caller token&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;OpenThreadToken: TOKEN_QUERY, OpenAsSelf = true&lt;br&gt;CheckTokenMembership: SYSTEM or enabled Admin SID&lt;br&gt;Deny-only UAC Administrator SID does not qualify&lt;br&gt;Missing token / API errors / failed membership: deny&lt;/span&gt;" Source="src/status_com.rs: authorized_token / TokenHandle" tooltip="Source: src/status_com.rs: authorized_token / TokenHandle" id="comToken">
+          <mxCell parent="comHost" style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1">
+            <mxGeometry height="155" width="365" x="460" y="315" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;F3 | End caller identification&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Close caller token; checked RevertToSelf&lt;br&gt;Revert failure denies the call; RAII retries cleanup&lt;br&gt;Restore service identity BEFORE snapshot work&lt;br&gt;No configuration, BGP, or service-control methods&lt;/span&gt;" Source="src/status_com.rs: CallerImpersonation / authorize_caller" tooltip="Source: src/status_com.rs: CallerImpersonation / authorize_caller" id="comRevert">
+          <mxCell parent="comHost" style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1">
+            <mxGeometry height="155" width="360" x="30" y="315" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;Read-only Automation snapshot&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;GetSnapshot() loads Arc from the published store&lt;br&gt;RPC workers format / marshal 55 typed properties&lt;br&gt;Engine stopped: null; retained snapshots stay immutable&lt;br&gt;BFD loop never executes COM queries or marshaling&lt;/span&gt;" Source="src/status_com.rs: StatusObject / SnapshotObject; src/runtime/status.rs" tooltip="Source: src/status_com.rs: StatusObject / SnapshotObject; src/runtime/status.rs" id="comObject">
+          <mxCell parent="comHost" style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#DAE8FC;strokeColor=#6C8EBF;" vertex="1">
+            <mxGeometry height="110" width="795" x="30" y="525" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="comContext" edge="1" parent="comHost" source="comAuth" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="comLocal" value="context">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <object id="d" label="&lt;b&gt;C | Authorize each request&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Local pipe; ACL: BFD service SID&lt;br&gt;Require BFD SID + LocalService&lt;br&gt;Identification only; then revert&lt;/span&gt;" Source="src/bgp/ipc.rs: Listener::with_policy / identify_client / Identification" tooltip="Source: src/bgp/ipc.rs: Listener::with_policy / identify_client / Identification">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="broker">
-            <mxGeometry x="40" y="105" width="270" height="120" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="frame" label="&lt;b&gt;Validate fixed IPC frame&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;24 bytes; Get / Start / Stop only&lt;br&gt;Require next sequence number&lt;br&gt;No target names or resource paths&lt;/span&gt;" Source="src/bgp/ipc.rs: Frame; src/bgp_broker.rs: serve_with_backend" tooltip="Source: src/bgp/ipc.rs: Frame; src/bgp_broker.rs: serve_with_backend">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1" parent="broker">
-            <mxGeometry x="355" y="105" width="235" height="120" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="startup" label="&lt;b&gt;C | Broker startup identity&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Require LocalSystem account&lt;br&gt;and enabled broker service SID&lt;br&gt;Fixed-target provider operations&lt;/span&gt;" Source="src/bgp/ipc.rs: require_broker_identity; src/bgp_broker/service.rs" tooltip="Source: src/bgp/ipc.rs: require_broker_identity; src/bgp_broker/service.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="broker">
-            <mxGeometry x="650" y="105" width="270" height="120" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="target" label="&lt;b&gt;Fixed BGP target&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Protected registry at startup&lt;br&gt;Peer name + routing domain&lt;/span&gt;" Source="src/config/registry.rs: load_bgp_target; src/bgp_broker.rs: Target" tooltip="Source: src/config/registry.rs: load_bgp_target; src/bgp_broker.rs: Target">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1" parent="broker">
-            <mxGeometry x="40" y="290" width="270" height="85" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="mi" label="&lt;b&gt;Native MI + private COM&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Local SYSTEM / Administrators only&lt;br&gt;Fixed configured BGP target&lt;br&gt;After identification is reverted&lt;/span&gt;" Source="src/bgp_broker/mi.rs; src/bgp_broker/com.rs" tooltip="Source: src/bgp_broker/mi.rs; src/bgp_broker/com.rs">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1" parent="broker">
-            <mxGeometry x="650" y="290" width="270" height="110" as="geometry" />
-          </mxCell>
-        </object>
-        <mxCell id="pipe" value="Get / Start / Stop" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="c" target="d">
-          <mxGeometry relative="1" as="geometry" x="0.3261" y="-12">
+        <mxCell id="comIdentify" edge="1" parent="comHost" source="comLocal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="comToken" value="caller token">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="comMember" edge="1" parent="comHost" source="comToken" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="comRevert" value="authorized">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="comRead" edge="1" parent="comHost" source="comRevert" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="comObject" value="reverted">
+          <mxGeometry relative="1" as="geometry" x="0.08440366972477054" y="-12">
             <Array as="points">
-              <mxPoint x="865.0" y="894.0" />
-              <mxPoint x="1016.0" y="894.0" />
-              <mxPoint x="1016.0" y="1077.0" />
-              <mxPoint x="215.0" y="1077.0" />
+              <mxPoint x="210.0" y="509.0" />
+              <mxPoint x="427.5" y="509.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="pipeName" value="\\.\pipe\BfdWinService.Bgp.v1  |  responses carry status / error" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;align=center;spacing=0;" vertex="1" parent="1">
-          <mxGeometry x="40" y="910" width="960" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="validated" value="authorize" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="broker" source="d" target="frame">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
-        </mxCell>
-        <mxCell id="operation" value="invoke" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="broker" source="frame" target="mi">
-          <mxGeometry relative="1" as="geometry" x="0.0768" y="-12">
-            <Array as="points">
-              <mxPoint x="472.5" y="272.0" />
-              <mxPoint x="785.0" y="272.0" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="fixed" value="fixed target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="broker" source="target" target="mi">
-          <mxGeometry relative="1" as="geometry" x="-0.1035" y="-12">
-            <Array as="points">
-              <mxPoint x="626.0" y="332.5" />
-              <mxPoint x="626.0" y="345.0" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="windows" value="WINDOWS-OWNED MANAGEMENT" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="1040" y="990" width="630" height="420" as="geometry" />
-        </mxCell>
-        <object id="e" label="&lt;b&gt;D | Provider access&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Use broker's LocalSystem identity&lt;br&gt;Local MI destination explicitly&lt;br&gt;requests IMPERSONATE&lt;/span&gt;" Source="src/bgp_broker/mi.rs: Application::session" tooltip="Source: src/bgp_broker/mi.rs: Application::session">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="windows">
-            <mxGeometry x="30" y="105" width="270" height="120" as="geometry" />
+        <object label="&lt;b&gt;PUBLICATION AND QUERY OWNERSHIP&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Packet loop updates scalar counters / monotonic timestamps.&lt;br&gt;The engine publishes once per second; transitions are coalesced.&lt;br&gt;COM readers clone an Arc; they never call back into the packet loop.&lt;br&gt;Security initialized once; class factory registered before SCM Running.&lt;br&gt;IDENTIFY (2) is the outgoing proxy default, not an incoming-token cap.&lt;/span&gt;" Source="src/runtime/status.rs; src/status_com.rs: initialize_security" tooltip="Source: src/runtime/status.rs; src/status_com.rs: initialize_security" id="snapshotNotes">
+          <mxCell parent="bfd" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="160" width="1240" x="40" y="535" as="geometry" />
           </mxCell>
         </object>
-        <object id="provider" label="&lt;b&gt;PS_BgpPeer provider&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;root/Microsoft/Windows/&lt;br&gt;RemoteAccess&lt;br&gt;Windows authorizes access&lt;/span&gt;" Source="src/bgp_broker/mi.rs: started / invoke" tooltip="Source: src/bgp_broker/mi.rs: started / invoke">
-          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="windows">
-            <mxGeometry x="345" y="105" width="255" height="120" as="geometry" />
-          </mxCell>
-        </object>
-        <mxCell id="rras" value="&lt;b&gt;RRAS / BGP&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Windows manages the BGP session&lt;/span&gt;" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="windows">
-          <mxGeometry x="345" y="290" width="255" height="85" as="geometry" />
-        </mxCell>
-        <mxCell id="management" value="Local MI" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="mi" target="e">
-          <mxGeometry relative="1" as="geometry" x="0.1724" y="-12">
+        <mxCell id="snapshotRead" edge="1" parent="bfd" source="snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="comObject" value="Arc reference">
+          <mxGeometry relative="1" as="geometry" x="-0.09974811083123425" y="-12">
             <Array as="points">
-              <mxPoint x="1040.0" y="1335.0" />
-              <mxPoint x="1040.0" y="1155.0" />
+              <mxPoint x="1140.0" y="388.0" />
+              <mxPoint x="1787.5" y="388.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="providerCall" value="Get / Start / Stop" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="windows" source="e" target="provider">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <object label="&lt;b&gt;BFD PROCESS TOKEN&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;LocalService + NT SERVICE\BfdWinService&lt;br&gt;Retains SeChangeNotifyPrivilege and&lt;br&gt;SeCreateGlobalPrivilege only&lt;br&gt;Removes SeImpersonatePrivilege and&lt;br&gt;SeAssignPrimaryTokenPrivilege before COM / UDP&lt;br&gt;Caller token is never substituted for provider work&lt;/span&gt;" Source="src/runtime/privileges.rs; src/bgp_broker/install.rs" tooltip="Source: src/runtime/privileges.rs; src/bgp_broker/install.rs" id="privileges">
+          <mxCell parent="1" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFFFFF;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;align=left;" vertex="1">
+            <mxGeometry height="205" width="590" x="1710" y="1310" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;SEPARATE AUTHENTICATION BOUNDARIES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;UDP: optional configured BFD authentication&lt;br&gt;Status COM: authenticated Windows RPC caller token&lt;br&gt;BGP pipe: LocalService + enabled BFD service SID&lt;br&gt;Broker COM / MI: private Windows provider client&lt;br&gt;No ordinary-user status COM grant; no process-token fallback&lt;/span&gt;" Source="src/config.rs: Options::new; src/packet.rs: AuthConfig" tooltip="Source: src/config.rs: Options::new; src/packet.rs: AuthConfig" id="authNote">
+          <mxCell parent="1" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;align=left;" vertex="1">
+            <mxGeometry height="185" width="590" x="1710" y="1545" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="wire" edge="1" parent="1" source="peer" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" target="udp" value="UDP RX / TX">
+          <mxGeometry relative="1" as="geometry" x="0.06352087114337568" y="-12">
+            <Array as="points">
+              <mxPoint x="230.0" y="306.0" />
+              <mxPoint x="52.0" y="306.0" />
+              <mxPoint x="52.0" y="504.0" />
+              <mxPoint x="195.0" y="504.0" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="rrasControl" value="manage" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="windows" source="provider" target="rras">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <mxCell id="broker" parent="1" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#E1D5E7;swimlaneFillColor=#FFFFFF;strokeColor=#9673A6;strokeWidth=2;" value="&lt;b&gt;LOCAL SYSTEM  |  BfdBgpBroker&lt;/b&gt;&lt;br&gt;bfd-bgp-broker.exe  |  NT SERVICE\BfdBgpBroker" vertex="1">
+          <mxGeometry height="420" width="960" x="40" y="1310" as="geometry" />
         </mxCell>
-        <mxCell id="remoteBgp" value="&lt;b&gt;Remote BGP peer&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BGP connection / wire authentication&lt;br&gt;are outside this repository&lt;/span&gt;" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="1385" y="1460" width="255" height="85" as="geometry" />
+        <object label="&lt;b&gt;C | Authorize each request&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Local pipe; ACL: BFD service SID&lt;br&gt;Require BFD SID + LocalService&lt;br&gt;Identification only; then revert&lt;/span&gt;" Source="src/bgp/ipc.rs: Listener::with_policy / identify_client / Identification" tooltip="Source: src/bgp/ipc.rs: Listener::with_policy / identify_client / Identification" id="d">
+          <mxCell parent="broker" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="120" width="270" x="40" y="105" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;Validate fixed IPC frame&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;24 bytes; Get / Start / Stop only&lt;br&gt;Require next sequence number&lt;br&gt;No target names or resource paths&lt;/span&gt;" Source="src/bgp/ipc.rs: Frame; src/bgp_broker.rs: serve_with_backend" tooltip="Source: src/bgp/ipc.rs: Frame; src/bgp_broker.rs: serve_with_backend" id="frame">
+          <mxCell parent="broker" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1">
+            <mxGeometry height="120" width="235" x="355" y="105" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;C | Broker startup identity&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Require LocalSystem account&lt;br&gt;and enabled broker service SID&lt;br&gt;Fixed-target provider operations&lt;/span&gt;" Source="src/bgp/ipc.rs: require_broker_identity; src/bgp_broker/service.rs" tooltip="Source: src/bgp/ipc.rs: require_broker_identity; src/bgp_broker/service.rs" id="startup">
+          <mxCell parent="broker" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="120" width="270" x="650" y="105" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;Fixed BGP target&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Protected registry at startup&lt;br&gt;Peer name + routing domain&lt;/span&gt;" Source="src/config/registry.rs: load_bgp_target; src/bgp_broker.rs: Target" tooltip="Source: src/config/registry.rs: load_bgp_target; src/bgp_broker.rs: Target" id="target">
+          <mxCell parent="broker" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1">
+            <mxGeometry height="85" width="270" x="40" y="290" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;Private COM / MI client&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Broker token: LocalSystem&lt;br&gt;Fixed target; packet integrity&lt;br&gt;Provider IMPERSONATE after revert&lt;br&gt;No administrative status object&lt;/span&gt;" Source="src/bgp_broker/mi.rs; src/bgp_broker/com.rs" tooltip="Source: src/bgp_broker/mi.rs; src/bgp_broker/com.rs" id="mi">
+          <mxCell parent="broker" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1">
+            <mxGeometry height="110" width="270" x="650" y="290" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="validated" edge="1" parent="broker" source="d" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="frame" value="authorize">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <mxCell id="bgpWire" value="OS-managed BGP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;dashed=1;dashPattern=6 4;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="rras" target="remoteBgp">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <mxCell id="operation" edge="1" parent="broker" source="frame" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" target="mi" value="invoke">
+          <mxGeometry relative="1" as="geometry" x="0.0874172185430464" y="-12">
+            <Array as="points">
+              <mxPoint x="472.5" y="274.0" />
+              <mxPoint x="785.0" y="274.0" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="scope" value="&lt;b&gt;SCOPE AND REFERENCES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Two executable processes; background threads keep their process identity.&lt;br&gt;Authenticated users can read service status and logs; see page 2.&lt;br&gt;Dashed connection: outside-repository BGP behavior. A-E: docs/security.md&lt;/span&gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;align=left;" vertex="1" parent="1">
-          <mxGeometry x="40" y="1450" width="1240" height="100" as="geometry" />
+        <mxCell id="fixed" edge="1" parent="broker" source="target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="mi" value="fixed target">
+          <mxGeometry relative="1" as="geometry" x="0.08085106382978724" y="-12">
+            <Array as="points">
+              <mxPoint x="326.0" y="332.5" />
+              <mxPoint x="326.0" y="345.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pipe" edge="1" parent="1" source="c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" target="d" value="Get / Start / Stop">
+          <mxGeometry relative="1" as="geometry" x="-0.4615861214374225" y="-12">
+            <Array as="points">
+              <mxPoint x="865.0" y="841.0" />
+              <mxPoint x="28.0" y="841.0" />
+              <mxPoint x="28.0" y="1399.0" />
+              <mxPoint x="215.0" y="1399.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pipeName" parent="1" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;align=center;spacing=0;" value="\\.\pipe\BfdWinService.Bgp.v1  |  responses carry status / error" vertex="1">
+          <mxGeometry height="40" width="960" x="40" y="1240" as="geometry" />
+        </mxCell>
+        <mxCell id="windows" parent="1" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" value="WINDOWS-OWNED MANAGEMENT" vertex="1">
+          <mxGeometry height="420" width="630" x="1040" y="1310" as="geometry" />
+        </mxCell>
+        <object label="&lt;b&gt;D | Provider access&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Use broker's LocalSystem identity&lt;br&gt;Local MI destination explicitly&lt;br&gt;requests IMPERSONATE&lt;/span&gt;" Source="src/bgp_broker/mi.rs: Application::session" tooltip="Source: src/bgp_broker/mi.rs: Application::session" id="e">
+          <mxCell parent="windows" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="120" width="270" x="30" y="105" as="geometry" />
+          </mxCell>
+        </object>
+        <object label="&lt;b&gt;PS_BgpPeer provider&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;root/Microsoft/Windows/&lt;br&gt;RemoteAccess&lt;br&gt;Windows authorizes access&lt;/span&gt;" Source="src/bgp_broker/mi.rs: started / invoke" tooltip="Source: src/bgp_broker/mi.rs: started / invoke" id="provider">
+          <mxCell parent="windows" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1">
+            <mxGeometry height="120" width="255" x="345" y="105" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="rras" parent="windows" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" value="&lt;b&gt;RRAS / BGP&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Windows manages the BGP session&lt;/span&gt;" vertex="1">
+          <mxGeometry height="85" width="255" x="345" y="290" as="geometry" />
+        </mxCell>
+        <mxCell id="providerCall" edge="1" parent="windows" source="e" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="provider" value="Get / Start / Stop">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rrasControl" edge="1" parent="windows" source="provider" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" target="rras" value="manage">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="management" edge="1" parent="1" source="mi" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" target="e" value="Local MI">
+          <mxGeometry relative="1" as="geometry" x="-0.2689655172413793" y="-12">
+            <Array as="points">
+              <mxPoint x="976.0" y="1655.0" />
+              <mxPoint x="976.0" y="1475.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="remoteBgp" parent="1" style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=14;" value="&lt;b&gt;Remote BGP peer&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BGP connection / wire authentication&lt;br&gt;are outside this repository&lt;/span&gt;" vertex="1">
+          <mxGeometry height="85" width="255" x="1385" y="1780" as="geometry" />
+        </mxCell>
+        <mxCell id="bgpWire" edge="1" parent="1" source="rras" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;dashed=1;dashPattern=6 4;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" target="remoteBgp" value="OS-managed BGP">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="scope" parent="1" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;align=left;" value="&lt;b&gt;SCOPE AND REFERENCES&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Two service processes; status COM lives inside BfdWinService, not the broker.&lt;br&gt;Rich status can lag by one publication interval; SCM owns Running / Stopped.&lt;br&gt;Dashed BGP connection: outside repository. A-F: docs/security.md&lt;/span&gt;" vertex="1">
+          <mxGeometry height="100" width="1240" x="40" y="1770" as="geometry" />
+        </mxCell>
+        <mxCell id="comCalls" edge="1" parent="1" source="managementNote" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="comAuth" value="local COM">
+          <mxGeometry relative="1" as="geometry" x="0.3229235880398671" y="-12">
+            <Array as="points">
+              <mxPoint x="2087.5" y="579.0" />
+              <mxPoint x="1610.0" y="579.0" />
+            </Array>
+          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
   <diagram id="configuration-lifecycle" name="2 - Configuration and lifecycle">
-    <mxGraphModel dx="1900" dy="1740" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1740" math="0" shadow="0" adaptiveColors="auto" background="#FFFFFF">
+    <mxGraphModel dx="2580" dy="1940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2580" pageHeight="1940" math="0" shadow="0" adaptiveColors="auto" background="#FFFFFF">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
         <mxCell id="title2" value="Configuration, lifecycle, and diagnostic paths" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=30;fontStyle=1;spacing=0;" vertex="1" parent="1">
-          <mxGeometry x="40" y="20" width="1600" height="55" as="geometry" />
+          <mxGeometry x="40" y="20" width="2480" height="55" as="geometry" />
         </mxCell>
         <mxCell id="subtitle2" value="MSI service mode  |  Amber: Windows access control  |  Blue: LocalService  |  Purple: LocalSystem  |  Arrows carry reads, writes, or lifecycle signals" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;fontColor=#53657D;" vertex="1" parent="1">
-          <mxGeometry x="40" y="80" width="1630" height="35" as="geometry" />
+          <mxGeometry x="40" y="80" width="2480" height="35" as="geometry" />
         </mxCell>
         <mxCell id="admin" value="ELEVATED ADMINISTRATOR / SYSTEM  |  provisioning and maintenance" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#FFF2CC;swimlaneFillColor=#FFFFFF;strokeColor=#D6B656;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="40" y="145" width="1630" height="190" as="geometry" />
+          <mxGeometry x="40" y="145" width="2480" height="190" as="geometry" />
         </mxCell>
         <object id="administrator" label="&lt;b&gt;Elevated administrator&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Install, configure, and control&lt;/span&gt;" Source="installer/Package.wxs" tooltip="Source: installer/Package.wxs">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#D5E8D4;strokeColor=#82B366;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="admin">
             <mxGeometry x="40" y="90" width="300" height="75" as="geometry" />
           </mxCell>
         </object>
-        <object id="msi" label="&lt;b&gt;MSI provisioning&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Accounts + service SIDs + dependencies&lt;br&gt;Protected service / code / registry / log ACLs&lt;br&gt;Executable-specific UDP firewall rules&lt;/span&gt;" Source="installer/Package.wxs; src/bgp_broker/install.rs" tooltip="Source: installer/Package.wxs; src/bgp_broker/install.rs">
+        <object id="msi" label="&lt;b&gt;MSI provisioning&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Accounts + service SIDs + dependencies&lt;br&gt;Protected service / code / registry / log / COM ACLs&lt;br&gt;64-bit COM registration + UDP firewall rules&lt;/span&gt;" Source="installer/Package.wxs; src/bgp_broker/install.rs" tooltip="Source: installer/Package.wxs; src/bgp_broker/install.rs">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="admin">
             <mxGeometry x="500" y="80" width="610" height="90" as="geometry" />
           </mxCell>
@@ -257,11 +357,11 @@
         <mxCell id="msinote" value="&lt;b&gt;Installed service identities&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BFD: LocalService&lt;br&gt;Broker: LocalSystem&lt;/span&gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;" vertex="1" parent="admin">
           <mxGeometry x="1170" y="85" width="410" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="install" value="install / repair" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="admin" source="administrator" target="msi">
-          <mxGeometry relative="1" as="geometry" x="-0.1631" y="-12">
+        <mxCell id="install" value="install / repair" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="admin" source="administrator" target="msi">
+          <mxGeometry relative="1" as="geometry" x="0.11384615384615393" y="-12">
             <Array as="points">
-              <mxPoint x="476.0" y="127.5" />
-              <mxPoint x="476.0" y="125.0" />
+              <mxPoint x="356.0" y="127.5" />
+              <mxPoint x="356.0" y="125.0" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -270,29 +370,31 @@
             <mxGeometry x="40" y="405" width="760" height="135" as="geometry" />
           </mxCell>
         </object>
-        <object id="scm" label="&lt;b&gt;E  |  Windows Service Control Manager&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;SYSTEM + elevated Administrators: Start / Stop / reconfigure&lt;br&gt;Authenticated users: query configuration / status only&lt;br&gt;BFD depends on BfdBgpBroker; broker depends on RpcSs&lt;/span&gt;" Source="installer/Package.wxs; src/service.rs; src/bgp_broker/service.rs" tooltip="Source: installer/Package.wxs; src/service.rs; src/bgp_broker/service.rs">
+        <object id="scm" label="&lt;b&gt;E | Windows Service Control Manager&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;SYSTEM + elevated Admins: Start / Stop / reconfigure&lt;br&gt;Authenticated users: service configuration / status queries&lt;br&gt;BFD depends on BfdBgpBroker + RpcSs; broker on RpcSs&lt;/span&gt;" Source="installer/Package.wxs; src/service.rs; src/bgp_broker/service.rs" tooltip="Source: installer/Package.wxs; src/service.rs; src/bgp_broker/service.rs">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#FFF2CC;strokeColor=#D6B656;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="1">
             <mxGeometry x="900" y="405" width="770" height="135" as="geometry" />
           </mxCell>
         </object>
-        <mxCell id="configWrite" value="configure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.2;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="administrator" target="parameters">
-          <mxGeometry relative="1" as="geometry" x="0.1573" y="-12">
+        <mxCell id="configWrite" value="configure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.2;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="administrator" target="parameters">
+          <mxGeometry relative="1" as="geometry" x="0.16799999999999993" y="-12">
             <Array as="points">
-              <mxPoint x="140.0" y="387.0" />
-              <mxPoint x="420.0" y="387.0" />
+              <mxPoint x="140.0" y="389.0" />
+              <mxPoint x="420.0" y="389.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="serviceControl" value="Start / Stop" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.8;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="administrator" target="scm">
-          <mxGeometry relative="1" as="geometry" x="-0.05" y="-12">
+        <mxCell id="serviceControl" value="Start / Stop" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.8;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="1" source="administrator" target="scm">
+          <mxGeometry relative="1" as="geometry" x="0.2556603773584907" y="-12">
             <Array as="points">
-              <mxPoint x="320.0" y="331.0" />
-              <mxPoint x="1285.0" y="331.0" />
+              <mxPoint x="320.0" y="326.0" />
+              <mxPoint x="528.0" y="326.0" />
+              <mxPoint x="528.0" y="389.0" />
+              <mxPoint x="1285.0" y="389.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="bfd2" value="&lt;b&gt;LOCAL SERVICE  |  BfdWinService&lt;/b&gt;&lt;br&gt;UDP + optional BGP worker" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#DAE8FC;swimlaneFillColor=#FFFFFF;strokeColor=#6C8EBF;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="40" y="640" width="760" height="450" as="geometry" />
+        <mxCell id="bfd2" value="&lt;b&gt;LOCAL SERVICE | BfdWinService&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;UDP loop + optional BGP worker + status COM in one service process&lt;/span&gt;" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#DAE8FC;swimlaneFillColor=#FFFFFF;strokeColor=#6C8EBF;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="640" width="1630" height="590" as="geometry" />
         </mxCell>
         <object id="readBfd" label="&lt;b&gt;Read BFD configuration&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Session / path / authentication&lt;br&gt;Initial startup snapshot&lt;br&gt;S-BFD timing / maintenance can reload&lt;/span&gt;" Source="src/config/registry.rs: load_registry / SettingsWatch; src/runtime.rs: refresh_settings" tooltip="Source: src/config/registry.rs: load_registry / SettingsWatch; src/runtime.rs: refresh_settings">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="bfd2">
@@ -315,7 +417,7 @@
           </mxCell>
         </object>
         <mxCell id="broker2" value="&lt;b&gt;LOCAL SYSTEM  |  BfdBgpBroker&lt;/b&gt;&lt;br&gt;Fixed-target BGP management" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#E1D5E7;swimlaneFillColor=#FFFFFF;strokeColor=#9673A6;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="900" y="640" width="770" height="450" as="geometry" />
+          <mxGeometry x="1740" y="640" width="780" height="590" as="geometry" />
         </mxCell>
         <object id="readBroker" label="&lt;b&gt;Read fixed target at startup&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BgpPeerName + BgpRoutingDomain&lt;br&gt;Reads no BFD authentication keys&lt;br&gt;IPC cannot choose another target&lt;/span&gt;" Source="src/config/registry.rs: load_bgp_target" tooltip="Source: src/config/registry.rs: load_bgp_target">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#DAE8FC;strokeColor=#6C8EBF;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#E1D5E7;strokeColor=#9673A6;" vertex="1" parent="broker2">
@@ -337,63 +439,73 @@
             <mxGeometry x="425" y="305" width="310" height="95" as="geometry" />
           </mxCell>
         </object>
-        <mxCell id="bfdRead" value="read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="parameters" target="readBfd">
-          <mxGeometry relative="1" as="geometry" x="-0.2106" y="-12">
+        <mxCell id="bfdRead" value="read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="parameters" target="readBfd">
+          <mxGeometry relative="1" as="geometry" x="-0.3925588458618071" y="-12">
             <Array as="points">
-              <mxPoint x="420.0" y="624.0" />
-              <mxPoint x="24.0" y="624.0" />
-              <mxPoint x="24.0" y="807.5" />
+              <mxPoint x="420.0" y="556.0" />
+              <mxPoint x="52.0" y="556.0" />
+              <mxPoint x="52.0" y="807.5" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="brokerRead" value="read target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="parameters" target="readBroker">
-          <mxGeometry relative="1" as="geometry" x="0.0702" y="-12">
+        <mxCell id="brokerRead" value="read target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="1" source="parameters" target="readBroker">
+          <mxGeometry relative="1" as="geometry" x="0.14198473282442747" y="-12">
             <Array as="points">
-              <mxPoint x="884.0" y="472.5" />
-              <mxPoint x="884.0" y="807.5" />
+              <mxPoint x="816.0" y="472.5" />
+              <mxPoint x="816.0" y="733.0" />
+              <mxPoint x="1759.0" y="733.0" />
+              <mxPoint x="1759.0" y="807.5" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="bfdOptions" value="settings" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd2" source="readBfd" target="engine2">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <mxCell id="bfdOptions" value="settings" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="bfd2" source="readBfd" target="engine2">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <mxCell id="brokerOptions" value="target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="broker2" source="readBroker" target="brokerEngine2">
-          <mxGeometry relative="1" as="geometry" x="0.0" y="-12" />
+        <mxCell id="brokerOptions" value="target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" parent="broker2" source="readBroker" target="brokerEngine2">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
+          </mxGeometry>
         </mxCell>
-        <mxCell id="bfdEvents" value="diagnostics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="bfd2" source="engine2" target="bfdLog">
-          <mxGeometry relative="1" as="geometry" x="0.0839" y="-12">
+        <mxCell id="bfdEvents" value="diagnostics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="bfd2" source="engine2" target="bfdLog">
+          <mxGeometry relative="1" as="geometry" x="-0.09247311827956994" y="-12">
             <Array as="points">
-              <mxPoint x="575.0" y="287.0" />
-              <mxPoint x="185.0" y="287.0" />
+              <mxPoint x="575.0" y="246.0" />
+              <mxPoint x="185.0" y="246.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="brokerEvents" value="diagnostics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="broker2" source="brokerEngine2" target="brokerLog">
-          <mxGeometry relative="1" as="geometry" x="0.0839" y="-12">
+        <mxCell id="brokerEvents" value="diagnostics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" parent="broker2" source="brokerEngine2" target="brokerLog">
+          <mxGeometry relative="1" as="geometry" x="-0.09247311827956994" y="-12">
             <Array as="points">
-              <mxPoint x="580.0" y="287.0" />
-              <mxPoint x="190.0" y="287.0" />
+              <mxPoint x="580.0" y="246.0" />
+              <mxPoint x="190.0" y="246.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="bfdSignals" value="control / status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=0;exitY=0.8;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="scm" target="bfdLife">
-          <mxGeometry relative="1" as="geometry" x="0.0537" y="-12">
+        <mxCell id="bfdSignals" value="control / status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.0;exitY=0.8;entryX=1.0;entryY=0.5;" edge="1" parent="1" source="scm" target="bfdLife">
+          <mxGeometry relative="1" as="geometry" x="0.499593165174939" y="-12">
             <Array as="points">
-              <mxPoint x="816.0" y="513.0" />
-              <mxPoint x="816.0" y="992.5" />
+              <mxPoint x="884.0" y="513.0" />
+              <mxPoint x="884.0" y="717.0" />
+              <mxPoint x="781.0" y="717.0" />
+              <mxPoint x="781.0" y="992.5" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="brokerSignals" value="control / status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=1;exitY=0.7;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="scm" target="brokerLife">
-          <mxGeometry relative="1" as="geometry" x="-0.0625" y="-12">
+        <mxCell id="brokerSignals" value="control / status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.7;entryX=1.0;entryY=0.5;" edge="1" parent="1" source="scm" target="brokerLife">
+          <mxGeometry relative="1" as="geometry" x="0.281203007518797" y="-12">
             <Array as="points">
               <mxPoint x="1686.0" y="499.5" />
-              <mxPoint x="1686.0" y="992.5" />
+              <mxPoint x="1686.0" y="933.0" />
+              <mxPoint x="2491.0" y="933.0" />
+              <mxPoint x="2491.0" y="992.5" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="output" value="DIAGNOSTIC OUTPUT  |  written under each service's own identity" style="swimlane;horizontal=1;startSize=65;rounded=1;arcSize=8;container=1;collapsible=0;pointerEvents=0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=19;align=left;verticalAlign=middle;spacingLeft=20;fontColor=#172B4D;fillColor=#F5F5F5;swimlaneFillColor=#FFFFFF;strokeColor=#B0B0B0;strokeWidth=2;" vertex="1" parent="1">
-          <mxGeometry x="40" y="1205" width="1630" height="220" as="geometry" />
+          <mxGeometry x="40" y="1370" width="2480" height="220" as="geometry" />
         </mxCell>
         <object id="eventlog" label="&lt;b&gt;ETW / Windows Event Log&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BFD-Service / Operational&lt;br&gt;Both services write lifecycle / diagnostic events&lt;br&gt;Non-administrator reads: existing Windows channel permissions&lt;/span&gt;" Source="src/runtime/logging.rs; src/event_log.rs; events/BFD-Service.man" tooltip="Source: src/runtime/logging.rs; src/event_log.rs; events/BFD-Service.man">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#F5F5F5;strokeColor=#B0B0B0;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="output">
@@ -405,75 +517,136 @@
             <mxGeometry x="860" y="110" width="690" height="90" as="geometry" />
           </mxCell>
         </object>
-        <mxCell id="bfdEtw" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="bfdLog" target="eventlog">
-          <mxGeometry relative="1" as="geometry" x="0.6137" y="-12">
+        <mxCell id="bfdEtw" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=0.25;entryY=0.0;" edge="1" parent="1" source="bfdLog" target="eventlog">
+          <mxGeometry relative="1" as="geometry" x="-0.048426150121065326" y="-12">
             <Array as="points">
-              <mxPoint x="225.0" y="1189.0" />
-              <mxPoint x="24.0" y="1189.0" />
-              <mxPoint x="24.0" y="1297.0" />
-              <mxPoint x="265.0" y="1297.0" />
+              <mxPoint x="225.0" y="1056.0" />
+              <mxPoint x="52.0" y="1056.0" />
+              <mxPoint x="52.0" y="1464.0" />
+              <mxPoint x="265.0" y="1464.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="brokerEtw" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="brokerLog" target="eventlog">
-          <mxGeometry relative="1" as="geometry" x="0.4054" y="-12">
+        <mxCell id="brokerEtw" value="events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.5;exitY=1.0;entryX=1.0;entryY=0.5;" edge="1" parent="1" source="brokerLog" target="eventlog">
+          <mxGeometry relative="1" as="geometry" x="0.39050445103857556" y="-12">
             <Array as="points">
-              <mxPoint x="1090.0" y="1189.0" />
-              <mxPoint x="1686.0" y="1189.0" />
-              <mxPoint x="1686.0" y="1299.0" />
-              <mxPoint x="765.0" y="1299.0" />
-              <mxPoint x="765.0" y="1360.0" />
+              <mxPoint x="1930.0" y="1056.0" />
+              <mxPoint x="1627.0" y="1056.0" />
+              <mxPoint x="1627.0" y="1468.0" />
+              <mxPoint x="746.0" y="1468.0" />
+              <mxPoint x="746.0" y="1525.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="bfdFile" value="if enabled" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="bfdLog" target="filelog">
-          <mxGeometry relative="1" as="geometry" x="-0.1788" y="-12">
+        <mxCell id="bfdFile" value="if enabled" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#637892;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=0.7;entryY=0.0;" edge="1" parent="1" source="bfdLog" target="filelog">
+          <mxGeometry relative="1" as="geometry" x="0.19893012370444674" y="-12">
             <Array as="points">
-              <mxPoint x="449.0" y="992.5" />
-              <mxPoint x="449.0" y="1106.0" />
-              <mxPoint x="1720.0" y="1106.0" />
-              <mxPoint x="1720.0" y="1297.0" />
-              <mxPoint x="1383.0" y="1297.0" />
+              <mxPoint x="391.0" y="992.5" />
+              <mxPoint x="391.0" y="1377.0" />
+              <mxPoint x="1383.0" y="1377.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="footer2" value="Source map and authentication checks A-E: docs/security.md  |  Host-specific provider and Event Log permissions remain Windows configuration." style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;" vertex="1" parent="1">
-          <mxGeometry x="40" y="1670" width="1630" height="45" as="geometry" />
+        <mxCell id="footer2" value="Source map and authentication checks A-F: docs/security.md | Windows tokens govern COM calls; BFD shared keys govern UDP authentication." style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fontSize=15;spacing=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1870" width="2480" height="45" as="geometry" />
         </mxCell>
         <object id="reader" Source="installer/Package.wxs: ServiceSecurity; LogSecurity" tooltip="Authenticated users retain SCM queries and existing event/file log reads." label="&lt;b&gt;AUTHENTICATED LOCAL USER  |  read-only monitoring&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Read Windows service status and configuration&lt;br&gt;Read event / file logs under their existing permissions&lt;br&gt;No Start / Stop, reconfiguration, or custom service controls&lt;/span&gt;">
           <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;fillColor=#D5E8D4;strokeColor=#82B366;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="1">
-            <mxGeometry x="600" y="1510" width="560" height="110" as="geometry" />
+            <mxGeometry x="600" y="1680" width="560" height="135" as="geometry" />
           </mxCell>
         </object>
         <mxCell id="readerRights" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="1" value="&lt;b&gt;SCM reader rights&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Query config / status, enumerate dependents,&lt;br&gt;interrogate status, and read the service ACL.&lt;br&gt;These rights grant no service-control access.&lt;/span&gt;">
-          <mxGeometry x="40" y="1510" width="460" height="110" as="geometry" />
+          <mxGeometry x="40" y="1680" width="460" height="135" as="geometry" />
         </mxCell>
-        <mxCell id="statusNote" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="1" value="&lt;b&gt;SERVICE STATUS vs BFD STATE&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;SCM: Running / Stopped.&lt;br&gt;BFD: Up / Down in historical log events.&lt;br&gt;Events record transitions, not a live snapshot.&lt;/span&gt;">
-          <mxGeometry x="1210" y="1510" width="460" height="110" as="geometry" />
+        <mxCell id="statusNote" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="1" value="&lt;b&gt;SERVICE STATUS AND SESSION STATUS&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;SCM: Running / Stopped for local readers.&lt;br&gt;COM: BFD state / counters for local SYSTEM / enabled Admins.&lt;br&gt;Logs: historical transitions under existing Windows ACLs.&lt;br&gt;Ordinary / filtered / remote callers: no status COM access.&lt;/span&gt;">
+          <mxGeometry x="1210" y="1680" width="1310" height="135" as="geometry" />
         </mxCell>
-        <mxCell id="readStatus" value="query status / config" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;dashed=1;fontFamily=Segoe UI;fontColor=#387B31;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#82B366;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.3;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="reader" target="scm">
-          <mxGeometry relative="1" as="geometry" x="0.3504" y="-12">
+        <mxCell id="readStatus" value="query status / config" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;dashed=1;fontFamily=Segoe UI;fontColor=#387B31;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#82B366;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=1.0;exitY=0.5;entryX=1.0;entryY=0.3;" edge="1" parent="1" source="reader" target="scm">
+          <mxGeometry relative="1" as="geometry" x="0.3679193899782136" y="-12">
             <Array as="points">
-              <mxPoint x="1194.0" y="1565.0" />
-              <mxPoint x="1194.0" y="1441.0" />
-              <mxPoint x="1760.0" y="1441.0" />
-              <mxPoint x="1760.0" y="445.5" />
+              <mxPoint x="1176.0" y="1747.5" />
+              <mxPoint x="1176.0" y="1582.0" />
+              <mxPoint x="1682.0" y="1582.0" />
+              <mxPoint x="1682.0" y="445.5" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="readEvents" value="read events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;dashed=1;fontFamily=Segoe UI;fontColor=#387B31;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#82B366;exitX=0;exitY=0.3;exitDx=0;exitDy=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="reader" target="eventlog">
-          <mxGeometry relative="1" as="geometry" x="0.1534" y="-12">
+        <mxCell id="readEvents" value="read events" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;dashed=1;fontFamily=Segoe UI;fontColor=#387B31;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#82B366;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.0;exitY=0.3;entryX=0.75;entryY=1.0;" edge="1" parent="1" source="reader" target="eventlog">
+          <mxGeometry relative="1" as="geometry" x="-0.05128205128205132" y="-12">
             <Array as="points">
-              <mxPoint x="575.0" y="1543.0" />
+              <mxPoint x="584.0" y="1720.5" />
+              <mxPoint x="584.0" y="1586.0" />
+              <mxPoint x="575.0" y="1586.0" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="readFiles" value="read file log" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;dashed=1;fontFamily=Segoe UI;fontColor=#387B31;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#82B366;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.3;entryY=1;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;" edge="1" parent="1" source="reader" target="filelog">
-          <mxGeometry relative="1" as="geometry" x="-0.5469" y="-12">
+        <mxCell id="readFiles" value="read file log" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;dashed=1;fontFamily=Segoe UI;fontColor=#387B31;labelBackgroundColor=#FFFFFF;spacing=4;strokeColor=#82B366;exitDx=0;exitDy=0;entryDx=0;entryDy=0;fontSize=13;jettySize=auto;exitX=0.75;exitY=0.0;entryX=0.3;entryY=1.0;" edge="1" parent="1" source="reader" target="filelog">
+          <mxGeometry relative="1" as="geometry" x="-0.5228426395939086" y="-12">
             <Array as="points">
-              <mxPoint x="1020.0" y="1423.0" />
-              <mxPoint x="1107.0" y="1423.0" />
+              <mxPoint x="1020.0" y="1586.0" />
+              <mxPoint x="1107.0" y="1586.0" />
             </Array>
+          </mxGeometry>
+        </mxCell>
+        <object id="statusClient2" label="&lt;b&gt;Local 64-bit PowerShell status client&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;BfdWinService.Status.1 / GetSnapshot()&lt;br&gt;Caller Windows token: SYSTEM or enabled Administrator&lt;br&gt;Read-only BFD functionality; SCM supplies service status&lt;/span&gt;" Source="docs/monitoring.md; src/status_com.rs" tooltip="Source: docs/monitoring.md; src/status_com.rs">
+          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#F5F5F5;strokeColor=#B0B0B0;" vertex="1" parent="admin">
+            <mxGeometry x="1660" y="80" width="780" height="95" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="statusRegistration2" label="&lt;b&gt;F0 | Protected HKLM 64-bit COM registration&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;ProgID → CLSID → AppID&lt;br&gt;AppID LocalService = BfdWinService (SCM service name)&lt;br&gt;SYSTEM / Admins: LaunchPermission 0xB; AccessPermission 0x3&lt;br&gt;AuthenticationLevel = 5; no remote launch / activation / access&lt;br&gt;Registration reads do not grant endpoint query permission&lt;/span&gt;" Source="installer/Package.wxs: StatusProgIdRegistration / StatusClassRegistration / StatusAppIdRegistration" tooltip="Source: installer/Package.wxs: StatusProgIdRegistration / StatusClassRegistration / StatusAppIdRegistration">
+          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1" parent="1">
+            <mxGeometry x="1740" y="405" width="780" height="180" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="statusService2" label="&lt;b&gt;F1-F3 | Service-hosted COM status object&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Security initialized once; class registered before SCM Running&lt;br&gt;MTA owns registration; RPC workers execute calls&lt;br&gt;Packet integrity; authenticated local ncalrpc context required&lt;br&gt;Factory + each IDispatch metadata / method / property call checks the caller&lt;br&gt;TOKEN_QUERY + OpenAsSelf; SYSTEM or enabled Admin membership&lt;br&gt;Checked RevertToSelf BEFORE snapshot reads / formatting&lt;br&gt;No process-token fallback; no BGP or configuration writes&lt;/span&gt;" Source="src/service.rs; src/status_com.rs" tooltip="Source: src/service.rs; src/status_com.rs">
+          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#FFF2CC;strokeColor=#D6B656;" vertex="1" parent="bfd2">
+            <mxGeometry x="850" y="105" width="725" height="220" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="statusStore2" label="&lt;b&gt;ArcSwap immutable snapshot store&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Engine publishes every 1 second; queries retain an Arc&lt;br&gt;No authentication keys; no SCM lifecycle fields&lt;br&gt;After engine exit: new GetSnapshot() returns null&lt;/span&gt;" Source="src/runtime/status.rs; src/status_com.rs: StatusObject" tooltip="Source: src/runtime/status.rs; src/status_com.rs: StatusObject">
+          <mxCell style="rounded=1;arcSize=12;strokeWidth=1.5;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;fillColor=#DAE8FC;strokeColor=#6C8EBF;" vertex="1" parent="bfd2">
+            <mxGeometry x="850" y="385" width="725" height="115" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="brokerPrivate2" label="&lt;b&gt;PRIVATE COM FOR LOCAL MI&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Broker process identity: LocalSystem + broker service SID&lt;br&gt;Provider operations run after pipe identification is reverted&lt;br&gt;This private client does not host the status COM object&lt;/span&gt;" Source="src/bgp_broker/com.rs; src/bgp_broker/mi.rs" tooltip="Source: src/bgp_broker/com.rs; src/bgp_broker/mi.rs">
+          <mxCell style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="broker2">
+            <mxGeometry x="35" y="450" width="710" height="105" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="diagnosticBoundary2" label="&lt;b&gt;SEPARATE ACCESS RIGHTS&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:14px;&quot;&gt;Service status + log reads: applicable Windows ACLs&lt;br&gt;BFD COM snapshots: local SYSTEM / enabled Admins only&lt;br&gt;BFD wire authentication: optional configured shared key&lt;br&gt;An unelevated Administrator token has no query grant&lt;/span&gt;" Source="installer/Package.wxs; src/status_com.rs; src/packet.rs" tooltip="Source: installer/Package.wxs; src/status_com.rs; src/packet.rs">
+          <mxCell style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;html=1;whiteSpace=wrap;fontFamily=Segoe UI;fontSize=15;fontColor=#172B4D;spacing=12;" vertex="1" parent="output">
+            <mxGeometry x="1670" y="95" width="730" height="105" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="statusActivate2" value="local COM" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="statusClient2" target="statusRegistration2">
+          <mxGeometry relative="1" as="geometry" x="-0.44799999999999995" y="-12">
+            <Array as="points">
+              <mxPoint x="2090.0" y="389.0" />
+              <mxPoint x="2130.0" y="389.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="statusHost2" value="SCM activation" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;startArrow=block;startFill=1;startSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="statusRegistration2" target="statusService2">
+          <mxGeometry relative="1" as="geometry" x="-0.12337349397590358" y="-12">
+            <Array as="points">
+              <mxPoint x="2130.0" y="601.0" />
+              <mxPoint x="1252.5" y="601.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="statusPublish2" value="1 second" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="bfd2" source="engine2" target="statusStore2">
+          <mxGeometry relative="1" as="geometry" x="0.4870662460567823" y="-12">
+            <Array as="points">
+              <mxPoint x="575.0" y="246.0" />
+              <mxPoint x="838.0" y="246.0" />
+              <mxPoint x="838.0" y="369.0" />
+              <mxPoint x="1212.5" y="369.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="statusQuery2" value="read Arc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;endSize=10;strokeWidth=2;fontFamily=Segoe UI;fontSize=13;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;strokeColor=#637892;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="bfd2" source="statusService2" target="statusStore2">
+          <mxGeometry relative="1" as="geometry" x="0.0" y="-12">
+            <Array as="points" />
           </mxGeometry>
         </mxCell>
       </root>

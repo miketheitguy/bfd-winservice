@@ -1,7 +1,7 @@
 # Service communication
 
 For developers and Windows administrators, this page maps the installed
-services' network endpoints and BGP actions. See
+services' network endpoints, administrative COM queries, and BGP actions. See
 [Security, authentication, and build hardening](security.md) for privilege levels,
 authentication checks, and the ASCII and rendered draw.io diagrams.
 
@@ -11,6 +11,8 @@ The two executables run in separate processes:
 
 1. `BfdWinService` receives and validates UDP packets, updates session state and
    timers, and sends configured BFD or S-BFD packets. It runs as LocalService.
+   Its dedicated COM host and RPC query threads serve read-only snapshots from
+   the same process, separately from the packet/timer worker.
 2. When `BgpPeerName` is configured, its BGP worker sends fixed `Get`, `Start`, or
    `Stop` requests on `\\.\pipe\BfdWinService.Bgp.v1`. The client verifies the
    broker's SCM process ID, and the broker checks the BFD client's Windows token.
@@ -28,12 +30,18 @@ for administrative control and read-only monitoring.
 
 ## Administrative status queries
 
-The LocalService BFD process also hosts the read-only
-`BfdWinService.Status.1` COM Automation endpoint. Local elevated Administrators
-and SYSTEM can call `GetSnapshot()` to obtain an immutable observation of session
-state, peer identity, active timing, communication timestamps, and packet/error
-counters. COM activation targets the installed SCM service, and status queries
-do not contact the BGP broker or provider.
+The LocalService BFD process hosts the read-only
+`BfdWinService.Status.1` COM Automation endpoint. Local 64-bit PowerShell running
+as SYSTEM or with an enabled Administrators SID can call `GetSnapshot()` to obtain
+an immutable observation of session state, peer identity, active timing,
+communication timestamps, and packet/error counters. COM activation targets the
+installed SCM service, and status queries do not contact the BGP broker or
+provider. Protected 64-bit machine registration maps the ProgID/CLSID to an
+AppID whose `LocalService` value contains the service name `BfdWinService`.
+Local launch/activation rights (`0xb`) and call rights
+(`0x3`) grant only SYSTEM and Administrators. Windows starts the registered
+service when activation requires it. The BFD service depends on `BfdBgpBroker`
+and `RpcSs`; the broker depends on `RpcSs`.
 
 The engine replaces its published `Arc` at most once per second. COM query
 threads read that snapshot without requesting work from, or holding a lock on,
@@ -41,12 +49,19 @@ the packet loop. Each returned object retains its values even after later
 publications; repeat `GetSnapshot()` for a later observation. Session data can
 lag BFD detection and peer reports preserve their last accepted values.
 
-Activation and call permissions grant local SYSTEM and enabled Administrators
-only. The endpoint checks caller identity on class creation and dispatch, and
-rejects remote calls. It has no mutation methods or secret authentication data.
+Checks F0-F3 in the diagrams cover activation permissions and each class-creation
+or dispatch call. The endpoint requires an authenticated COM call context and
+a local, non-null `ncalrpc` session. It briefly identifies the actual RPC caller,
+opens that thread's token with `TOKEN_QUERY` and `OpenAsSelf=true`, and uses
+`CheckTokenMembership` for SYSTEM or enabled Administrators. It requires checked
+`RevertToSelf` before the Arc read; there is no process-token identity fallback.
+Ordinary users, filtered Administrator tokens, remote callers, and missing
+identities are denied. The COM security setting `IDENTIFY` is the outgoing proxy
+default, not a cap on incoming caller tokens. The endpoint has no mutation
+methods or secret authentication data.
 Use Windows service queries for lifecycle status. See
 [Query a session snapshot](monitoring.md#query-a-session-snapshot) for PowerShell
-examples and [Administrative COM status access](security.md#administrative-com-status-access)
+examples and [F: Administrative COM status access](security.md#f-administrative-com-status-access)
 for activation registration and caller checks.
 
 ## UDP inputs and outputs

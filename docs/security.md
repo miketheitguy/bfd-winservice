@@ -6,11 +6,12 @@ and how the compiler and linker reduce exploit opportunities. It describes the
 MSI installation. For socket endpoints and BGP actions, see
 [Service communication](service-communication.md).
 
-The network-facing BFD process runs as LocalService. A separate LocalSystem
+The network-facing BFD process runs as LocalService and hosts a read-only local
+COM status endpoint for SYSTEM and enabled Administrators. A separate LocalSystem
 broker performs privileged BGP management for one configured target. Windows
-access-control lists (ACLs) govern service control, configuration, and logs;
-optional BFD wire authentication checks remote packets. These checks use
-different credentials and protect different boundaries.
+access-control lists (ACLs) govern service control, configuration, logs, and COM
+activation; optional BFD wire authentication checks remote packets. These checks
+use different credentials and protect different boundaries.
 
 ## Identities and privileges
 
@@ -23,10 +24,10 @@ The installed services and local callers have these permissions:
 
 | Identity | Permissions and limits |
 | --- | --- |
-| `BfdWinService`: LocalService with `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the private pipe. Removes all token privileges except `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege` before accepting network traffic. |
+| `BfdWinService`: LocalService with `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, publishes session snapshots, serves authenticated local COM queries, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the private pipe. Removes all token privileges except `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege` before accepting network traffic. |
 | `BfdBgpBroker`: LocalSystem with `NT SERVICE\BfdBgpBroker` SID | Owns the pipe and invokes the local Windows BGP management provider. Startup requires both LocalSystem and the enabled broker service SID. |
 | Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, query the local read-only COM session endpoint, modify installed files and Parameters, and manage permissions. Membership in Administrators alone does not satisfy the broker pipe's BFD client identity checks. |
-| Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot start, stop, reconfigure, or send custom controls to either installed service. |
+| Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot query the COM session endpoint, start, stop, reconfigure, or send custom controls to either installed service. |
 | Remote network peers | Can send UDP traffic through the configured firewall rules. Packets must pass protocol/path validation and any configured BFD authentication before affecting the session. No remote broker pipe or status COM access. |
 
 The BFD process permanently removes unused token privileges, including
@@ -45,75 +46,89 @@ MSI-installed service.
 
 The editable [draw.io diagram](service-communication.drawio) contains two pages.
 The PNG exports embed editable XML so they can also be opened in draw.io. Open
-each image at full size to read its labels. The equivalent ASCII diagrams and
-the authentication sections provide the same boundaries in text. The exports
-illustrate packet processing and BGP control; the administrative status COM
-boundary is described in [Administrative COM status access](#administrative-com-status-access).
+each image at full size to read its labels. The runtime page shows packet/BGP
+processing and the authenticated administrative COM query path. The lifecycle
+page shows installation, activation, service control, configuration, and logs.
+The equivalent ASCII diagrams and authentication sections describe those
+boundaries in text.
 
 ### Runtime and security
 
 This diagram separates the network-facing LocalService process from the
-LocalSystem broker and Windows management provider:
+LocalSystem broker and Windows management provider. Inside LocalService, the
+packet/timer worker publishes snapshots separately from the COM query threads:
 
-![Runtime security diagram: remote BFD packets enter LocalService, pass check A, and can trigger requests through checks B and C to the LocalSystem broker; check D governs local Windows provider access.](images/service-communication-runtime.png)
+![Runtime security diagram: A validates remote BFD packets, B and C protect the LocalService-to-LocalSystem BGP pipe, and D protects provider calls. F authenticates local SYSTEM or enabled Administrator COM callers, checks their tokens, and reverts identity before reading one-second immutable snapshots on separate query threads.](images/service-communication-runtime.png)
 
 `-->` means a request or data flow. Vertical `^` / `|` / `v` arrows show requests
-and responses or packets in both directions. Letters A-E identify the checks
+and responses or packets in both directions. Letters A-F identify the checks
 explained in [Authentication and authorization](#authentication-and-authorization).
-Background threads keep their process identity:
+F0-F3 divide COM activation permissions, authenticated call context, local RPC
+and token checks, and checked identity reversal. Workers keep their process
+identity; brief caller identification ends before snapshot reads:
 
 ```text
-EXTERNAL NETWORK / UNTRUSTED
-[Remote BFD / S-BFD peer]
-          ^
-          | UDP probes/replies
-          v
-+--------------------------------------------------------------------------------+
-| LOCAL SERVICE: BfdWinService / bfd-winservice.exe                              |
-| Identity: LocalService + NT SERVICE\BfdWinService                              |
-| Retains: SeChangeNotifyPrivilege, SeCreateGlobalPrivilege                      |
-|                                                                                |
-|   [UDP transport]                                                              |
-|         | RX                                                                   |
-|         v                                                                      |
-|   [A: path checks + optional BFD auth]                                         |
-|         | accepted packet                                                      |
-|         v                                                                      |
-|   [Session / timers / S-BFD reflector] --> [Published immutable snapshots]     |
-|         |     |                                                                |
-|         |     +----> encode + configured auth ----> UDP TX                     |
-|         |                                                                      |
-|         +----> [BGP worker: optional; bounded action queue]                    |
-|                             |                                                  |
-|                    [B: verify broker PID through SCM]                          |
-+--------------------------------------------------------------------------------+
+EXTERNAL NETWORK / UNTRUSTED                   LOCAL 64-BIT POWERSHELL
+[Remote BFD / S-BFD peer]                      [SYSTEM / enabled Administrators]
+          ^                                             |
+          | UDP probes/replies                          v
+          |                              [F0: AppID local Launch 0xb / Access 0x3]
+          |                              [LocalService=BfdWinService -> SCM activation]
+          |                                             | authenticated local ncalrpc
+          v                                             v
++--------------------------------------------------------------------------------------------------------------+
+| LOCAL SERVICE: BfdWinService / bfd-winservice.exe                                                            |
+| Identity: LocalService + NT SERVICE\BfdWinService                                                            |
+| Retains: SeChangeNotifyPrivilege, SeCreateGlobalPrivilege                                                    |
+|                                                                                                              |
+| UDP PACKET/TIMER WORKER                      | COM HOST / RPC QUERY THREADS (same process identity)          |
+| [UDP transport]                              | [BfdWinService.Status.1 / GetSnapshot()]                      |
+|       | RX                                   |       |                                                       |
+|       v                                      | [F1: authenticated CoGetCallContext<IServerSecurity>]         |
+| [A: path checks + optional BFD auth]         |       |                                                       |
+|       | accepted packet                      | [F2: local ncalrpc; non-null authenticated session]           |
+|       v                                      |       | brief caller identification                           |
+| [Session / timers / S-BFD reflector]         | [OpenThreadToken: TOKEN_QUERY, OpenAsSelf=true]               |
+|       |      |                               |       | actual RPC caller token; no process-token fallback    |
+|       |      +--> encode/auth --> UDP TX     | [CheckTokenMembership: SYSTEM or enabled Administrators]      |
+|       |                                      |       | deny users, filtered Admin, remote/missing identity   |
+| [Single-owner scalar telemetry]              | [F3: checked RevertToSelf before snapshot read]               |
+|       |                                      |       | success only; failure denies, Drop retries reversal   |
+| [1 s publication; no COM on packet loop]     | [ArcSwap observer.load_full() -> immutable Arc]               |
+|                                                                                                              |
+| [Telemetry] -- 1 s snapshot store --> [ArcSwapOption<StatusSnapshot>] <-- Arc read -- [F: authorized worker] |
+|                                                                                                              |
+| [Optional BGP worker / bounded action queue] | [Read-only snapshot -> local PowerShell reply]                |
+|       |                                      | [No authentication keys or configuration/BGP methods]         |
+| [B: verify broker PID through SCM]           |                                                               |
++--------------------------------------------------------------------------------------------------------------+
                              ^
                              | Get / Start / Stop; status/error reply
                              | \\.\pipe\BfdWinService.Bgp.v1
                              v
-+--------------------------------------------------------------------------------+
-| LOCAL SYSTEM: BfdBgpBroker / bfd-bgp-broker.exe                                |
-| Identity: LocalSystem + NT SERVICE\BfdBgpBroker                                |
-|                                                                                |
-|   [C: startup identity check + pipe ACL + per-request client check]            |
-|         | identification ends; RevertToSelf before provider work               |
-|         v                                                                      |
-|   [Validate 24-byte frame; operation allowlist; next sequence number]          |
-|         |                                                                      |
-|   [Fixed BGP target loaded from protected registry at startup]                 |
-|         |                                                                      |
-|   [Native MI client: Get / Start / Stop]                                       |
-+--------------------------------------------------------------------------------+
++--------------------------------------------------------------------------------------------------------------+
+| LOCAL SYSTEM: BfdBgpBroker / bfd-bgp-broker.exe                                                              |
+| Identity: LocalSystem + NT SERVICE\BfdBgpBroker                                                              |
+|                                                                                                              |
+| [C: startup identity check + pipe ACL + per-request client check]                                            |
+|       | identification ends; RevertToSelf before provider work                                               |
+|       v                                                                                                      |
+| [Validate 24-byte frame; operation allowlist; next sequence number]                                          |
+|       |                                                                                                      |
+| [Fixed BGP target loaded from protected registry at startup]                                                 |
+|       |                                                                                                      |
+| [Native MI client: Get / Start / Stop]                                                                       |
++--------------------------------------------------------------------------------------------------------------+
                              ^
                              | Local MI; broker's LocalSystem identity
                              v
-+--------------------------------------------------------------------------------+
-| WINDOWS MANAGEMENT PROVIDER / OS-MANAGED PRIVILEGE BOUNDARY                    |
-|   [D: provider access under broker identity; scoped IMPERSONATE]               |
-|   root/Microsoft/Windows/RemoteAccess : PS_BgpPeer                             |
-|                             |                                                  |
-|                         [RRAS / BGP]                                           |
-+--------------------------------------------------------------------------------+
++--------------------------------------------------------------------------------------------------------------+
+| WINDOWS MANAGEMENT PROVIDER / OS-MANAGED PRIVILEGE BOUNDARY                                                  |
+| [D: provider access under broker identity; scoped IMPERSONATE]                                               |
+| root/Microsoft/Windows/RemoteAccess : PS_BgpPeer                                                             |
+|                              |                                                                               |
+|                          [RRAS / BGP]                                                                        |
++--------------------------------------------------------------------------------------------------------------+
                              ^
                              | OS-managed BGP connection (outside this repo)
                              v
@@ -122,16 +137,19 @@ EXTERNAL NETWORK / UNTRUSTED
 
 Packet validation and authentication run before accepted traffic can change
 session state or refresh detection. Detection timeouts also change state and
-can cause BGP actions. The service publishes immutable session snapshots for
-its local read-only administrative COM endpoint. COM calls execute separately
-from the packet loop and read the published snapshot.
+can cause BGP actions. The UDP worker records telemetry in its own fields and
+stores an immutable `Arc` snapshot through ArcSwap at most once per second.
+The dedicated COM host and RPC threads check each caller before reading that
+snapshot. Queries request no work from the packet loop, take no reader lock on
+it, and contain no authentication keys. Both worker groups remain in the
+LocalService process; status queries do not enter the BGP broker or MI provider.
 
 ### Configuration, lifecycle, and logs
 
-This diagram separates administrative writes and service control from
-non-administrator monitoring:
+This diagram separates administrative writes, service control, and authenticated
+COM session queries from non-administrator lifecycle and log monitoring:
 
-![Configuration and lifecycle diagram: elevated Administrators and SYSTEM provision settings and control the services; LocalService and LocalSystem write diagnostics; non-administrators retain status and log read access.](images/service-communication-lifecycle.png)
+![Configuration and lifecycle diagram: E restricts service control and configuration writes while retaining user lifecycle and log queries. F allows local SYSTEM and enabled Administrators to activate BfdWinService through protected AppID permissions, authenticates and checks each COM caller, and reads published snapshots after reverting identity. Ordinary users, filtered Administrators, remote callers, and missing identities are denied COM access.](images/service-communication-lifecycle.png)
 
 The text diagram shows the administrative and diagnostic paths:
 
@@ -145,11 +163,33 @@ ELEVATED ADMINISTRATOR / SYSTEM
   |                         +-- read --> Broker: BGP peer name + routing domain
   |
   +-- [E: SCM access] ----> Start / Stop / lifecycle for both services
-  |                         BFD depends on BfdBgpBroker
+  |                         BFD depends on BfdBgpBroker + RpcSs
   |                         Broker depends on RpcSs
   |
+  +-- [F: local 64-bit PowerShell / BfdWinService.Status.1]
+  |     |
+  |     +-- [F0: protected HKLM64 Classes / CLSID / ProgID / AppID]
+  |     |     SYSTEM + Administrators: local Launch 0xb / Access 0x3
+  |     |     AppID LocalService=BfdWinService --> SCM starts that service
+  |     |
+  |     +-- authenticated local ncalrpc --> COM/RPC query worker
+  |           [F1: authenticated COM call context]
+  |                 |
+  |           [F2: local/non-null RPC; identify and inspect caller token]
+  |                 OpenThreadToken(TOKEN_QUERY, OpenAsSelf=true)
+  |                 CheckTokenMembership: SYSTEM or enabled Administrators
+  |                 |
+  |           [F3: checked RevertToSelf; only success reaches Arc read]
+  |                 |
+  |           [ArcSwap immutable snapshot] --> read-only snapshot object
+  |                 ^
+  |                 | one-second store from BFD packet/timer worker
+  |                 | COM formatting and RPC work stay on separate threads
+  |                 +-- no auth keys or service lifecycle in returned data
+  |
   +-- MSI provisioning --> service accounts/SIDs, protected service ACLs,
-                            executable/registry/log ACLs, UDP firewall rules
+                            executable/registry/log ACLs, local COM policy,
+                            UDP firewall rules
 
 OUTPUT UNDER EACH SERVICE'S OWN IDENTITY
   BfdWinService -- bounded logging queue --> ETW / BFD-Service/Operational
@@ -161,6 +201,10 @@ AUTHENTICATED LOCAL USER / READ-ONLY MONITORING
   +-- [E: SCM query rights] --> Running / Stopped and service configuration
   |                             No Start/Stop or custom control rights
   +-- [Windows log ACLs] ----> read Operational events and file logs
+  +-- [F: COM denied] ------> ordinary users and filtered Administrator tokens
+
+REMOTE OR UNAUTHENTICATED COM CALLER
+  +-- [F0/F1/F2: denied] ---> no remote grants; local ncalrpc + identity required
 ```
 
 ## Authentication and authorization
@@ -315,12 +359,18 @@ than the BFD session's Up/Down state. See
 [Monitor service status and BFD events](monitoring.md) and
 [Logs and events](logging.md).
 
-### Administrative COM status access
+<a id="administrative-com-status-access"></a>
+
+### F: Administrative COM status access
 
 `BfdWinService.Status.1` exposes `GetSnapshot()` through standard COM Automation
-(`IDispatch`) inside the LocalService BFD service process. The AppID's
-`LocalService` registry value names the SCM service `BfdWinService`; there is no
-alternate executable, DLL surrogate, or privileged status broker. See Microsoft's
+(`IDispatch`) inside the LocalService BFD service process. Local 64-bit PowerShell
+uses the installed ProgID/CLSID registration. At F0, the AppID's `LocalService`
+registry value contains the SCM service name `BfdWinService`; it does not name
+the LocalService account. Windows starts that service when activation requires
+it. The BFD service depends on both `BfdBgpBroker` and `RpcSs`; the broker depends
+on `RpcSs`. There is no alternate executable, DLL surrogate, or privileged
+status broker. See Microsoft's
 [LocalService COM registration](https://learn.microsoft.com/en-us/windows/win32/com/localservice).
 
 The MSI installs an explicit binary `LaunchPermission` descriptor granting only
@@ -332,19 +382,41 @@ registry roots have protected ACLs so ordinary users cannot alter the policy.
 See Microsoft's [DCOM permission masks](https://learn.microsoft.com/en-us/windows/win32/com/dcom-security-enhancements-in-windows-xp-service-pack-2-and-windows-server-2003-service-pack-1).
 
 The process initializes COM security with an explicit local SYSTEM/Administrators
-descriptor, packet integrity, identification-level callers, and
-`EOAC_DISABLE_AAA | EOAC_NO_CUSTOM_MARSHAL`. Initialization failure closes the
-endpoint. Class creation and dispatch calls check local RPC provenance and the
-caller's enabled SYSTEM or Administrators SID. UAC's filtered Administrator
-token does not satisfy the Administrators check. Caller identification ends
-before reading the snapshot; no query performs work using the caller's token.
+descriptor, packet integrity, and `EOAC_DISABLE_AAA | EOAC_NO_CUSTOM_MARSHAL`.
+`RPC_C_IMP_LEVEL_IDENTIFY` sets the outgoing proxy default; it does not cap
+incoming caller impersonation levels. Initialization failure prevents endpoint
+registration, and the service registers the class before reporting Running.
 
-Status reads clone an immutable `Arc` from an ArcSwap observer and never acquire
-a lock held by the BFD loop. The engine refreshes the snapshot at most once per
-second, so it can describe older protocol state. State telemetry contains no
-authentication keys or packet payloads. Engine shutdown makes subsequent reads
-unavailable; already-returned objects retain their historical values until the
-COM connection closes. For PowerShell access and field meanings, see
+Class creation and dispatch calls perform these checks:
+
+1. **F1: Require an authenticated COM call context.**
+   `CoGetCallContext<IServerSecurity>` must return the security interface for
+   the actual RPC call. Direct calls or missing contexts fail with
+   `E_ACCESSDENIED`.
+2. **F2: Verify transport and caller identity.**
+   `RpcServerInqCallAttributesW` must report a local `ncalrpc` call
+   (`RPC_PROTSEQ_LRPC`) with a non-null session. The endpoint briefly identifies
+   the caller through `IServerSecurity::ImpersonateClient` and opens the actual
+   thread token using `OpenThreadToken(TOKEN_QUERY, OpenAsSelf=true)`.
+   `CheckTokenMembership` requires SYSTEM or the enabled Administrators SID.
+   There is no fallback to the service process token. Ordinary users, UAC
+   tokens with a deny-only Administrator SID, remote/unknown transports, and
+   token-query failures are denied.
+3. **F3: Check identity reversal before data access.**
+   The endpoint closes the token and requires `IServerSecurity::RevertToSelf`
+   to succeed before reading an `Arc`, constructing an object, or formatting
+   output. Failed reversal denies the call; the guard's destructor retries
+   reversal as a fallback. No snapshot work uses the caller's token.
+
+After F3, status reads clone an immutable `Arc` from an ArcSwap observer and
+never acquire a lock held by the BFD loop. The packet/timer worker records
+scalar telemetry and refreshes the snapshot at most once per second, so it can
+describe older protocol state. UTC conversion occurs during publication; COM
+formatting and marshaling occur on query threads. State telemetry contains no
+authentication keys, packet payloads, or service lifecycle fields. Engine
+shutdown makes subsequent reads unavailable; already-returned objects retain
+their historical values until the COM connection closes. For PowerShell access
+and field meanings, see
 [Query a session snapshot](monitoring.md#query-a-session-snapshot).
 
 ## Rust compiler and linker hardening
