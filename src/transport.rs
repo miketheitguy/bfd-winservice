@@ -8,7 +8,9 @@ use std::{
     io,
     mem::{align_of, size_of},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::windows::io::{AsRawHandle, AsRawSocket, BorrowedHandle, FromRawHandle, OwnedHandle},
+    os::windows::io::{
+        AsHandle, AsRawHandle, AsRawSocket, BorrowedHandle, FromRawHandle, OwnedHandle,
+    },
     ptr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -77,6 +79,10 @@ impl StopSignal {
     /// Returns whether a handler has requested shutdown.
     pub fn is_requested(&self) -> bool {
         self.state.requested.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn event(&self) -> BorrowedHandle<'_> {
+        self.state.event.as_handle()
     }
 
     /// Sleeps until shutdown is requested or the timeout elapses, rounding up to

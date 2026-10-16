@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows RPC Authentication"
+  short_description: "Enforce local RPC identity and authorization"
+  default_prompt: "Use $windows-rpc-authentication to review and enforce the security controls relevant to this task."

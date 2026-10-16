@@ -1,6 +1,6 @@
 # Rust skills validation — current guide
 
-Updated 2026-10-15. This guide helps Rust maintainers check the implemented API
+Updated 2026-10-16. This guide helps Rust maintainers check the implemented API
 and choose validation commands using the local
 [Rust skill](.codex/skills/rust-skills/SKILL.md). The
 [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits.
@@ -42,6 +42,10 @@ design:
 - Local or peer AdminDown releases a BGP Stop previously requested by this
   controller by queuing Start. Disconnects and broker shutdown do not issue
   Stop. See [BGP action rules](docs/bgp.md).
+- BGP control uses a separate authenticated `ncalrpc` interface. It shares the
+  telemetry probe's security helpers, reverses service identities, and retains
+  the restricted-caller SID check. The former named-pipe transport is historical.
+  See [BGP control RPC](docs/rpc-authentication.md#bgp-control-over-local-rpc).
 - One RPC worker runs inside the broker. Rejected records clear telemetry and
   retry with capped backoff; only a stuck native worker quarantines telemetry
   until restart. See [RPC session-status query](docs/rpc-session-status-design.md).

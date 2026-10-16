@@ -5,12 +5,22 @@
 #include <rpc.h>
 #include <rpcasync.h>
 #include "bfd_local_client.h"
+#include "bgp_control_client.h"
+#include <stdlib.h>
+#include "exception_policy.h"
 
-/* A single supervised worker retains uncertain RPC ownership until process
- * exit. Never abort the provider host or free storage still used by RPC. */
-__declspec(noreturn) static void retain_uncertain_call(void)
+#define BGP_CANCEL_DRAIN_TIMEOUT_MS 2000
+
+/* Telemetry retains one supervised worker; BGP fails the BFD process closed.
+ * Both policies preserve all storage still potentially owned by RPC. */
+__declspec(noreturn) static void abandon_uncertain_call(BOOL fail_stop)
 {
-    for (;;) { Sleep(INFINITE); }
+    if (fail_stop) {
+        abort();
+    }
+    for (;;) {
+        Sleep(INFINITE);
+    }
 }
 
 static RPC_STATUS initialize_async(RPC_ASYNC_STATE *state)
@@ -25,43 +35,51 @@ static RPC_STATUS initialize_async(RPC_ASYNC_STATE *state)
 }
 
 static RPC_STATUS wait_async(RPC_ASYNC_STATE *state, unsigned long timeout_ms,
-    void *binding, unsigned long *reply)
+    void *binding, unsigned long *reply, HANDLE cancel, BOOL fail_stop)
 {
-    DWORD wait = WaitForSingleObject(state->u.hEvent, timeout_ms);
+    HANDLE events[2] = {state->u.hEvent, cancel};
+    DWORD wait = WaitForMultipleObjects(cancel ? 2 : 1, events, FALSE, timeout_ms);
     RPC_STATUS failure = RPC_S_OK;
     RPC_STATUS status;
 
     if (wait != WAIT_OBJECT_0) {
-        failure = wait == WAIT_TIMEOUT ? RPC_S_CALL_CANCELLED : GetLastError();
+        failure = wait == WAIT_OBJECT_0 + 1 ? ERROR_OPERATION_ABORTED
+            : wait == WAIT_TIMEOUT ? RPC_S_CALL_CANCELLED : GetLastError();
         /* Abortive cancellation completes locally without a server response.
          * Retain the state and event until the runtime signals completion. */
         status = RpcAsyncCancelCall(state, TRUE);
         if (status != RPC_S_OK) {
             /* An error leaves call-storage ownership and bind state uncertain.
-             * The broker supervisor quarantines this one retained worker. */
-            retain_uncertain_call();
+             * Apply the caller's retention or fail-stop policy. */
+            abandon_uncertain_call(fail_stop);
         }
-        if (WaitForSingleObject(state->u.hEvent, INFINITE) != WAIT_OBJECT_0) {
-            retain_uncertain_call();
+        if (WaitForSingleObject(state->u.hEvent,
+                fail_stop ? BGP_CANCEL_DRAIN_TIMEOUT_MS : INFINITE) != WAIT_OBJECT_0) {
+            abandon_uncertain_call(fail_stop);
         }
     }
     status = binding ? RpcAsyncGetCallStatus(state)
                      : RpcAsyncCompleteCall(state, reply);
     if (status == RPC_S_ASYNC_CALL_PENDING) {
         /* This event is configured only for final completion notification. */
-        retain_uncertain_call();
+        abandon_uncertain_call(fail_stop);
     }
     if (binding != NULL && failure != RPC_S_OK && status == RPC_S_OK) {
         /* A bind can complete successfully while its deadline expires. The
          * Rust caller receives a failure and therefore will not unbind it. */
         if (RpcBindingUnbind(binding) != RPC_S_OK) {
-            retain_uncertain_call();
+            abandon_uncertain_call(fail_stop);
         }
     }
     return failure != RPC_S_OK ? failure : status;
 }
 
-unsigned long bfd_rpc_bind(void *binding, unsigned long timeout_ms)
+/* Every boundary uses the same Windows SEH filter. Initiation exceptions have
+ * already cleaned up RPC state; accepted operations drain completion before we
+ * close the event. Do not catch faults around Rust server managers: SEH must
+ * never unwind through Rust frames. MIDL/RPC owns server-side NDR exceptions. */
+static RPC_STATUS bind_async(void *binding, unsigned long timeout_ms,
+    RPC_IF_HANDLE interface_spec, BOOL fail_stop)
 {
     RPC_ASYNC_STATE state = {0};
     RPC_STATUS status = initialize_async(&state);
@@ -69,18 +87,22 @@ unsigned long bfd_rpc_bind(void *binding, unsigned long timeout_ms)
         return status;
     }
     RpcTryExcept {
-        status = RpcBindingBind(&state, binding,
-            BfdClient_BfdLocal_v1_1_c_ifspec);
+        status = RpcBindingBind(&state, binding, interface_spec);
         if (status == RPC_S_OK) {
-            status = wait_async(&state, timeout_ms, binding, NULL);
+            status = wait_async(&state, timeout_ms, binding, NULL, NULL, fail_stop);
         }
     }
-    RpcExcept(RpcExceptionFilter(RpcExceptionCode())) {
+    RpcExcept(bfd_rpc_exception_filter(RpcExceptionCode())) {
         status = RpcExceptionCode();
     }
     RpcEndExcept
     CloseHandle(state.u.hEvent);
     return status;
+}
+
+unsigned long bfd_rpc_bind(void *binding, unsigned long timeout_ms)
+{
+    return bind_async(binding, timeout_ms, BfdClient_BfdLocal_v1_1_c_ifspec, FALSE);
 }
 
 unsigned long bfd_rpc_call_probe(void *binding, unsigned long timeout_ms)
@@ -93,9 +115,9 @@ unsigned long bfd_rpc_call_probe(void *binding, unsigned long timeout_ms)
     }
     RpcTryExcept {
         BfdClient_Probe(&state, binding);
-        status = wait_async(&state, timeout_ms, NULL, &reply);
+        status = wait_async(&state, timeout_ms, NULL, &reply, NULL, FALSE);
     }
-    RpcExcept(RpcExceptionFilter(RpcExceptionCode())) {
+    RpcExcept(bfd_rpc_exception_filter(RpcExceptionCode())) {
         status = RpcExceptionCode();
     }
     RpcEndExcept
@@ -114,12 +136,42 @@ unsigned long bfd_rpc_call_status(void *binding, unsigned long timeout_ms,
     RPC_ASYNC_STATE state = {0};
     unsigned long reply = RPC_S_CALL_FAILED;
     RPC_STATUS status = initialize_async(&state);
-    if (status != RPC_S_OK) { return status; }
+    if (status != RPC_S_OK) {
+        return status;
+    }
     RpcTryExcept {
         BfdClient_GetSessionStatusV1(&state, binding, output);
-        status = wait_async(&state, timeout_ms, NULL, &reply);
+        status = wait_async(&state, timeout_ms, NULL, &reply, NULL, FALSE);
     }
-    RpcExcept(RpcExceptionFilter(RpcExceptionCode())) {
+    RpcExcept(bfd_rpc_exception_filter(RpcExceptionCode())) {
+        status = RpcExceptionCode();
+    }
+    RpcEndExcept
+    CloseHandle(state.u.hEvent);
+    return status == RPC_S_OK ? reply : status;
+}
+
+/* BGP's worker is joined during BFD shutdown. Uncertain ownership fails the
+ * process closed rather than freeing pending storage or hanging that join. */
+unsigned long bgp_rpc_bind(void *binding, unsigned long timeout_ms)
+{
+    return bind_async(binding, timeout_ms, BgpClient_BgpControl_v1_0_c_ifspec, TRUE);
+}
+
+unsigned long bgp_rpc_call(void *binding, unsigned long timeout_ms,
+    HANDLE cancel, unsigned long operation, BGP_CONTROL_RESULT *output)
+{
+    RPC_ASYNC_STATE state = {0};
+    unsigned long reply = RPC_S_CALL_FAILED;
+    RPC_STATUS status = initialize_async(&state);
+    if (status != RPC_S_OK) {
+        return status;
+    }
+    RpcTryExcept {
+        BgpClient_Control(&state, binding, operation, output);
+        status = wait_async(&state, timeout_ms, NULL, &reply, cancel, TRUE);
+    }
+    RpcExcept(bfd_rpc_exception_filter(RpcExceptionCode())) {
         status = RpcExceptionCode();
     }
     RpcEndExcept

@@ -128,15 +128,17 @@ function Assert-BrokerRejectsUnrelatedClient {
     # The runner is an administrator, but lacks the BFD service SID. It must not
     # gain BGP control through a shared account or administrator group membership.
     Assert-Installed ((Get-Service BfdBgpBroker).Status -eq 'Running') 'Broker is not running.'
-    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'BfdWinService.Bgp.v1', [IO.Pipes.PipeDirection]::InOut,
-        [IO.Pipes.PipeOptions]::Asynchronous, [Security.Principal.TokenImpersonationLevel]::Identification)
+    $env:BFD_TEST_INSTALLED_BGP_RPC = '1'
     try {
-        $denied = $false
-        try { $pipe.Connect(1000) }
-        catch [UnauthorizedAccessException] { $denied = $true }
-        Assert-Installed $denied 'An unrelated process could connect to the privileged BGP pipe.'
+        Push-Location (Split-Path $PSScriptRoot -Parent)
+        try {
+            cargo test-release --lib bgp::ipc::tests::installed_broker_rejects_unrelated_rpc_caller -- --ignored --exact
+            Assert-Installed ($LASTEXITCODE -eq 0) 'An unrelated RPC caller was not rejected with access denied.'
+        }
+        finally { Pop-Location }
     }
-    finally { $pipe.Dispose() }
+    finally { Remove-Item Env:BFD_TEST_INSTALLED_BGP_RPC }
+
 }
 
 function Get-BfdEvents {

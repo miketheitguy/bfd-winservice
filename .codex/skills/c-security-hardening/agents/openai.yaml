@@ -1,0 +1,4 @@
+interface:
+  display_name: "Native C Security Hardening"
+  short_description: "MSVC C, RPC SEH, ownership and compiler flags"
+  default_prompt: "Use $c-security-hardening to review and enforce the security controls relevant to this task."

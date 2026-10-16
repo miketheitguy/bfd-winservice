@@ -204,11 +204,22 @@ The overflow setting checks ordinary integer arithmetic; intentional
 ### Compiler flags and lint policy
 
 The build compiles service logic with `rustc`, generates robust x64 RPC stubs
-with MIDL, and compiles those stubs plus `rpc/client.c`, `rpc/server.c`, and
-`rpc/allocator.c` with MSVC `cl.exe`. The native bridge contains Windows RPC
-exceptions before returning to Rust. [The native build](rpc/build.rs) uses
-`/MD`, `/GS`, `/guard:cf`, `/guard:ehcont`, `/sdl`, and `/W4`; `lib.exe` packages
+with MIDL, and compiles those stubs plus `rpc/client.c`, `rpc/server.c`,
+`rpc/bgp_server.c`, and `rpc/allocator.c` with MSVC `cl.exe`. The native bridge
+contains Windows RPC exceptions before returning to Rust. [The native build](rpc/build.rs) uses
+`/MD`, `/GS`, `/guard:cf`, `/guard:ehcont`, `/sdl`, `/W4`, and `/WX`. Handwritten
+C also runs MSVC `/analyze`; compiler and analysis warnings fail the build.
+Generated MIDL stubs retain `/W4 /WX` and robust NDR validation. `lib.exe` packages
 the objects, and MSVC links them into the executables.
+
+All maintained native sources and generated stubs are C. The build explicitly
+passes `/TC` and removes `CL` and `_CL_` from the compiler environment so ambient
+options cannot change the language or override these protections. `/EHsc` is a
+C++ exception-unwinding option; C SEH uses `__try`/`__except` through the RPC
+macros without it. Any future C++ translation unit must use a separate
+`/TP /EHsc` policy and contain C++ exceptions before returning through Rust FFI.
+Do not enable `/EHa` to recover from asynchronous native faults. See Microsoft's
+[exception-handling models](https://learn.microsoft.com/en-us/cpp/build/reference/eh-exception-handling-model?view=msvc-170).
 
 The following table distinguishes Rust settings from native C settings:
 
@@ -218,7 +229,7 @@ The following table distinguishes Rust settings from native C settings:
 | `/guard:cf` | Native C and Rust both receive CFG instrumentation; the linker uses `/GUARD:CF`. |
 | `/guard:ehcont` | Native C uses `/guard:ehcont`; Rust uses `-Z ehcont-guard=yes`; the linker uses `/GUARD:EHCONT`. |
 | `/sdl` | Enabled for native C. Rust uses ownership and initialization checks, restricted unsafe boundaries, stack protection, and strict Clippy; these checks aren't identical to MSVC SDL analysis. |
-| `/analyze` | The native build does not enable MSVC static analysis. Use Clippy and Miri for the applicable Rust checks. |
+| `/analyze` | Enabled for handwritten C, including the bridge, allocators, and native SEH tests, with analysis of external headers disabled. Generated MIDL translation units use `/W4 /WX` without static analysis. |
 | `/ZH:SHA_256` | Rust uses SHA-256 source checksums. The native build does not enable this option. `/ZH:SHA_SHA256` isn't a valid MSVC spelling. |
 | `/Zi` | Rust emits full debug information in development and ASan builds. Native C does not receive `/Zi`; release builds disable Rust symbols and linker PDB output. |
 
@@ -227,10 +238,50 @@ See Microsoft's
 [`/analyze` reference](https://learn.microsoft.com/en-us/cpp/build/reference/analyze-code-analysis?view=msvc-170),
 and [source-checksum options](https://learn.microsoft.com/en-us/cpp/build/reference/zh?view=msvc-170).
 
+The FFI contract forbids unwinding across the Rust/native boundary in either
+direction. A future C++ dependency must sit behind an `extern "C"` wrapper that
+catches every C++ exception on the C++ side and returns a fixed integer error
+code. Mark that wrapper `noexcept` as an additional safeguard; `noexcept` or
+`/EHsc` alone does not perform the required exception-to-error conversion.
+Do not use the RPC SEH filter or Rust `catch_unwind` to translate C++ exceptions.
+
+Rust callbacks use the non-unwinding `extern "C"` or `extern "system"` ABI, never
+`C-unwind` or `system-unwind`. Production uses `panic = "abort"`; a panic fails
+the process closed. Development/test callbacks also abort if a panic attempts
+to leave a non-unwinding ABI function. Any future recoverable panic handling
+must catch the panic entirely inside Rust before returning an error status;
+`catch_unwind` cannot catch a panic compiled with `panic = "abort"`. Native code
+must never attempt to catch a Rust panic. See [Rust's FFI unwinding rules](https://doc.rust-lang.org/nomicon/ffi.html#ffi-and-unwinding).
+
+The maintained C client boundaries share `rpc/exception_policy.h`. Each uses
+`RpcTryExcept` with Microsoft's `RpcExceptionFilter`, which returns ordinary
+errors for nonfatal exceptions and lets its documented fatal fault classes
+continue searching. There is no catch-all recovery or attempt to resume after
+memory corruption. C owns the SEH boundary; do not add an exception handler
+around a Rust server manager. Generated NDR stubs and the RPC runtime handle
+server marshaling. See [Microsoft's RPC exception guidance](https://learn.microsoft.com/en-us/windows/win32/rpc/exception-handling).
+
+An asynchronous initiation exception already cleans up RPC runtime state. After
+an accepted call, cancellation must wait for completion notification and finalize
+the call before event or output storage is released. Bind completion uses
+`RpcAsyncGetCallStatus`; procedure completion uses `RpcAsyncCompleteCall`.
+Preserve that distinction and the existing ownership-retention/fail-stop policy.
+See [asynchronous RPC cleanup](https://learn.microsoft.com/en-us/windows/win32/rpc/error-handling)
+and [binding completion](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
+
+`rpc/tests/seh.c` raises synthetic recoverable exceptions entirely inside C and
+checks the shared fatal-fault filter through the Rust test harness. Its separate
+static-library object is linked only when those test symbols are referenced;
+production entry points do not reference it. Run these checks with:
+
+```powershell
+cargo test --locked --lib local_rpc::tests::seh
+```
+
 Cargo denies warnings, `unsafe_code`, `unsafe_op_in_unsafe_fn`,
 `clippy::undocumented_unsafe_blocks`, and `clippy::unwrap_used`. Packet,
 session, and stateless-reflector modules also forbid unsafe code. Windows FFI
-modules, including registry, ETW, Winsock, service identity, local RPC, BGP pipe,
+modules, including registry, ETW, Winsock, service identity, local RPC, BGP control,
 COM, and native MI code, explicitly allow the unsafe code required to call
 Windows APIs; the UTC-clock function has its own narrow exception.
 A crate-wide `unsafe_code = "forbid"` would reject those required FFI calls.
@@ -370,7 +421,12 @@ observers remain available to library users and UDP integration tests.
 `src/local_rpc.rs` hosts the private BFD interface. Its `GetSessionStatusV1`
 operation copies one published snapshot on an RPC worker. The broker queries it
 from one supervised worker inside its existing process; it launches no helper.
-Keep this path separate from the BGP control pipe and COM/MI provider worker.
+Keep this path separate from the BGP control RPC interface and COM/MI provider worker. The
+BGP interface in `src/bgp/ipc.rs` shares the probe's binding, registration, and
+Authz helpers, with server/caller identities reversed. Preserve its additional
+restricting-SID check for restricted BFD callers. Its bounded queue sends work
+to the serialized provider worker; RPC callbacks never execute MI operations.
+The contracts are `rpc/bfd_local.idl` and `rpc/bgp_control.idl`.
 
 Preserve the conditional server identity policy, exact caller account and
 service SID checks, Identify credentials, packet privacy, and management denial.
@@ -432,8 +488,11 @@ initialization. If you installed draw.io elsewhere, substitute its actual path.
 Open all three images and check text, clipping, arrow direction, process
 boundaries, and identity labels. Keep the RPC worker inside the broker
 process. Show the snapshot and typed status path, and preserve the
-existing BGP pipe and COM/MI provider path. Ensure every diagram has a matching
-text explanation and useful alt text in the consuming Markdown page.
+BGP control RPC interface and COM/MI provider path. Label both service RPC
+paths `ncalrpc` and use single-headed arrows for call initiation: broker to BFD for Probe/status,
+BFD to broker for BGP control. Replies return on the existing calls; neither
+binding permits server-initiated RPC callbacks. Ensure every diagram has a
+matching text explanation and useful alt text in the consuming Markdown page.
 
 ## Prepare installation files
 
@@ -705,7 +764,7 @@ Confirm that the commands complete without errors. The documentation check also 
 
 Configuration validation and protocol modules are portable. Registry loading, User Datagram Protocol (UDP) transport, ETW, native Management Infrastructure (MI), and Windows Service Control Manager (SCM) integration require Windows. IPv4 time-to-live (TTL) metadata requires `IP_RECVTTL` support.
 
-Native tests use temporary `HKEY_CURRENT_USER` (HKCU) registry keys, named pipes,
+Native tests use temporary `HKEY_CURRENT_USER` (HKCU) registry keys, private local RPC endpoints,
 local MI fixtures, and loopback UDP sockets. They do not change installed service
 settings or Border Gateway Protocol (BGP) peers. The read-only Common Information
 Model (CIM) schema test requires namespace access and is opt-in. Run it separately:

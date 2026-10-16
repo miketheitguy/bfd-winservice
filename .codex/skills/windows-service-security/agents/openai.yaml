@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows Service Security"
+  short_description: "Service identities, privileges, ACLs and COM/MI"
+  default_prompt: "Use $windows-service-security to review and enforce the security controls relevant to this task."

@@ -28,10 +28,6 @@ use windows_service::{
 const STOP_BUDGET: Duration = Duration::from_secs(60);
 /// Final records are written before SERVICE_STOPPED ends the process lifetime.
 const LOG_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
-/// Another process may hold the pipe name; retry while reporting the conflict.
-const LISTENER_RETRY: Duration = Duration::from_secs(1);
-const SQUAT_REPORT_INTERVAL: Duration = Duration::from_secs(60);
-
 define_windows_service!(broker_entry, entry);
 pub(super) fn run() -> io::Result<()> {
     service_dispatcher::start(ipc::BROKER_NAME, broker_entry).map_err(io::Error::other)
@@ -134,37 +130,54 @@ fn start() -> io::Result<()> {
         // registers no COM factory, so interactive users get no COM access.
         let com = ComHost::initialize()?;
         let target = Target::load()?;
-        reporter
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .publish(ServiceState::Running, false)?;
-        // BFD depends on this service. Query it in the background only after
-        // Running, so authentication cannot create a circular SCM startup wait.
-        let _local_rpc = crate::local_rpc::monitor::Monitor::start(log.clone())?;
         let (sender, receiver) = mpsc::channel();
         let watch = ProviderWatch::default();
+        let (ready, initialized) = mpsc::sync_channel(1);
         thread::scope(|scope| -> io::Result<()> {
             let mut supervisor_log = log.clone();
             let worker_log = &mut log;
             let worker = scope.spawn(|| {
-                let result = acquire_listener(&stop, worker_log).and_then(|listener| {
-                    worker_log
-                        .broker_message("ready; service identity and pipe ACL verified", false);
-                    listener.map_or(Ok(()), |listener| {
-                        serve(&listener, target.as_ref(), &stop, worker_log, &watch)
-                    })
+                let result = ipc::Listener::new(stop.clone()).and_then(|listener| {
+                    let _ = ready.send(());
+                    worker_log.broker_message(
+                        "ready; service identity and RPC authorization configured",
+                        false,
+                    );
+                    serve(&listener, target.as_ref(), &stop, worker_log, &watch)
                 });
+                drop(ready);
                 let _ = sender.send(());
                 result
             });
-            let mut stop_deadline = None;
+            // Register and secure the control interface before SCM releases BFD's
+            // dependency. Registration failure leaves the service out of Running.
             let mut status_failure = None;
+            let _local_rpc = if initialized.recv().is_ok() {
+                let startup = reporter
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .publish(ServiceState::Running, false)
+                    .and_then(|()| {
+                        crate::local_rpc::monitor::Monitor::start(supervisor_log.clone())
+                    });
+                match startup {
+                    Ok(monitor) => Some(monitor),
+                    Err(error) => {
+                        status_failure = Some(error);
+                        let _ = stop.signal();
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let mut stop_deadline = None;
             while receiver.recv_timeout(Duration::from_secs(1)).is_err() && !worker.is_finished() {
                 let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
                 if let Some(method) = watch.expired(Instant::now()) {
                     abandon_provider(&mut reporter, method);
                 }
-                if reporter.state == ServiceState::StopPending {
+                if stop.is_requested() {
                     let deadline =
                         *stop_deadline.get_or_insert_with(|| Instant::now() + STOP_BUDGET);
                     if Instant::now() >= deadline {
@@ -202,37 +215,6 @@ fn start() -> io::Result<()> {
         .unwrap_or_else(|error| error.into_inner())
         .publish(ServiceState::Stopped, result.is_err())?;
     result
-}
-
-/// Creates the pipe server, retrying while another process holds its name. The
-/// broker stays Running so plain BFD sessions, which never contact it, can start.
-/// Returns None if Stop arrives first.
-fn acquire_listener(stop: &StopSignal, log: &mut Logger) -> io::Result<Option<ipc::Listener>> {
-    let mut last_report = None;
-    loop {
-        match ipc::Listener::new() {
-            Ok(listener) => return Ok(Some(listener)),
-            Err(error) if ipc::is_name_in_use(&error) => {
-                let now = Instant::now();
-                if last_report
-                    .is_none_or(|last: Instant| now.duration_since(last) >= SQUAT_REPORT_INTERVAL)
-                {
-                    last_report = Some(now);
-                    log.broker_message(
-                        format_args!(
-                            "another process holds the BGP pipe name; BGP control waits for it to close: {error}"
-                        ),
-                        true,
-                    );
-                }
-                stop.wait(LISTENER_RETRY)?;
-                if stop.is_requested() {
-                    return Ok(None);
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
 }
 
 /// Ends the process when a provider call keeps cleanup running past the stop

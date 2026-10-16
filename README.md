@@ -7,7 +7,7 @@ service. Optional Border Gateway Protocol (BGP) control starts and stops a
 configured Windows BGP peer as session state changes.
 
 The BFD service runs as LocalService with a restricted service SID. A separate
-LocalSystem broker manages BGP through a local pipe restricted to the BFD service
+LocalSystem broker manages BGP through authenticated local RPC restricted to the BFD service
 identity. The broker also
 queries BFD session status through a private Windows local RPC interface with
 mutual service authentication. Queries read published snapshots on RPC workers,

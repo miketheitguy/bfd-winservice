@@ -133,7 +133,7 @@ peer. A peer that BFD never stopped, for example one an operator stopped, is lef
 unchanged. A fatal receive/wait error that returns through engine cleanup also
 sets local AdminDown and attempts this release, with no negotiated announcement
 grace. A crash or abrupt termination skips that cleanup. The broker never
-changes the peer merely because the pipe disconnects or because the broker stops.
+changes the peer merely because the RPC caller disconnects or because the broker stops.
 
 ## Worker retries and broker recovery
 
@@ -144,16 +144,23 @@ worker reconciles the latest requested action. A normal broker Stop does not tri
 The broker supervises provider requests while Running as well as during Stop.
 If a request, including schema lookup and cleanup, remains active for 20 seconds,
 the watchdog exits the broker process and SCM recovery restarts it. The check
-runs once per second; idle pipe waits do not count as stalled provider work.
+runs once per second; idle RPC waits do not count as stalled provider work.
 If Stop was requested, the broker reports Stopped before exiting, preventing an
-automatic restart. A client that disconnects before pipe acceptance is discarded
-without stopping the broker.
-The BFD worker checks the connection once per idle second and reconnects after
-broker failure, reapplying the latest requested action. It does not invent an
-action before the session first establishes. The broker uses one client
-connection at a time. Its response I/O has a 30-second timeout and observes SCM
-Stop requests; pending native I/O is cancelled and drained before releasing its
-buffers. MI calls remain synchronous and can delay broker cleanup.
+automatic restart.
+
+The BFD worker probes the broker once per idle second and compares the returned
+instance nonce to detect a restart. Recovery reapplies the latest
+requested action without inventing an action before the session establishes.
+
+BGP control uses authenticated `ncalrpc` with a two-second bind deadline and a
+30-second total call budget. A cancellation signal interrupts an in-flight call;
+the native bridge retains its state, event, binding, and reply storage until
+completion. If ownership cannot be established, BFD fails closed instead of
+releasing pending storage. The broker admits one control manager and at most
+one queued provider request. Cancelled or expired queued requests are discarded.
+An MI operation already running can still finish after its RPC caller cancels;
+cancellation does not roll it back. MI calls remain synchronous and can delay
+broker cleanup.
 
 The BFD worker shares the engine's background log writer. The broker has its own
 ETW/text diagnostic writer and does not open the BFD file log. Slow log output
@@ -185,7 +192,7 @@ a warning because the peer might classify the administrative stop as a failure.
 **LocalSystem** and hosts the native Management Infrastructure (MI) client.
 BFD uses restricted service SID type `3`; the broker keeps unrestricted type `1`.
 The BFD service SID is an enabled normal group and a restricting SID, so the
-pipe's explicit service-SID data-write grant supports its write-restricted token.
+RPC interface's explicit service-SID grant supports its restricted identity.
 The broker's private COM initialization supports native MI and grants local
 execute rights only to SYSTEM, with packet integrity. It sets strong unmarshaling
 and disables COM exception handling before opening MI. Outgoing proxies
@@ -195,36 +202,39 @@ RRAS management requires administrative access; the broker retains that access
 while the packet-processing service does not.
 See [Microsoft's router management requirements](https://learn.microsoft.com/en-us/windows/win32/rras/understanding-router-management-functions).
 
-The local pipe `\\.\pipe\BfdWinService.Bgp.v1` accepts only the enabled
-`NT SERVICE\BfdWinService` SID. For each request, the broker checks LocalService
-in `TokenUser`, the BFD SID as an enabled, non-deny-only entry in `TokenGroups`,
-and its presence in a restricted client's restricting list. It uses an
-identification-only token, then reverts
-before calling MI. Unrelated LocalService processes and administrator clients
-are denied. Remote clients are rejected. The client checks the pipe server's
-Windows-reported process ID against the broker's running SCM process ID; the
-broker checks its own LocalSystem `TokenUser` account and enabled service group
-at startup. Native fixtures cover restricted-token authorization. The MSI
-installation harness checks service identities, denies an unrelated pipe client,
-and tests broker recovery; verify the configured BGP control path on your target
-server too. The harness doesn't mutate a live RRAS peer.
+The `BgpControl` version `1.0` interface at `BfdWinService.Bgp.v1` uses
+`ncalrpc`. BFD initiates every call on this control interface; the broker
+returns control results on those calls without RPC callbacks. The broker's
+separate `Probe`/status interface calls run in the other direction, to BFD.
 
-The MSI separately protects Windows service control: authenticated users can
-query either service's status, while SYSTEM and elevated Administrators can
-Start/Stop or reconfigure the services. This SCM permission does not authorize a
-caller to submit BGP pipe requests. Event/file log reads remain available to
-non-administrators under the existing log permissions.
+The control interface shares the telemetry probe's security implementation:
+WINNT authentication, packet privacy, V5 server identity descriptors, static
+identification credentials, and effective-only privileges. BFD pins LocalSystem
+and the broker service SID together. The broker's protected interface DACL
+admits the BFD service SID, and every call requires the exact LocalService user
+and enabled, non-deny-only BFD service group. A restricted caller must also carry
+the BFD SID in its restricting list. Authorization uses Authz without
+impersonating the caller. Remote, anonymous, unrelated LocalService, and
+ordinary administrator callers are rejected. Runtime management is denied.
+See [RPC authentication](rpc-authentication.md#bgp-control-over-local-rpc).
 
-Only Get, Start, and Stop operations are accepted, in fixed-size messages with
-strictly increasing connection sequence numbers. Requests contain no peer name,
-routing domain, path, command, or registry key. The broker loads its one allowed
-target from the administrator-controlled Parameters key at startup. Pipe clients
-cannot create another server instance or alter the pipe ACL. If another process
-holds the pipe name, the broker stays Running, logs Error event 301 at most once a
-minute, and retries each second; BFD with `BgpPeerName` rejects the impostor
-through the process ID check and fails startup until the name is released. BFD
-without `BgpPeerName` doesn't open the BGP control pipe. The independent
-broker-to-BFD RPC status monitor still runs.
+The MSI separately protects service control: authenticated users can query
+service status, while SYSTEM and elevated Administrators can Start/Stop or
+reconfigure services. SCM permissions do not authorize BGP RPC requests.
+Event/file log reads remain available under the existing log permissions.
+
+The MIDL contract accepts a liveness probe and only Get, Start, and Stop provider
+operations. Requests contain no peer name, routing domain, path, command, or
+registry key. The broker loads its allowed target from protected Parameters at
+startup. The client authenticates the server account and service SID through
+Windows RPC rather than a pipe PID/SCM comparison. A fixed endpoint collision
+fails broker startup; there is no fallback. Without `BgpPeerName`, BFD makes no
+BGP control probe. The independent broker-to-BFD telemetry monitor still runs.
+
+Native fixtures cover restricted-token authorization, server identity,
+cancellation, and serialized dispatch. The MSI harness tests rejection of an
+unrelated RPC caller and broker recovery. It does not mutate a live RRAS peer;
+verify configured BGP behavior on your target server.
 
 <details>
 <summary>Native provider details</summary>

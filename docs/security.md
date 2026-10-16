@@ -3,8 +3,8 @@
 Windows administrators and developers: this is your map of the security lineup,
 from incoming packets to privileged BGP management. The MSI-installed services
 keep identity checks, permissions, and native resource lifetimes explicit. The
-least-privilege setup is dialed in, and the details have receipts. For socket
-endpoints and BGP actions, see
+least-privilege setup is dialed in, and the details have receipts. Pretty rad.
+For socket endpoints and BGP actions, see
 [Service communication](service-communication.md).
 
 The network-facing BFD process runs as LocalService and hosts a private local
@@ -12,7 +12,7 @@ RPC interface for the LocalSystem BGP broker. The interface authenticates both
 services and exposes a connection probe and read-only session telemetry. The
 broker performs privileged BGP management for one configured target through its
 COM/MI provider integration. Windows access-control lists (ACLs) govern service control,
-configuration, logs, and the existing BGP control pipe; optional BFD wire
+configuration, logs, and both private local RPC interfaces; optional BFD wire
 authentication checks remote packets. These checks protect different boundaries.
 
 No cap: the confidence comes from token checks, ACLs, packet validation, and
@@ -48,7 +48,7 @@ These controls and validation records support the stated security boundaries:
 | --- | --- | --- |
 | Least privilege and distinct service identities | LocalService BFD retains two privileges; exact account and enabled service SID checks distinguish services sharing an account. | [Token fixtures](../src/service_identity/tests.rs), [privilege removal](../src/runtime/privileges.rs), and the [recorded reliability/security review](../CODE_REVIEW.md#reliability-and-security-review--2026-10-09). |
 | Authenticate, then authorize the specific service | The RPC client pins BFD's account and service SID; BFD checks the interface ACL, call attributes, SYSTEM account, and enabled broker SID. Management operations are denied. | [Native RPC rejection tests](../src/local_rpc/tests.rs), [replacement-server fixture](../src/local_rpc/tests/restricted.rs), and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
-| Keep privileged actions narrow | The BGP broker authenticates BFD before decoding requests and accepts fixed operations for its protected configured target. | [Broker authorization tests](../src/bgp_broker.rs), [frame and identity checks](../src/bgp/ipc.rs), and the [session-status implementation record](../CODE_REVIEW.md#rpc-session-status-implementation--2026-10-15). |
+| Keep privileged actions narrow | The BGP broker authenticates BFD before decoding requests and accepts fixed operations for its protected configured target. | [Broker authorization tests](../src/bgp/ipc/tests.rs), [RPC dispatch and identity checks](../src/bgp/ipc.rs), and the [session-status implementation record](../CODE_REVIEW.md#rpc-session-status-implementation--2026-10-15). |
 | Validate remote input before changing session state | Protocol, path, and configured authentication checks reject invalid packets without refreshing accepted peer state. Wire authentication remains optional. | [RFC boundary tests](../tests/rfc5880.rs), [native UDP tests](../tests/windows_udp.rs), and the [recorded RFC validation](../CODE_REVIEW.md#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09). |
 | Validate native data and preserve ownership through cancellation | Robust MIDL stubs and checked Rust conversion bound status data; pending calls retain their buffers and handles until completion. | [Layout and conversion tests](../src/local_rpc/status/tests.rs), [RPC rejection and cancellation tests](../src/local_rpc/tests.rs), [native completion code](../rpc/client.c), and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
 | Keep telemetry failure separate from control | Invalid replies clear the cache and retry; a stuck worker quarantines telemetry without issuing BGP actions or accumulating replacement workers. | [Supervisor regressions](../src/local_rpc/monitor/tests.rs) and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
@@ -62,14 +62,13 @@ every deployment. The MSI harness supplies a separate check of actual SCM-issued
 identities and was not run locally for that review. Workflow configuration
 describes the release gates; it does not by itself establish a successful run.
 Use the [validation guide](../RUST_SKILLS_VALIDATION.md#read-the-validation-receipts)
-to keep each result tied to its revision. No runtime tests are rerun by this
-documentation update.
+to keep each result tied to its revision.
 
 ## Identities and privileges
 
 Least privilege is the main character in this lineup, brah. Windows account and
 service-SID checks keep each process on the permissions its role needs. BFD's
-short privilege list is a W.
+short privilege list is a W: less privilege, more chill.
 
 A security identifier (SID) identifies a Windows account or group. The installer
 sets BFD to `SERVICE_SID_TYPE_RESTRICTED` (`3`) and keeps the broker at
@@ -80,8 +79,8 @@ its own enabled service group. See Microsoft's
 [service SID types](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_sid_info).
 
 The BFD service token is write-restricted. Write access must pass the ordinary
-token check and the restricting-SID check. The application's pipe and log-folder
-ACLs grant the BFD service SID the required write rights, so shared LocalService
+token check and the restricting-SID check. The RPC interface and log-folder
+ACLs explicitly grant the BFD service SID access, so shared LocalService
 account permissions alone cannot authorize those writes. Other grants, such as
 Everyone write access, can still satisfy the restricting check; this is not a
 complete sandbox. Read access keeps its ordinary ACL checks. See Microsoft's
@@ -99,12 +98,12 @@ The installed services and local callers have these permissions:
 
 | Identity | Permissions and limits |
 | --- | --- |
-| `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the existing broker pipe. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`; startup removes unused privileges before accepting traffic. |
-| `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the existing BGP control pipe, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group. |
+| `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the broker control RPC interface. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`; startup removes unused privileges before accepting traffic. |
+| `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the BGP control RPC interface, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group. |
 | Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, modify installed files and Parameters, and manage permissions. Account or Administrator membership alone does not satisfy the private channels' service-specific identity checks. |
 | Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot use the private RPC interface, start, stop, reconfigure, or send custom controls to either installed service. |
 | Other LocalService processes | Share BFD's account but not its service SID. Cannot authenticate as BFD to the broker or satisfy the broker identity required by BFD's local RPC interface. |
-| Remote network peers | Can send UDP traffic through the configured firewall rules. Packets must pass protocol/path validation and any configured BFD authentication before affecting the session. The BGP pipe rejects remote clients, and `ncalrpc` is local-only. |
+| Remote network peers | Can send UDP traffic through the configured firewall rules. Packets must pass protocol/path validation and any configured BFD authentication before affecting the session. Both private RPC interfaces require local `ncalrpc` calls. |
 
 The MSI sets BFD's SCM `RequiredPrivileges` list to
 `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege` in a native commit action
@@ -117,7 +116,7 @@ configuration, creating sockets, or registering local RPC. It retains
 only `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege` for directory
 traversal and global object creation. Local RPC authentication keeps that reduced
 service identity and does not attach a caller token to a thread. Access to the
-broker comes from its pipe ACL and service identity checks.
+broker comes from its RPC interface ACL and service identity checks.
 
 The privilege allowlist applies to the installed BFD service. The LocalSystem
 BGP broker keeps its separate management identity and privilege requirements.
@@ -142,11 +141,21 @@ network-facing packet engine and privileged provider work on clear, reviewable
 paths. The installed services use two private service channels and a provider
 path:
 
-| Direction | Channel | Purpose |
+| Call initiator to receiver | Channel | Purpose |
 | --- | --- | --- |
-| Broker RPC worker to BFD | Windows local RPC (`ncalrpc`) | Mutually authenticated probe and bounded read-only session-status response. |
-| BFD to BGP broker | `\\.\pipe\BfdWinService.Bgp.v1` | Fixed-target BGP Get/Start/Stop requests under the existing service-token policy. |
+| Broker RPC worker to BFD | Windows local RPC (`ncalrpc`), `BfdWinService.Local.v1` | Mutually authenticated probe and bounded read-only session-status response. |
+| BFD to BGP broker | Windows local RPC (`ncalrpc`), `BfdWinService.Bgp.v1` | Authenticated fixed-target BGP Get/Start/Stop requests. |
 | BGP broker to Windows provider | Existing native MI with COM security | Local `PS_BgpPeer` provider operations under the broker's LocalSystem identity. |
+
+Both private service channels use authenticated `ncalrpc` with packet privacy;
+`RPC_PROTSEQ_LRPC` is the Windows runtime identifier used by the client binding
+and per-call transport check. It does not select a different transport.
+The broker alone initiates `Probe` and session-status calls to BFD. BFD alone
+initiates BGP control calls to the broker. Each interface has one call-initiation
+direction; replies return on that call. Neither interface defines RPC callbacks,
+and the fast bindings reject server-initiated callbacks. Local security callbacks
+perform authorization inside the receiving process and do not call back to the
+client. See [fast-binding restrictions](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
 
 BFD receives untrusted UDP packets as LocalService. Its packet worker, state,
 and logs retain that service identity. The broker executes separately as
@@ -181,18 +190,18 @@ do not return a live BFD session snapshot.
 
 Authentication establishes who sent a packet or request. Authorization determines
 which actions that identity can perform. Windows uses account/service tokens for
-local access; BFD wire authentication uses an optional shared secret. Neither
-the pipe sequence number nor UDP source/TTL checks replace an identity check.
+local access; BFD wire authentication uses an optional shared secret. UDP source/TTL checks do not replace an identity check.
 
-Both checks belong in the lineup: establish the caller, then check what that
-caller can do. The implementation follows that pattern at each private boundary.
+Stay frosty, crew. Both checks belong in the lineup: establish the caller, then
+check what that caller can do. The implementation follows that pattern at each
+private boundary.
 
 The following sections trace each boundary:
 
 | Boundary | Section |
 | --- | --- |
 | Remote UDP peer to BFD | [A: Remote BFD and S-BFD packets](#a-remote-bfd-and-s-bfd-packets) |
-| BFD verifies the BGP pipe server | [B: BFD authenticates the broker](#b-bfd-authenticates-the-broker) |
+| BFD verifies the BGP control RPC interface server | [B: BFD authenticates the broker](#b-bfd-authenticates-the-broker) |
 | Broker verifies and scopes BFD control requests | [C: Broker authenticates and authorizes BFD requests](#c-broker-authenticates-and-authorizes-bfd-requests) |
 | Broker invokes the Windows BGP provider | [D: Broker accesses the local Windows provider](#d-broker-accesses-the-local-windows-provider) |
 | Local callers inspect or administer services | [E: Service control, configuration, and diagnostic access](#e-service-control-configuration-and-diagnostic-access) |
@@ -250,64 +259,59 @@ and an example.
 
 ### B: BFD authenticates the broker
 
-The broker identity check brings receipts from Windows itself. Matching the pipe
-server PID to SCM keeps the client from trusting a process on name alone.
+BFD calls the broker's `BgpControl` version `1.0` interface at the fixed
+`ncalrpc` endpoint `BfdWinService.Bgp.v1`. It uses the same binding helper as the
+telemetry probe, with the server identities reversed: LocalSystem and the
+`NT SERVICE\BfdBgpBroker` SID must both satisfy the V5 server security descriptor.
+`QOS.Sid` also pins LocalSystem. An endpoint name alone never establishes identity.
 
-Before exchanging messages on `\\.\pipe\BfdWinService.Bgp.v1`, the BFD client calls
-`GetNamedPipeServerProcessId`. It queries the Service Control Manager (SCM) for
-the running `BfdBgpBroker` service and requires the Windows-reported pipe server
-PID to match the SCM process ID. It does not trust a PID supplied in a message.
-This rejects a process that claims the pipe name without being the running broker.
-
-The client requests individual data read/write rights, rather than generic write
-rights that also permit pipe-instance creation. It opens the pipe with
-`SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`, allowing identity inspection.
-See Microsoft's [named-pipe access rights](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights).
+Both clients request WINNT authentication with packet privacy, mutual
+authentication, static identity tracking, identification level, and effective-only
+credentials. Each binding is unique and uses `RPC_BHO_DONTLINGER`. Each process
+keeps its expected server policy fixed. See [server identity checks](rpc-authentication.md#server-identity-checks)
+for the conditional ACE and Microsoft's security references.
 
 ### C: Broker authenticates and authorizes BFD requests
 
-The privileged action boundary is dialed in: a caller needs the BFD account,
-enabled service SID, and the applicable restricting-SID checks. That is the
-service identity understood by the broker's authorization policy.
+The broker checks LocalSystem in its own `TokenUser` and its enabled,
+non-deny-only service SID before registering the interface. It secures the
+endpoint and interface before reporting Running. Registration or endpoint
+collision fails startup; there is no alternate endpoint or pipe fallback.
 
-The broker checks its own process token at startup for LocalSystem in `TokenUser`
-and an enabled, non-deny-only `NT SERVICE\BfdBgpBroker` entry in `TokenGroups`.
-It creates a single pipe instance with an explicit,
-protected ACL: the BFD service SID gets data read/write access, and the broker
-SID gets full access. The BFD client cannot create server instances or change
-the ACL. `PIPE_REJECT_REMOTE_CLIENTS` rejects remote connections;
-`FILE_FLAG_FIRST_PIPE_INSTANCE` makes startup fail if another process already
-owns the pipe name.
+The endpoint and interface use a protected DACL admitting the BFD service SID.
+The shared registration helper applies `RPC_IF_AUTOLISTEN`,
+`RPC_IF_ALLOW_LOCAL_ONLY`, `RPC_IF_ALLOW_SECURE_ONLY`, and `RPC_IF_SEC_NO_CACHE`,
+and denies runtime management operations. The callback runs for every call and
+checks native locality, `RPC_PROTSEQ_LRPC`, WINNT authentication, packet privacy,
+and a non-null session before application arguments are unmarshaled.
 
-For every request, the broker calls `ImpersonateNamedPipeClient` to obtain the
-client's identification token. It opens that token for `TOKEN_QUERY` with
-`OpenAsSelf`. It requires LocalService in `TokenUser`, an enabled, non-deny-only
-`NT SERVICE\BfdWinService` entry in `TokenGroups`, and that service SID in the
-restricting list of a restricted client token. Direct account and group queries
-need only `TOKEN_QUERY` and distinguish the logon account from group membership.
-The explicit restricting-list check also applies to write-restricted tokens;
-the native write-restricted fixture still reports account membership through
-`CheckTokenMembership`. Unrelated LocalService processes and ordinary
-administrator clients fail these checks. See Microsoft's
-[CheckTokenMembership behavior](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-checktokenmembership).
-The broker calls
-`RevertToSelf` before provider work; failed reversion aborts the process.
-The client uses static pipe security-context tracking. Each request checks the
-connection's captured identity, rather than the current identity of a process
-that might receive a duplicated pipe handle. Handles are not inheritable;
-duplicating an authorized connection transfers that connection's capability.
+The manager repeats authorization. It queries an Authz context with
+`RpcGetAuthorizationContextForClient(ImpersonateOnReturn=FALSE)`, requiring
+LocalService as the exact user and an enabled, non-deny-only BFD service group.
+For a restricted caller, `AuthzContextInfoRestrictedSids` must also contain the
+BFD service SID, including for write-restricted tokens. Unrelated LocalService
+processes, ordinary administrator clients, and tokens missing either required
+service-SID entry are rejected. Native information uses the same bounded,
+aligned, pointer-validated storage as the probe. The context is released on both
+success and failure. Neither RPC server impersonates callers or opens peer
+process tokens.
 
-Identification exposes the caller's identity for checking. It does not grant
-permission to open files, registry keys, or provider objects as that caller.
-See Microsoft's [impersonation levels](https://learn.microsoft.com/en-us/windows/win32/secauthz/impersonation-levels).
+The robust MIDL contract admits only a liveness probe and `Get`, `Start`, or
+`Stop`, with a fixed 16-byte result containing a broker-instance nonce, provider
+status, and a Boolean value. The nonce detects restarts; it is not authentication
+evidence. There is no custom byte frame or application connection sequence.
+RPC supplies authenticated message protection. Neither RPC dispatch nor a
+transport disconnect independently requests a provider mutation.
 
-After identification, the broker validates the fixed 24-byte frame, protocol
-version, operation allowlist (`Get`, `Start`, `Stop`), and next connection sequence
-number. Replies carry status/error information. This sequence check orders the
-local protocol; the Windows token and ACL establish caller identity.
+One provider request can wait in the bounded queue, and one control manager
+holds the admission permit at a time. Provider calls execute serially on the
+existing watched worker. Cancelled or expired queued requests are discarded.
+Cancellation cannot undo an operation already executing in MI; its outcome can
+be unknown to the caller. The controller reconciles its latest desired state
+rather than interpreting a transport failure as BGP state.
 
-The fixed target keeps the action scope tight, no cap. The broker independently
-reads only the BGP peer name and routing domain from
+The fixed target keeps the action scope tight: no caller-selected side quests.
+The broker independently reads only the BGP peer name and routing domain from
 protected Parameters at startup. Requests cannot specify a peer, routing domain,
 command, path, or registry key. The broker uses its own LocalSystem authority
 only for that fixed target. This is the service's BGP action policy, not an
@@ -315,15 +319,13 @@ interactive administrator credential passed through the BFD process.
 
 ### D: Broker accesses the local Windows provider
 
-Provider access stays in its own lane, dude: the broker ends pipe identification
-before native MI runs under its management identity. That explicit transition
-keeps caller inspection separate from privileged provider work.
+The broker executes provider work under its own LocalSystem identity. RPC
+authorization does not attach a caller token to the provider worker.
 
 Native Management Infrastructure (MI) calls target the local
 `root/Microsoft/Windows/RemoteAccess` namespace and `PS_BgpPeer` class. The
 destination explicitly requests `IMPERSONATE`, so the Windows provider can
-access resources under the broker's LocalSystem identity. Pipe identification
-has already ended. Windows governs provider authorization; the application
+access resources under the broker's LocalSystem identity. Windows governs provider authorization; the application
 supplies no separate provider password or remote MI destination.
 
 The broker's private Component Object Model (COM) initialization supports native
@@ -370,7 +372,7 @@ The MSI provisions protected permissions for these objects:
 
 The BFD service SID's write restriction adds a token check; it does not replace
 these object ACLs or restrict every read. The explicit service-SID grant on the
-BGP control pipe and the log-folder Modify grant support both write checks. A custom log path must grant
+BGP control RPC interface and the log-folder Modify grant support both write checks. A custom log path must grant
 the BFD service SID access to its folder, active file, and rotated file; a grant
 only to the shared LocalService account is insufficient for restricted writes.
 
@@ -603,7 +605,7 @@ The status and availability boundaries apply these additional checks:
 | --- | --- |
 | Status record | Robust fixed-size MIDL stubs and one Rust conversion use enums, `TryFrom`, `NonZero`, checked time arithmetic, and canonical optional fields. Valid shape does not prove a report is truthful. |
 | Invalid status | Discard the whole record, clear prior cached telemetry, retry with capped backoff, and rate-limit Error 301 to once per minute; provider work continues. |
-| Native boundary | MIDL, the C exception bridge, Windows APIs, and unsafe Rust wrappers must uphold their layout, bounds, and lifetime contracts. Safe Rust validation cannot repair prior native memory corruption. |
+| Native boundary | MIDL, the C exception bridge, Windows APIs, and unsafe Rust wrappers must uphold their layout, bounds, and lifetime contracts. Handwritten C passes MSVC static analysis; all native C uses `/W4 /WX`. The shared Windows RPC exception filter excludes documented fatal faults from recovery. Safe Rust validation cannot repair prior native memory corruption. |
 | Authorized malicious source | A compromised authorized BFD process can return structurally valid false telemetry or withhold replies. Authentication establishes source identity, not session truth. |
 
 The recovery path keeps its balance when telemetry gets choppy, dude. Native
@@ -626,7 +628,7 @@ four. RPC workers read snapshots without taking a lock on the packet engine.
 These bounds reduce contention but do not guarantee availability under host
 resource exhaustion or an authorized client's repeated requests. Status fetches,
 invalid replies, timeouts, and quarantine never fabricate a BFD Down state or
-issue BGP actions. The existing BGP control pipe and COM/MI provider policy remain
+issue BGP actions. The existing BGP control RPC interface and COM/MI provider policy remain
 separate.
 
 Native tests cover malformed replies, identity rejection, cancellation, and
@@ -635,6 +637,33 @@ SCM-issued identities still require the separate MSI first-start/repair check.
 For API settings and primary references, see
 [RPC authentication](rpc-authentication.md). For payload bounds and failure
 policy, see [RPC session-status query](rpc-session-status-design.md).
+
+### Native C exception policy
+
+Both RPC clients use `RpcTryExcept` with a shared wrapper around Microsoft's
+`RpcExceptionFilter`. Recoverable RPC exceptions become error codes inside C.
+Documented fatal classes, including access violations, stack overflow, and stack
+buffer overrun, continue outside that handler. The bridge never resumes execution
+after those faults or installs catch-all SEH around Rust server managers.
+The generated NDR stubs and RPC runtime own server-side marshaling exceptions.
+See [Microsoft's exception filter](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcexceptionfilter).
+
+The Rust/native FFI boundary forbids cross-language unwinding in both directions.
+The Rust callbacks use non-unwinding `extern "C"`/`extern "system"` ABIs, and
+production panics abort the process. No `C-unwind` or `system-unwind` boundary is
+used. A future C++ dependency must catch all C++ exceptions in its C++ wrapper
+and convert them to integer error statuses before returning to Rust; `/EHsc`
+and `noexcept` alone do not provide that conversion. Any recoverable Rust panic
+must be caught entirely on the Rust side. Neither the RPC SEH filter nor native
+code is a Rust panic handler. See [Rust's FFI unwinding rules](https://doc.rust-lang.org/nomicon/ffi.html#ffi-and-unwinding).
+
+Asynchronous state, events, bindings, and output storage stay live through native
+completion, including cancellation. MIDL allocation callbacks inherit the SDK's
+SAL allocation contracts. All native C compiles with `/W4 /WX`; handwritten C
+also passes MSVC `/analyze`. The [native SEH regression](../src/local_rpc/tests/seh.rs)
+raises recoverable exceptions entirely inside C and checks the fatal filter
+without raising fatal faults. Static analysis and these tests supplement native
+ownership review; Rust ASan does not instrument MSVC-built objects.
 
 ## Rust compiler and linker hardening
 
@@ -674,8 +703,8 @@ keeps host build scripts and procedural macros on default host settings.
 
 ### MSVC linker options
 
-The executable brings its mitigation receipts to the break. Rust passes these
-options through `-C link-arg=...` to the MSVC linker:
+The executable brings its mitigation receipts to the break. Cowabunga.
+Rust passes these options through `-C link-arg=...` to the MSVC linker:
 
 | Option | Security benefit and scope |
 | --- | --- |
@@ -725,19 +754,29 @@ grounded.
 [rpc/build.rs](../rpc/build.rs) runs the Windows SDK MIDL compiler with
 `/env x64 /robust /Oicf /app_config`. It generates separate client and server
 stubs; the client ACF selects asynchronous calls. MSVC `cl.exe` compiles both
-generated stubs and `rpc/client.c`, `rpc/server.c`, and `rpc/allocator.c` with
-`/MD /GS /guard:cf /guard:ehcont /sdl /W4 /D_WIN32_WINNT=0x0602`.
+generated stubs and `rpc/client.c`, `rpc/server.c`, `rpc/bgp_server.c`, and
+`rpc/allocator.c` with
+`/TC /MD /GS /guard:cf /guard:ehcont /sdl /W4 /WX /D_WIN32_WINNT=0x0602`.
 `lib.exe` combines the objects into `bfd_local_rpc.lib`, which links with
 `Rpcrt4` into the Rust executables.
 
+Every native translation unit is C, explicitly selected by `/TC`. The compiler
+process ignores ambient `CL`/`_CL_` options so they cannot override the language
+or hardening flags. `/EHsc` applies to C++ exception unwinding and is unnecessary
+for these C SEH handlers. Future C++ requires a separate `/TP /EHsc` policy and
+an exception boundary that prevents C++ unwinding through Rust. `/EHa` recovery
+is not part of this policy. See [Microsoft's exception-handling model](https://learn.microsoft.com/en-us/cpp/build/reference/eh-exception-handling-model?view=msvc-170).
+
+
 `/GS` provides native stack-buffer checks, `/guard:cf` and `/guard:ehcont`
 provide native control-flow metadata, and `/sdl` enables additional MSVC security
-checks. `/W4` selects warnings; the script does not pass `/WX`. These C compiler
-options are separate from the Rust flags. See Microsoft's
+checks. `/W4` selects warnings and `/WX` treats them as errors. Handwritten C
+also uses `/analyze /analyze:external-`, with analysis warnings treated as errors.
+Generated MIDL translation units retain compiler warnings and robust NDR checks.
+These C compiler options are separate from the Rust flags. See Microsoft's
 [MSVC security checks](https://learn.microsoft.com/en-us/cpp/build/reference/sdl-enable-additional-security-checks?view=msvc-170).
 
-The native compile step does not pass `/analyze`, `/Zi`, or an AddressSanitizer
-option. `cargo asan` instruments Rust and the rebuilt Rust standard library;
+The native compile step does not pass `/Zi` or an AddressSanitizer option. `cargo asan` instruments Rust and the rebuilt Rust standard library;
 it does not instrument these C translation units. Native stubs and wrappers
 remain outside safe Rust's guarantees.
 
@@ -755,7 +794,8 @@ alongside the shared target flags, preserving development and ASan debug output.
 
 This is where the hardening claims show their receipts. The recorded reviews
 link successful checks to their revisions, and the executable tests inspect
-what the build actually emitted. That is a solid verification habit, dude.
+what the build actually emitted. Most excellent: check the build before the
+victory lap, dude.
 
 [tests/windows_hardening.rs](../tests/windows_hardening.rs) checks both executable
 images for architecture, relocations, ASLR/NX/CFG flags, CFG tables, security-cookie
@@ -787,7 +827,7 @@ and privilege boundaries, with the implementation details behind the claims:
 | [rpc/build.rs](../rpc/build.rs) and [rpc/allocator.c](../rpc/allocator.c) | Native MIDL/MSVC build flags, static library assembly, and RPC allocation hooks |
 | [src/runtime/status.rs](../src/runtime/status.rs), [src/local_rpc/status.rs](../src/local_rpc/status.rs), and [src/runtime/state.rs](../src/runtime/state.rs) | Immutable publications and checked RPC projection; the immediate atomic state observer stays separate from detailed telemetry |
 | [src/bgp_broker/com.rs](../src/bgp_broker/com.rs) | Private broker COM security for native MI |
-| [src/bgp/ipc.rs](../src/bgp/ipc.rs) | `require_broker_identity`, `identify_client`, `verify_server`, frame validation, and pipe listener |
+| [src/bgp/ipc.rs](../src/bgp/ipc.rs) | `require_broker_identity`, Authz authorization, bounded dispatch, and BGP RPC client/listener |
 | [src/bgp.rs](../src/bgp.rs) and [src/bgp_broker.rs](../src/bgp_broker.rs) | Bounded BGP mailbox, state-to-action policy, fixed target, and request dispatch |
 | [src/bgp_broker/mi.rs](../src/bgp_broker/mi.rs) | Local MI destination, impersonation option, namespace, and provider calls |
 | [src/config/registry.rs](../src/config/registry.rs) | `load_registry`, `SettingsWatch`, and `load_bgp_target` |

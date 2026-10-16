@@ -301,7 +301,7 @@ fn work_with_health(
                     .unwrap_or_else(|error| error.into_inner());
                 pending = next;
                 if timeout.timed_out() && pending.methods.is_empty() && !pending.closed {
-                    // Pipe health checks and reconnects never hold the engine's lock.
+                    // RPC health checks and reconnects never hold the engine's lock.
                     drop(pending);
                     let reconnected = health();
                     pending = mutex.lock().unwrap_or_else(|error| error.into_inner());

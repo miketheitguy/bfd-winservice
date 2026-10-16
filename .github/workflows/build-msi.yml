@@ -94,6 +94,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native MI compatibility with COM security failed.' }
           cargo test-release --lib local_rpc::tests::native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { throw 'In-process RPC/MI identity isolation failed.' }
+          cargo test-release --lib bgp::ipc::tests::native_bgp_rpc_and_provider_security_coexist -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { throw 'BGP RPC/MI security coexistence failed.' }
       - name: Build hardened release executable and MSI
         if: github.ref_type == 'tag'
         run: ./scripts/Build-Msi.ps1 -AcceptWixEula

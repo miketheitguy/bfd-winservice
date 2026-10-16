@@ -1,4 +1,4 @@
-//! Tracks provider calls separately from idle pipe waits.
+//! Tracks provider calls separately from idle RPC waits.
 use crate::bgp::Method;
 use std::{
     sync::{Mutex, PoisonError},

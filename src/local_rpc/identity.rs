@@ -11,8 +11,9 @@ use windows_sys::Win32::{
     Foundation::{LocalFree, ERROR_INSUFFICIENT_BUFFER, LUID},
     Security::{
         Authorization::{
-            AuthzContextInfoGroupsSids, AuthzContextInfoUserSid, AuthzGetInformationFromContext,
-            ConvertStringSidToSidW, AUTHZ_CONTEXT_INFORMATION_CLASS,
+            AuthzContextInfoGroupsSids, AuthzContextInfoRestrictedSids, AuthzContextInfoUserSid,
+            AuthzGetInformationFromContext, ConvertStringSidToSidW,
+            AUTHZ_CONTEXT_INFORMATION_CLASS,
         },
         EqualSid, SID, SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_USER,
     },
@@ -33,10 +34,29 @@ const MAX_IDENTITY_BYTES: usize = 1024 * 1024;
 /// Checks the current call's native transport, authentication, account and group.
 /// The RPC interface descriptor independently applies Windows ACL semantics,
 /// including the caller's restricting SIDs. This check establishes identity.
-pub(super) fn authorize_call(
+pub(crate) fn authorize_call(
     binding: *const c_void,
     expected_user: &str,
     expected_group: &str,
+) -> io::Result<()> {
+    authorize_identity(binding, expected_user, expected_group, false)
+}
+
+// BGP retains its additional restricted-client rule, including WRITE_RESTRICTED
+// tokens. Probe's broker caller uses the existing unrestricted-service policy.
+pub(crate) fn authorize_restricted_call(
+    binding: *const c_void,
+    expected_user: &str,
+    expected_group: &str,
+) -> io::Result<()> {
+    authorize_identity(binding, expected_user, expected_group, true)
+}
+
+fn authorize_identity(
+    binding: *const c_void,
+    expected_user: &str,
+    expected_group: &str,
+    check_restricting: bool,
 ) -> io::Result<()> {
     let mut attributes = RPC_CALL_ATTRIBUTES_V2_W {
         Version: 2,
@@ -85,6 +105,12 @@ pub(super) fn authorize_call(
     let user_info = IdentityInfo::query(&context, AuthzContextInfoUserSid)?;
     let group_info = IdentityInfo::query(&context, AuthzContextInfoGroupsSids)?;
     if !user_info.user_matches(&user)? || !group_info.enabled_group(&group)? {
+        return Err(denied());
+    }
+    if check_restricting
+        && !IdentityInfo::query(&context, AuthzContextInfoRestrictedSids)?
+            .matches_group(&group, false, true)?
+    {
         return Err(denied());
     }
     Ok(())
@@ -215,14 +241,30 @@ impl IdentityInfo {
     }
 
     fn enabled_group(&self, expected: &SidAllocation) -> io::Result<bool> {
+        self.matches_group(expected, true, false)
+    }
+
+    fn matches_group(
+        &self,
+        expected: &SidAllocation,
+        enabled: bool,
+        allow_empty: bool,
+    ) -> io::Result<bool> {
         let offset = offset_of!(TOKEN_GROUPS, Groups);
-        if self.length < offset {
+        let minimum = if allow_empty {
+            size_of::<u32>()
+        } else {
+            offset
+        };
+        if self.length < minimum {
             return Err(invalid_identity());
         }
         // SAFETY: initialized, aligned storage contains the complete count field.
-        let count =
-            usize::try_from(unsafe { (*self.words.as_ptr().cast::<TOKEN_GROUPS>()).GroupCount })
-                .map_err(io::Error::other)?;
+        let count = usize::try_from(unsafe { self.words.as_ptr().cast::<u32>().read() })
+            .map_err(io::Error::other)?;
+        if count == 0 {
+            return Ok(allow_empty);
+        }
         let end = count
             .checked_mul(size_of::<SID_AND_ATTRIBUTES>())
             .and_then(|length| offset.checked_add(length))
@@ -243,8 +285,9 @@ impl IdentityInfo {
                     .read()
             };
             if self.sid_matches(entry.Sid, expected)?
-                && entry.Attributes & SE_GROUP_ENABLED != 0
-                && entry.Attributes & SE_GROUP_USE_FOR_DENY_ONLY == 0
+                && (!enabled
+                    || (entry.Attributes & SE_GROUP_ENABLED != 0
+                        && entry.Attributes & SE_GROUP_USE_FOR_DENY_ONLY == 0))
             {
                 return Ok(true);
             }

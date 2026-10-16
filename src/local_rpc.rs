@@ -6,7 +6,7 @@
 //! on every call, without impersonating the broker or enabling privileges.
 #![allow(unsafe_code)]
 
-mod identity;
+pub(crate) mod identity;
 pub(crate) mod monitor;
 mod status;
 pub use monitor::{cached_bfd_session_status, BrokerStatus};
@@ -108,50 +108,61 @@ impl LocalRpcServer {
                 observer,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "RPC already initialized"))?;
-        // SAFETY: this static callback denies every runtime management request.
-        // Install it before opening an endpoint: the application interface's
-        // descriptor/callback does not protect the separate management interface.
-        // This process hosts only BFD's RPC interface, never the provider's COM.
-        check(unsafe { RpcMgmtSetAuthorizationFn(Some(deny_management)) })?;
-        let protocol = wide("ncalrpc");
-        let endpoint = wide(endpoint);
-        // SAFETY: valid terminated protocol/endpoint and live native descriptor.
-        // Only LRPC is registered; a collision is an error, never a fallback.
-        check(unsafe {
-            RpcServerUseProtseqEpW(
-                protocol.as_ptr(),
-                MAX_CALLS,
-                endpoint.as_ptr(),
-                descriptor.0,
-            )
-        })?;
-        // SAFETY: WINNT is the ncalrpc authentication provider; the runtime uses
-        // this process's identity. There is no custom key callback or credential.
-        check(unsafe {
-            RpcServerRegisterAuthInfoW(ptr::null(), RPC_C_AUTHN_WINNT, None, ptr::null())
-        })?;
-        // SAFETY: MIDL owns the static interface description. The descriptor is
-        // retained through unregister, and the callback/policy live for the process.
-        // AUTOLISTEN avoids changing the process-wide COM/RPC listen lifecycle.
-        check(unsafe {
-            RpcServerRegisterIf3(
-                bfd_rpc_server_interface(),
-                ptr::null(),
-                ptr::null(),
-                RPC_IF_AUTOLISTEN
-                    | RPC_IF_ALLOW_LOCAL_ONLY
-                    | RPC_IF_ALLOW_SECURE_ONLY
-                    | RPC_IF_SEC_NO_CACHE,
-                MAX_CALLS,
-                0, // LRPC ignores MaxRpcSize. The status record is fixed-size.
-                Some(authorize),
-                descriptor.0,
-            )
-        })?;
+        // SAFETY: MIDL supplies this static interface descriptor.
+        let interface = unsafe { bfd_rpc_server_interface() };
+        // SAFETY: policy/callback live for the process; descriptor survives unregister.
+        unsafe { register_interface(endpoint, descriptor.0, interface, Some(authorize)) }?;
         Ok(Self {
             _descriptor: descriptor,
         })
     }
+}
+
+/// # Safety
+/// Interface/callback must remain live until unregister; descriptor must outlive registration.
+// Both private interfaces use the same runtime gates. Management is denied in
+// either host; AUTOLISTEN leaves the provider's COM listen lifecycle alone.
+pub(crate) unsafe fn register_interface(
+    endpoint: &str,
+    descriptor: *const c_void,
+    interface: *const c_void,
+    callback: windows_sys::Win32::System::Rpc::RPC_IF_CALLBACK_FN,
+) -> io::Result<()> {
+    // SAFETY: this static callback denies every runtime management request.
+    // Install it before opening an endpoint: the application interface's
+    // descriptor/callback does not protect the separate management interface.
+    check(unsafe { RpcMgmtSetAuthorizationFn(Some(deny_management)) })?;
+    let protocol = wide("ncalrpc");
+    let endpoint = wide(endpoint);
+    // SAFETY: valid terminated protocol/endpoint and live native descriptor.
+    // Only LRPC is registered; a collision is an error, never a fallback.
+    check(unsafe {
+        RpcServerUseProtseqEpW(protocol.as_ptr(), MAX_CALLS, endpoint.as_ptr(), descriptor)
+    })?;
+    // SAFETY: WINNT is the ncalrpc authentication provider; the runtime uses
+    // this process's identity. There is no custom key callback or credential.
+    check(unsafe {
+        RpcServerRegisterAuthInfoW(ptr::null(), RPC_C_AUTHN_WINNT, None, ptr::null())
+    })?;
+    // SAFETY: MIDL owns the static interface description. The descriptor is
+    // retained through unregister, and the callback/policy live for the process.
+    // AUTOLISTEN avoids changing the process-wide COM/RPC listen lifecycle.
+    check(unsafe {
+        RpcServerRegisterIf3(
+            interface,
+            ptr::null(),
+            ptr::null(),
+            RPC_IF_AUTOLISTEN
+                | RPC_IF_ALLOW_LOCAL_ONLY
+                | RPC_IF_ALLOW_SECURE_ONLY
+                | RPC_IF_SEC_NO_CACHE,
+            MAX_CALLS,
+            0, // LRPC ignores MaxRpcSize. The status record is fixed-size.
+            callback,
+            descriptor,
+        )
+    })?;
+    Ok(())
 }
 
 struct StatusPermit;
@@ -334,6 +345,26 @@ fn with_binding<T>(
     server_group: &str,
     call: impl FnOnce(*mut c_void) -> io::Result<T>,
 ) -> io::Result<T> {
+    with_rpc_binding(
+        endpoint,
+        server_user,
+        server_group,
+        bfd_rpc_bind,
+        CALL_TIMEOUT_MS,
+        retain_uncertain_binding,
+        call,
+    )
+}
+
+pub(crate) fn with_rpc_binding<T>(
+    endpoint: &str,
+    server_user: &str,
+    server_group: &str,
+    bind: unsafe extern "C" fn(*mut c_void, u32) -> u32,
+    timeout_ms: u32,
+    uncertain: fn() -> !,
+    call: impl FnOnce(*mut c_void) -> io::Result<T>,
+) -> io::Result<T> {
     // A single conditional ACE requires BOTH SIDs. Separate allow ACEs would
     // permit any LocalService process OR any token containing the service SID.
     // QOS.Sid alone checks the account and does not pin the service SID group.
@@ -376,12 +407,16 @@ fn with_binding<T>(
     // borrowed buffers outlive binding disposal. NULL AuthIdentity supplies the
     // process credentials; creating a fast binding performs no communication.
     check(unsafe { RpcBindingCreateW(&template, &security, &options, &mut raw) })?;
-    let mut binding = Binding { raw, bound: false };
+    let mut binding = Binding {
+        raw,
+        bound: false,
+        uncertain,
+    };
     // SAFETY: exclusively owned fast binding. Keep the private BFD connection
     // separate from the broker's provider RPC associations.
     check(unsafe { RpcBindingSetOption(binding.raw, RPC_C_OPT_UNIQUE_BINDING, 1) })?;
     // SAFETY: live fast binding; C retains async state until completion/cancel.
-    check(unsafe { bfd_rpc_bind(binding.raw, CALL_TIMEOUT_MS) } as i32)?;
+    check(unsafe { bind(binding.raw, timeout_ms) } as i32)?;
     binding.bound = true;
     call(binding.raw)
 }
@@ -398,6 +433,7 @@ fn retain_uncertain_binding() -> ! {
 struct Binding {
     raw: *mut c_void,
     bound: bool,
+    uncertain: fn() -> !,
 }
 impl Drop for Binding {
     fn drop(&mut self) {
@@ -409,19 +445,19 @@ impl Drop for Binding {
             if unsafe { RpcBindingUnbind(self.raw) } != RPC_S_OK {
                 // The runtime's ownership is uncertain. Do not release borrowed
                 // security storage in a process that might retain this binding.
-                retain_uncertain_binding();
+                (self.uncertain)();
             }
         }
         // SAFETY: the unique binding is no longer bound or used by any call.
         if unsafe { RpcBindingFree(&mut self.raw) } != RPC_S_OK {
-            retain_uncertain_binding();
+            (self.uncertain)();
         }
     }
 }
 
-struct LocalAllocation(*mut c_void);
+pub(crate) struct LocalAllocation(pub(crate) *mut c_void);
 impl LocalAllocation {
-    fn descriptor(sddl: &str) -> io::Result<Self> {
+    pub(crate) fn descriptor(sddl: &str) -> io::Result<Self> {
         let text = wide(sddl);
         let mut raw = ptr::null_mut();
         // SAFETY: valid terminated input and writable descriptor output;
@@ -461,7 +497,7 @@ fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
 
-fn check(status: i32) -> io::Result<()> {
+pub(crate) fn check(status: i32) -> io::Result<()> {
     if status == RPC_S_OK {
         Ok(())
     } else {

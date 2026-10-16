@@ -126,7 +126,7 @@ The MSI installs the following resources for all users:
   are more likely to be assigned.
 - The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
   LocalSystem account. BFD depends on the broker, so starting BFD also starts the
-  broker. Without `BgpPeerName`, BFD doesn't open its BGP control pipe. The
+  broker. Without `BgpPeerName`, BFD doesn't open its BGP control RPC interface. The
   broker still queries BFD's private RPC status interface. Both services have their
   own enabled service SID. BFD uses restricted SID type `3`; its service SID is
   also present in the token's restricting list. The broker retains unrestricted
@@ -288,7 +288,7 @@ BFD's service-mode startup checks the LocalService account, its enabled service
 group, and the BFD SID plus write-restricted marker in the restricting list
 before loading configuration, creating sockets, or registering its local RPC interface.
 Use the MSI to provision both services. With `BgpPeerName` configured, BFD startup
-also requires an authenticated connection to the broker's BGP control pipe.
+also requires an authenticated connection to the broker's BGP control RPC interface.
 
 Set the installed paths for the remaining commands:
 

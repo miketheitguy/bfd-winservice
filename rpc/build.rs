@@ -9,8 +9,13 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
         "rpc/bfd_local.idl",
         "rpc/bfd_local_client.acf",
         "rpc/client.c",
+        "rpc/bgp_control.idl",
+        "rpc/bgp_control_client.acf",
+        "rpc/bgp_server.c",
         "rpc/server.c",
         "rpc/allocator.c",
+        "rpc/exception_policy.h",
+        "rpc/tests/seh.c",
     ] {
         println!("cargo:rerun-if-changed={file}");
     }
@@ -27,52 +32,77 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
     let environment = compiler_environment()?;
     let midl = super::sdk_tool("midl.exe", "BFD_MIDL_PATH")?;
     let sources = root.join("rpc");
-    for (side, other) in [("client", "server"), ("server", "client")] {
-        let mut command = Command::new(&midl);
-        command
-            .envs(&environment)
-            .args(["/nologo", "/env", "x64", "/robust", "/Oicf", "/app_config"])
-            .args(["/prefix", "client", "BfdClient_", "server", "BfdServer_"])
-            .arg(format!("/{side}"))
-            .arg("stub")
-            .arg(format!("/{other}"))
-            .arg("none")
-            .arg("/h")
-            .arg(format!("bfd_local_{side}.h"))
-            .arg("/out")
-            .arg(out)
-            .arg(sources.join("bfd_local.idl"))
-            .current_dir(out);
-        if side == "client" {
+    for (contract, client_prefix, server_prefix) in [
+        ("bfd_local", "BfdClient_", "BfdServer_"),
+        ("bgp_control", "BgpClient_", "BgpServer_"),
+    ] {
+        for (side, other) in [("client", "server"), ("server", "client")] {
+            let mut command = Command::new(&midl);
             command
-                .arg("/acf")
-                .arg(sources.join("bfd_local_client.acf"));
+                .envs(&environment)
+                .args(["/nologo", "/env", "x64", "/robust", "/Oicf", "/app_config"])
+                .args(["/prefix", "client", client_prefix, "server", server_prefix])
+                .arg(format!("/{side}"))
+                .arg("stub")
+                .arg(format!("/{other}"))
+                .arg("none")
+                .arg("/h")
+                .arg(format!("{contract}_{side}.h"))
+                .arg("/out")
+                .arg(out)
+                .arg(sources.join(format!("{contract}.idl")))
+                .current_dir(out);
+            if side == "client" {
+                command
+                    .arg("/acf")
+                    .arg(sources.join(format!("{contract}_client.acf")));
+            }
+            run_compiler(&mut command)?;
         }
-        run_compiler(&mut command)?;
     }
     for source in [
         out.join("bfd_local_c.c"),
         out.join("bfd_local_s.c"),
+        out.join("bgp_control_c.c"),
+        out.join("bgp_control_s.c"),
+        sources.join("bgp_server.c"),
         sources.join("client.c"),
         sources.join("server.c"),
         sources.join("allocator.c"),
+        sources.join("tests/seh.c"),
     ] {
+        let mut command = Command::new("cl.exe");
+        // Every translation unit here is C, including the generated stubs.
+        // Ignore ambient options that could override /TC or security flags.
+        // A future C++ unit needs its own /TP /EHsc compilation policy.
+        command
+            .envs(&environment)
+            .env_remove("CL")
+            .env_remove("_CL_")
+            .args([
+                "/nologo",
+                "/c",
+                "/TC",
+                "/MD",
+                "/GS",
+                "/guard:cf",
+                "/guard:ehcont",
+                "/sdl",
+                "/W4",
+                "/WX",
+                "/D_WIN32_WINNT=0x0602",
+            ]);
+        // Analyze the maintained bridge; generated MIDL code has its own
+        // validation patterns and remains checked by /W4 /WX and /robust.
+        if source.starts_with(&sources) {
+            command.args(["/analyze", "/analyze:external-"]);
+        }
         run_compiler(
-            Command::new("cl.exe")
-                .envs(&environment)
-                .args([
-                    "/nologo",
-                    "/c",
-                    "/MD",
-                    "/GS",
-                    "/guard:cf",
-                    "/guard:ehcont",
-                    "/sdl",
-                    "/W4",
-                    "/D_WIN32_WINNT=0x0602",
-                ])
+            command
                 .arg("/I")
                 .arg(out)
+                .arg("/I")
+                .arg(&sources)
                 .arg(source)
                 .current_dir(out),
         )?;
@@ -85,9 +115,13 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
                 "/OUT:bfd_local_rpc.lib",
                 "bfd_local_c.obj",
                 "bfd_local_s.obj",
+                "bgp_control_c.obj",
+                "bgp_control_s.obj",
+                "bgp_server.obj",
                 "client.obj",
                 "server.obj",
                 "allocator.obj",
+                "seh.obj",
             ])
             .current_dir(out),
     )?;

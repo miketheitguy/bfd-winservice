@@ -148,9 +148,9 @@ uses Windows Event Log permissions without a custom channel ACL.
 ## Broker communication
 
 Border Gateway Protocol (BGP) requests pass through the authenticated service
-pipe. The caller must
+local RPC interface. The caller must
 have LocalService in `TokenUser`, an enabled BFD service group, and the BFD SID
 in a restricted token's restricting list; an ordinary
 administrator process cannot submit broker requests. This service-to-service
 permission is required for BGP control. See [Control a Windows BGP peer](bgp.md)
-for the pipe protocol, broker identity checks, and native provider calls.
+for the BGP RPC contract, broker identity checks, and native provider calls.

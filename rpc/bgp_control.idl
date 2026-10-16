@@ -1,0 +1,20 @@
+[
+    uuid(c7026489-f80e-42b3-94d0-6048e2daee51),
+    version(1.0),
+    pointer_default(unique)
+]
+interface BgpControl
+{
+    typedef struct BGP_CONTROL_RESULT {
+        unsigned hyper instance;
+        unsigned long status;
+        [range(0,1)] unsigned long value;
+    } BGP_CONTROL_RESULT;
+
+    // 0 = identity/liveness probe; 1 = Get; 2 = Start; 3 = Stop.
+    // The target is broker configuration, never caller-supplied data.
+    unsigned long Control(
+        [in] handle_t binding,
+        [in, range(0,3)] unsigned long operation,
+        [out, ref] BGP_CONTROL_RESULT *result);
+}

@@ -1,0 +1,47 @@
+[build]
+target = "x86_64-pc-windows-msvc"
+
+# MSVC can generate PDBs even with debug = 0 and stripping enabled.
+# Suppress linker debug output only in release builds; retain development/ASan PDBs.
+[profile.release]
+rustflags = ["-C", "link-arg=/DEBUG:NONE"]
+
+# Target flags apply to the service, Rust dependencies, and rebuilt standard
+# library. The explicit build target keeps host build scripts and proc macros
+# on their default compiler and linker settings.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "control-flow-guard=yes",
+    "-C", "relocation-model=pic",
+    "-Z", "stack-protector=all",
+    "-Z", "ehcont-guard=yes",
+    "-Z", "src-hash-algorithm=sha256",
+    "-C", "link-arg=/MACHINE:X64",
+    "-C", "link-arg=/DYNAMICBASE",
+    "-C", "link-arg=/HIGHENTROPYVA",
+    "-C", "link-arg=/NXCOMPAT",
+    "-C", "link-arg=/GUARD:CF",
+    "-C", "link-arg=/GUARD:EHCONT",
+    "-C", "link-arg=/CETCOMPAT",
+    "-C", "link-arg=/LARGEADDRESSAWARE",
+]
+
+[alias]
+test-release = [
+    "test", "--locked", "--release", "--config", 'profile.release.panic="unwind"',
+]
+# ASan is for testing. These arrays merge with the target settings above;
+# build.rustflags would be ignored because target.rustflags takes precedence.
+# rustdocflags also instrument documentation tests.
+asan = [
+    "test", "--locked", "--profile", "asan", "--target-dir", "target/asan",
+    "--config", 'target.x86_64-pc-windows-msvc.rustflags=["-Z", "sanitizer=address"]',
+    "--config", 'target.x86_64-pc-windows-msvc.rustdocflags=["-Z", "sanitizer=address"]',
+]
+
+# Equivalent to Cargo's -Z build-std=std,panic_unwind on every invocation.
+# Rebuild the standard library with the target hardening flags and, during
+# cargo asan, sanitizer instrumentation. Requires nightly Cargo and rust-src.
+[unstable]
+build-std = ["std", "panic_unwind"]
+profile-rustflags = true

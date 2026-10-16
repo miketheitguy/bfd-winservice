@@ -1,7 +1,7 @@
 # Service communication
 
 For developers and Windows administrators, this page maps the installed
-services' network endpoints, private local RPC interface, and BGP actions. See
+services' network endpoints, private local RPC interfaces, and BGP actions. See
 [Security, authentication, and build hardening](security.md) for identities,
 permissions, and authentication boundaries.
 
@@ -9,8 +9,29 @@ The key receipt: the packet engine drives BGP actions. The broker's status cache
 is for observation, and an SCM `Running` status doesn't mean the session is Up.
 
 BFD hosts an authenticated local RPC interface for the broker. The broker calls
-it from a worker thread inside its existing process. The existing BGP control
-pipe and Windows provider COM/MI API retain their separate contracts.
+it from a worker thread inside its existing process. BGP control uses a separate
+authenticated local RPC interface; the Windows provider COM/MI API retains its
+own contract.
+
+Both service channels use Windows local RPC (`ncalrpc`) with WINNT packet
+privacy, mutual service-identity checks, protected service-SID ACLs, and per-call
+Authz authorization. The protocol name is `ncalrpc` on both paths; LRPC is the
+Windows runtime's local-RPC name, not a separate transport or weaker mode.
+Neither path uses TCP or the RPC named-pipe transport.
+
+Each interface permits calls initiated in one direction:
+
+| Call initiator | RPC server | Endpoint (`ncalrpc`) | Operations |
+| --- | --- | --- | --- |
+| Broker's telemetry worker | BFD service | `BfdWinService.Local.v1` | `Probe`, `GetSessionStatusV1` |
+| BFD's BGP worker | BGP broker | `BfdWinService.Bgp.v1` | Control liveness check, `Get`, `Start`, `Stop` |
+
+Diagram arrows show **call initiation**, from client to server. BFD returns
+probe/status replies to the broker; the broker returns control results to BFD
+on their respective calls. These replies do not initiate reverse RPC calls.
+Neither interface defines RPC callback operations, and fast bindings reject
+server-initiated RPC callbacks. Local authorization callbacks only check access
+inside the receiving process. See [Windows fast-binding restrictions](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
 
 The [editable draw.io source](service-communication.drawio) has three pages:
 runtime boundaries, service lifecycle, and RPC authentication. Each exported
@@ -23,7 +44,7 @@ cleanup functions. For ASCII call flows and the security assessment, see
 
 ## Runtime flow
 
-![Runtime: the LocalService BFD engine publishes immutable snapshots; the SYSTEM broker's in-process RPC worker reads session status over authenticated local RPC, validates it, and caches it. The separate BGP control pipe and Windows COM/MI provider path remain.](images/service-communication-runtime.png)
+![Runtime: both service-call paths use authenticated ncalrpc. The broker initiates Probe and session-status calls to BFD; BFD initiates BGP control calls to the broker. Single-headed arrows show call initiation; replies return on the same calls. BFD publishes immutable snapshots, and the broker validates and caches status.](images/service-communication-runtime.png)
 
 The two installed services use these paths:
 
@@ -38,8 +59,9 @@ The two installed services use these paths:
    and converts the reply into checked Rust types before publishing its cache.
    There is no helper executable instance, stdout transport, or additional pipe.
 5. When `BgpPeerName` is configured, BFD's separate BGP worker sends `Get`,
-   `Start`, or `Stop` on `\\.\pipe\BfdWinService.Bgp.v1`. The client verifies the
-   broker's SCM process ID; the broker checks the BFD client's Windows token.
+   `Start`, or `Stop` on the `ncalrpc` endpoint `BfdWinService.Bgp.v1`. The client
+   pins SYSTEM and the broker SID; the broker checks BFD through Authz without
+   impersonation.
 6. The broker invokes native Management Infrastructure (MI) against the local
    `PS_BgpPeer` provider for its configured target. Windows RRAS manages the BGP
    connection to the remote peer.
@@ -53,9 +75,9 @@ continues under its existing token and COM/MI security.
 ![Lifecycle: SCM starts the broker first; its status monitor runs after Running. BFD validates its token and registers RPC before Running. Shutdown closes observation before announcements and final BGP cleanup, then drains RPC. Broker shutdown does not wait on an unfinished native RPC worker.](images/service-communication-lifecycle.png)
 
 SCM starts `RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`.
-The broker reports Running before starting the monitor and retries while BFD
-initializes. BFD gives RPC a read-only observer before moving the engine to its
-packet worker. Neither SCM Running nor RPC success implies a session is Up.
+The broker secures its BGP control RPC interface before reporting Running,
+then starts the telemetry monitor and retries while BFD initializes. BFD gives
+RPC a read-only observer before moving the engine to its packet worker. Neither SCM Running nor RPC success implies a session is Up.
 
 BFD closes its observer as soon as packet processing ends, before announcements
 and BGP cleanup. After cleanup, it unregisters and drains its interface before
@@ -122,12 +144,12 @@ other than 7784; the installed firewall limits requests to 49152-65535.
 
 BGP control runs only when `BgpPeerName` is configured for classical BFD or an
 S-BFD initiator. Reflectors reject BGP control. Plain BFD still has the installed
-SCM dependency on the broker, but starts no BGP worker and makes no pipe probe.
+SCM dependency on the broker, but starts no BGP worker and makes no BGP RPC probe.
 
 Startup reads BGP status without changing the peer. Entering Up requests Start
 if needed; Down after the session has established requests Stop. Peer AdminDown
 or an administrative service stop withdraws the controller's own latest Stop
-with Start when needed. Crashes and pipe disconnections do not themselves stop
+with Start when needed. Crashes and RPC disconnections do not themselves stop
 the BGP peer.
 
 The final RRAS-to-remote-peer link represents Windows-managed BGP behavior.

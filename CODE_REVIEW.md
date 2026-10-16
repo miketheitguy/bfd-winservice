@@ -13,7 +13,7 @@ Use these links to locate the dated evidence for a topic:
 
 | Topic | Review entries |
 | --- | --- |
-| Private local RPC | [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
+| Private local RPC | [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
 | Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
 | Service reliability and security | [Reliability follow-up](#reliability-follow-up--2026-10-09) and [reliability/security review](#reliability-and-security-review--2026-10-09) |
 | Deployment and observability | [MSI packaging](#msi-packaging-review--2026-10-08) and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
@@ -26,11 +26,85 @@ These later changes supersede descriptions in older entries:
 
 | Older description | Implemented behavior and reference |
 | --- | --- |
+| BGP control uses a named pipe, PID/SCM matching, or caller impersonation. | Both service channels use authenticated `ncalrpc`; BGP retains a separate interface and serialized provider worker. See [BGP RPC security](docs/rpc-authentication.md#bgp-control-over-local-rpc). |
 | An isolated broker child performs RPC probes, or invalid status stays quarantined until restart. | One worker inside the broker queries typed status. Rejected replies clear the cache and retry; only a stuck native worker quarantines telemetry. See [RPC session-status query](docs/rpc-session-status-design.md). |
 | Stop always stops BGP, or AdminDown never changes BGP. | Local or peer AdminDown releases a Stop issued by BFD by queuing Start; it leaves other peers untouched. See [BGP behavior](docs/bgp.md). |
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [MSI installation](docs/setup.md#install-with-an-msi) and [security boundaries](docs/security.md). |
+
+## Native C exception handling — 2026-10-16
+
+Reviewed the handwritten C bridge, MIDL managers/allocators, generated-stub build
+settings, and asynchronous cleanup against Microsoft's RPC exception and
+cancellation guidance. Client SEH uses one shared `RpcExceptionFilter` policy;
+fatal native fault classes are not converted to transport errors. No new SEH
+handler wraps Rust server managers. The bind wrappers and uncertain-ownership
+handling share common implementations.
+
+Enabled `/W4 /WX` for all native C and `/analyze` for handwritten translation
+units. Static analysis found missing MIDL allocation callback annotations; the
+callbacks now inherit the Windows SDK's SAL contracts. A separate native test
+object raises recoverable RPC exceptions inside C and tests the fatal filter;
+production entry points do not reference it.
+
+Validation: the full optimized suite passed, including both new native SEH
+regressions, and strict all-target Clippy and native static analysis passed.
+The read-only BGP RPC/MI coexistence test passed. Production release builds and
+both executable-hardening checks passed; import inspection confirmed the
+synthetic exception test object is absent from both production executables.
+The native source inventory contains no C++ translation units. Compilation is
+explicitly pinned to C with `/TC`, and the compiler process removes ambient
+`CL`/`_CL_` overrides. `/EHsc` is reserved for a separate future C++ policy;
+C RPC SEH does not need C++ exception unwinding. A production build with ambient
+options requesting C++ mode and disabling security flags still passed both
+executable-hardening checks, confirming those overrides cannot weaken the
+maintained native build. A follow-up ABI audit confirmed the maintained Rust
+callbacks use only non-unwinding C/system ABIs and production uses aborting
+panics. The contributor/security guidance explicitly requires any future C++
+wrapper to catch C++ exceptions and return integer errors, and forbids unwinding
+across FFI in either direction. This policy clarification changes documentation
+only. No installed service or live RRAS operation was changed or exercised.
+
+## BGP control RPC migration — 2026-10-16
+
+BGP control uses `BgpControl` 1.0 at `ncalrpc:BfdWinService.Bgp.v1` in place of
+the named pipe. Shared probe helpers supply WINNT packet privacy, static Identify
+credentials, V5 conditional server descriptors, protected service-SID interface
+ACLs, per-call local/private authentication checks, and Authz user/group checks.
+The broker additionally checks any restricting-SID list for BFD's service SID.
+No RPC caller token is attached to a provider thread. Runtime management is
+denied in both service processes, and control registration precedes SCM Running.
+
+A fixed MIDL contract, one admission permit, and a one-slot queue preserve
+serialized, fixed-target provider operations. Native cancellation retains storage
+through completion; queued cancelled requests are discarded. Cancellation cannot
+undo an already running MI operation. A broker-instance nonce detects restarts.
+Uncertain BGP client ownership fails BFD closed; telemetry keeps its supervised
+worker retention/quarantine policy. The installer harness now checks rejection
+through the real RPC interface rather than opening the old pipe.
+
+Validation: the complete optimized test suite passed, including executable
+hardening and native RPC tests. All 11 targeted BGP RPC tests passed under Rust
+AddressSanitizer, as did the five shared Authz parser tests; MSVC-built native
+stubs remain uninstrumented. Both production release images passed the release
+hardening harness. Both read-only
+MI/RPC coexistence regressions passed. Formatting and strict all-target Clippy
+passed. Native reduced-token tests ran outside the process sandbox because
+Windows rejects creating write-restricted tokens from its already restricted
+token. MSI installation, actual SCM-issued service-token exchange, and live RRAS
+Start/Stop were not exercised locally; use the hosted installation harness and
+a provisioned Windows Server for those checks.
+
+The diagram/documentation follow-up verified both service channels share the
+`ncalrpc` registration, LRPC-only binding/call checks, packet privacy, and
+service-identity policy. Runtime and lifecycle arrows now show one-way call
+initiation: broker to BFD for Probe/status; BFD to broker for BGP control.
+Replies use the existing calls, with no RPC callback operations. The canonical
+draw.io source and all three PNGs were regenerated outside the sandbox and
+visually inspected; XML directions and local documentation links passed checks.
+This follow-up changes diagrams and documentation only; runtime tests were not
+rerun.
 
 ## RPC status rejection recovery — 2026-10-15
 

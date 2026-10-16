@@ -371,7 +371,11 @@ fn anonymous_native_client_is_denied() {
     let mut raw = ptr::null_mut();
     // SAFETY: live terminated endpoint string and writable binding output.
     check(unsafe { RpcBindingFromStringBindingW(text.as_ptr(), &mut raw) }).unwrap();
-    let binding = Binding { raw, bound: false };
+    let binding = Binding {
+        raw,
+        bound: false,
+        uncertain: retain_uncertain_binding,
+    };
     // SAFETY: isolate this binding from cached authenticated associations.
     check(unsafe { RpcBindingSetOption(binding.raw, RPC_C_OPT_UNIQUE_BINDING, 1) }).unwrap();
     let qos = RPC_SECURITY_QOS {
@@ -420,7 +424,11 @@ fn runtime_management_queries_are_denied_without_disrupting_the_probe() {
     let mut raw = ptr::null_mut();
     // SAFETY: terminated endpoint text and writable binding output.
     check(unsafe { RpcBindingFromStringBindingW(text.as_ptr(), &mut raw) }).unwrap();
-    let binding = Binding { raw, bound: false };
+    let binding = Binding {
+        raw,
+        bound: false,
+        uncertain: retain_uncertain_binding,
+    };
     let mut statistics = ptr::null_mut();
     // SAFETY: a live binding to the fixture and writable statistics output.
     let status = unsafe { RpcMgmtInqStats(binding.raw, &mut statistics) };
@@ -503,3 +511,4 @@ fn rpc_fixture_client_child() {
 }
 
 mod restricted;
+mod seh;

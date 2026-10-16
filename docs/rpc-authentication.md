@@ -6,13 +6,24 @@ Windows rights they use, and how the implementation follows Microsoft's
 security guidance. For the complete process topology, see
 [Service communication](service-communication.md).
 
+Both private service interfaces use `ncalrpc`. Windows names this transport
+LRPC in native constants such as `RPC_PROTSEQ_LRPC`; the label does not identify
+a different security mode. Both bindings require WINNT packet privacy and the
+same service-specific authentication and authorization helpers.
+
+Call initiation is directional: the broker calls BFD for `Probe` and session
+status; BFD calls the broker for BGP control. Replies return on the respective
+calls. Neither IDL declares RPC callbacks, and the fast bindings reject
+server-initiated callbacks. The local security callbacks authorize incoming
+calls without contacting the caller. See [fast-binding restrictions](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
+
 The endpoint name isn't the identity check. The receipts are the authenticated
 account and enabled service SID on each side.
 
 The implemented interface provides a connection probe and a bounded read-only
 session-status operation. Status data returns directly to a worker inside the
 broker process over packet-private RPC. It carries no configuration commands,
-authentication keys, or JSON records. The existing BGP control pipe and Windows
+authentication keys, or JSON records. The separate BGP control RPC interface and Windows
 provider Component Object Model (COM) and Management Infrastructure (MI) API
 keep their separate contracts. See [RPC session-status query](rpc-session-status-design.md)
 for fields, accepted ranges, freshness, and telemetry quarantine.
@@ -21,6 +32,7 @@ for fields, accepted ranges, freshness, and telemetry quarantine.
 
 Use these sections for a specific check or lifecycle question:
 
+- [BGP control over local RPC](#bgp-control-over-local-rpc)
 - [Interface and process boundaries](#interface-and-process-boundaries)
 - [Accounts, service SIDs, and privileges](#accounts-service-sids-and-privileges)
 - [Startup and query sequence](#startup-and-query-sequence)
@@ -31,6 +43,44 @@ Use these sections for a specific check or lifecycle question:
 - [Wire validation and extension limits](#wire-validation-and-extension-limits)
 - [Security best practices](#alignment-with-security-best-practices),
   [verification](#verify-the-implementation), and the [source map](#source-map)
+
+## BGP control over local RPC
+
+BFD also calls the broker over `ncalrpc`, using `BgpControl` version `1.0` at
+`BfdWinService.Bgp.v1`. This replaces the BGP named-pipe transport. The two
+channels share native binding, registration, call-attribute, and Authz helpers.
+Deploy matching BFD and broker binaries together for this contract.
+
+The identity requirements are:
+
+| Gate | Broker querying BFD telemetry | BFD controlling BGP |
+| --- | --- | --- |
+| Expected server | LocalService and BFD service SID | LocalSystem and broker service SID |
+| Interface DACL | Broker service SID | BFD service SID |
+| Exact caller user | LocalSystem | LocalService |
+| Enabled, non-deny-only caller group | Broker service SID | BFD service SID |
+| Restricted caller check | Native interface ACL semantics | Also require BFD SID in any nonempty restricting list |
+
+Both use WINNT packet privacy, QOS V5 with the conditional server descriptor,
+static identity tracking, Identify, effective-only credentials, unique bindings,
+and `DONTLINGER`. Both servers use local-only, secure-only, no-cache callbacks
+and repeat authorization in their managers without impersonation. Management
+operations are denied in both host processes; AUTOLISTEN preserves the broker's
+COM listen lifecycle. The broker secures its control interface before reporting
+Running, then starts its telemetry monitor without waiting for BFD startup.
+
+The BGP contract has a probe and fixed Get/Start/Stop operations; callers cannot
+supply targets. Robust MIDL range checks and Rust validation check a fixed
+16-byte result record. One admission permit and a one-slot queue feed the existing serialized
+provider worker. The client uses a two-second bind limit within a 30-second call
+budget, or 20 seconds per final shutdown call. Probe calls use two seconds.
+Cancellation drains native ownership; queued cancelled requests are discarded.
+A provider operation already running can complete after cancellation. BFD aborts
+if native ownership remains uncertain, while telemetry retains its existing
+single-worker quarantine behavior. See [BGP recovery and cleanup](bgp.md#worker-retries-and-broker-recovery).
+
+The remaining sections describe the telemetry direction in detail; the shared
+security settings also apply to BGP control with the identities in this table.
 
 ## Interface and process boundaries
 
@@ -107,7 +157,8 @@ part of the trusted host administration boundary.
 Startup and status fetching follow this order:
 
 1. SCM starts the broker dependency. The broker verifies SYSTEM and its service
-   SID, initializes the existing COM/MI host, and reports Running.
+   SID, initializes the COM/MI host, secures its BGP control RPC interface, and
+   reports Running.
 2. The broker starts the supervisor and one RPC worker inside its process. Startup
    does not wait for BFD, avoiding an SCM dependency cycle.
 3. BFD verifies its restricted identity, removes unused privileges, creates its

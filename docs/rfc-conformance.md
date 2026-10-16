@@ -139,7 +139,7 @@ cargo asan --offline
 
 The focused suites use monotonic synthetic times for long periods and exact
 boundaries, avoiding real multi-minute waits. Native tests exercise actual
-Windows UDP, IPv4/IPv6 metadata, private broker COM security, pipe, and temporary
+Windows UDP, IPv4/IPv6 metadata, private broker COM security, authenticated local RPC, and temporary
 registry fixtures.
 
 ### Deployment validation limits
