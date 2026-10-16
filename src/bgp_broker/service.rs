@@ -138,6 +138,9 @@ fn start() -> io::Result<()> {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .publish(ServiceState::Running, false)?;
+        // BFD depends on this service. Query it in the background only after
+        // Running, so authentication cannot create a circular SCM startup wait.
+        let _local_rpc = crate::local_rpc::monitor::Monitor::start(log.clone())?;
         let (sender, receiver) = mpsc::channel();
         let watch = ProviderWatch::default();
         thread::scope(|scope| -> io::Result<()> {

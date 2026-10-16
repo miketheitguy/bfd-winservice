@@ -30,6 +30,16 @@ const RETAINED: [&str; 2] = ["SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege
 /// # Errors
 /// Returns token query, privilege lookup, or adjustment errors.
 pub fn drop_privileges() -> io::Result<Vec<String>> {
+    drop_except(&RETAINED)
+}
+
+/// Native test clients remove privileges independently of their parent process.
+#[cfg(test)]
+pub(crate) fn drop_rpc_privileges() -> io::Result<()> {
+    drop_except(&["SeChangeNotifyPrivilege"]).map(|_| ())
+}
+
+fn drop_except(retained: &[&str]) -> io::Result<Vec<String>> {
     let mut raw = ptr::null_mut();
     // SAFETY: the process pseudo-handle is valid and the output is writable.
     if unsafe {
@@ -48,7 +58,7 @@ pub fn drop_privileges() -> io::Result<Vec<String>> {
     let mut names = Vec::new();
     for entry in privileges(&token)? {
         let name = privilege_name(&entry.Luid)?;
-        if !RETAINED.contains(&name.as_str()) {
+        if !retained.contains(&name.as_str()) {
             removed.push(LUID_AND_ATTRIBUTES {
                 Luid: entry.Luid,
                 Attributes: SE_PRIVILEGE_REMOVED,

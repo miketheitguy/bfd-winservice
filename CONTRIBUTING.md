@@ -11,13 +11,19 @@ For service installation and configuration, see
 
 You need:
 
-- 64-bit Windows 10 or later, or a corresponding Windows Server release, on an
+- 64-bit Windows 10 or later, or Windows Server 2016 or later, on an
   x64 processor.
 - Rust installed through rustup. The repository's `rust-toolchain.toml` pins a
   dated nightly Rust, `x86_64-pc-windows-msvc`, Clippy, rustfmt, and `rust-src`,
   so every build and release uses the same compiler. Update the date deliberately
   and rerun the full test, ASan, and hardening checks when you do.
 - Visual Studio's **Desktop development with C++** workload, including the Microsoft Visual C++ (MSVC) toolchain and Windows Software Development Kit (SDK).
+
+The Windows local RPC interface also needs the SDK's MIDL compiler (`midl.exe`)
+and the x64 MSVC compiler and librarian (`cl.exe` and `lib.exe`). The build
+generates RPC stubs from the interface definition and compiles a small native
+wrapper that contains Windows RPC exceptions. Service logic and authentication
+remain in Rust.
 
 ## Build the executable
 
@@ -35,7 +41,12 @@ Event Tracing for Windows (ETW) metadata and English messages are embedded durin
 the build using the SDK's `mc.exe` and `rc.exe`. Windows file properties also
 contain file and product versions generated from `Cargo.toml`.
 
-Use Developer PowerShell if the MSVC linker is unavailable on `PATH`. The build finds the manifest tools on `PATH` or in the installed Windows 10/11 SDK. For a custom SDK location, set `BFD_MC_PATH` and `BFD_RC_PATH` to the absolute tool paths.
+The build finds `midl.exe`, `mc.exe`, and `rc.exe` on `PATH` or in the installed
+Windows 10/11 SDK. It discovers the x64 MSVC environment through Visual Studio
+environment variables or `vswhere.exe`, then loads `vcvars64.bat` for the native
+RPC build. For custom installations, set `BFD_MIDL_PATH`, `BFD_MC_PATH`, and
+`BFD_RC_PATH` to the corresponding absolute tool paths, and
+`BFD_VCVARS64_PATH` to the absolute path of `vcvars64.bat`.
 
 ## Build security
 
@@ -318,7 +329,7 @@ events](docs/monitoring.md) for lifecycle queries and event-log monitoring.
 `src/bgp_broker/com.rs` is private to the broker. Its dedicated MTA thread
 initializes explicit process security before native MI starts and remains alive
 until provider work finishes. Incoming COM access is local-only and grants only
-SYSTEM and administrators. Normal shutdown, startup errors, and unwinding join
+SYSTEM. Normal shutdown, startup errors, and unwinding join
 the owner thread, which calls `CoUninitialize`.
 
 The Rust suite isolates process-wide COM security tests in child processes. It
@@ -327,21 +338,53 @@ release workflow also runs a read-only native MI schema query under this policy
 to check compatibility with Windows management providers. In-process state
 observers remain available to library users and UDP integration tests.
 
-`src/status_com.rs` hosts the BFD service's read-only Automation class on a
-dedicated MTA thread. Start the class before reporting the service as Running,
-and retain its host until the engine stops. Process COM security and each
-Automation call admit only local SYSTEM or enabled Administrators. The endpoint
-reads immutable `StatusObserver` snapshots published once per second; COM
-queries, formatting, and caller token checks run outside the UDP loop. Keep
-`StateObserver` as the existing lightweight local-state view. See
-[Query a session snapshot](docs/monitoring.md#query-a-session-snapshot) for client usage.
+## Maintain the private local RPC interface
+
+`src/local_rpc.rs` hosts the private BFD interface. Its `GetSessionStatusV1`
+operation copies one published snapshot on an RPC worker. The broker queries it
+from one supervised worker inside its existing process; it launches no helper.
+Keep this path separate from the BGP control pipe and COM/MI provider worker.
+
+Preserve the conditional server identity policy, exact caller account and
+service SID checks, Identify credentials, packet privacy, and management denial.
+The provider process keeps its existing token and COM/MI policy. Never vary the
+BFD identity policy or treat a unique binding as an authorization-cache reset.
+
+The record uses only fixed-width integers across FFI. Native robust stubs apply
+IDL ranges; `src/local_rpc/status.rs` converts into Rust types once. There is no
+validation dependency. Invalid data clears the cache and retries with capped
+backoff, as do connection failures; only a stuck native worker quarantines
+telemetry. These paths do not change BGP state. Keep packet-loop
+publication independent of query count and retain pending native storage until
+completion. A stuck worker must not block provider work or service shutdown.
+
+See [RPC session-status query](docs/rpc-session-status-design.md),
+[RPC authentication](docs/rpc-authentication.md), and
+[Service communication](docs/service-communication.md).
+
+Run native RPC tests on a Windows host with a normal token:
+
+```powershell
+cargo test-release --lib local_rpc::
+cargo test-release --lib native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection -- --ignored
+```
+
+The second command exercises real read-only CIM schema traffic in the same
+process as RPC, including replacement-server rejection and recovery. Fixture
+processes isolate test registrations and identities; they are not the production
+architecture. `scripts/Test-MsiInstall.ps1` separately checks a successful
+authenticated status fetch after installed first start and repair.
 
 ## Update the security diagrams
 
-Edit [the two-page draw.io source](docs/service-communication.drawio), then export
-both PNGs embedded in [the security page](docs/security.md). With draw.io Desktop
-installed in its default Windows location, run these commands from the repository
-root:
+The [draw.io source](docs/service-communication.drawio) has three editable pages:
+runtime boundaries, service lifecycle, and RPC authentication. Keep its exports
+and [communication guide](docs/service-communication.md) synchronized with the
+implementation. The [RPC reference](docs/rpc-authentication.md) supplies the
+detailed authentication mechanisms and Microsoft references.
+
+With draw.io Desktop installed in its default Windows location, export from the
+repository root:
 
 ```powershell
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 1 -b 20 `
@@ -350,11 +393,20 @@ root:
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 2 -b 20 `
     -o docs/images/service-communication-lifecycle.png `
     docs/service-communication.drawio
+& 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 3 -b 20 `
+    -o docs/images/service-communication-authentication.png `
+    docs/service-communication.drawio
 ```
 
-The page numbers are one-based, and `-e` embeds the editable diagram XML. Confirm
-that both images match the source and update the corresponding ASCII diagrams
-and authentication checks in `docs/security.md` when boundaries change.
+The page numbers are one-based. `-e` embeds editable XML in each PNG; retain the
+canonical `.drawio` source as well. Add `--disable-gpu` if export fails during GPU
+initialization. If you installed draw.io elsewhere, substitute its actual path.
+
+Open all three images and check text, clipping, arrow direction, process
+boundaries, and identity labels. Keep the RPC worker inside the broker
+process. Show the snapshot and typed status path, and preserve the
+existing BGP pipe and COM/MI provider path. Ensure every diagram has a matching
+text explanation and useful alt text in the consuming Markdown page.
 
 ## Prepare installation files
 

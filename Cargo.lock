@@ -92,7 +92,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "windows",
- "windows-core",
  "windows-service",
  "windows-sys",
 ]

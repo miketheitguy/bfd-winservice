@@ -1,92 +1,18 @@
 # Monitor service status and BFD events
 
 This guide is for Windows operators checking service lifecycle and Bidirectional
-Forwarding Detection (BFD) session state. Use the administrative COM endpoint for
-a session snapshot, Windows service status for process lifecycle, and the
-Operational event log for transitions over time.
+Forwarding Detection (BFD) session transitions. Use Windows service queries for
+process lifecycle and the Operational event log for transitions over time.
 
-## Query a session snapshot
+## Available monitoring interfaces
 
-Use a local, 64-bit PowerShell session with an elevated Administrator token or
-run as SYSTEM. The MSI registers `BfdWinService.Status.1` for the COM endpoint
-inside the `BfdWinService` service process. COM activation can start the configured
-service if it is stopped. Standard users, unelevated Administrator tokens, and
-remote callers cannot query the endpoint.
-
-Create the endpoint and select the status properties you need:
-
-```powershell
-$bfd = New-Object -ComObject BfdWinService.Status.1
-$snapshot = $bfd.GetSnapshot()
-$snapshot | Select-Object PeerAddress, LocalState, RemoteState,
-    DetectionTimeMicroseconds
-```
-
-An established session can produce this output (addresses and values are examples):
-
-```text
-PeerAddress LocalState RemoteState DetectionTimeMicroseconds
------------ ---------- ----------- -------------------------
-192.0.2.11  Up         Up                             300000
-```
-
-`GetSnapshot()` returns one immutable object. The engine replaces its published
-snapshot at most once per second; scheduling delays can extend that interval.
-Repeat `GetSnapshot()` to obtain a later observation. Reading or retaining an
-object does not hold a lock on the packet loop. A snapshot can lag protocol state,
-and the `RemoteState` property preserves the peer's last accepted report after
-detection expires. Use the timestamps and event log when diagnosing a failure.
-`GetSnapshot()` returns `$null` if the engine has already stopped; a disconnected
-COM proxy can instead raise an RPC error during service shutdown.
-
-Inspect all properties with:
-
-```powershell
-$snapshot | Format-List *
-```
-
-The Automation object exposes strings, Boolean values, UInt32 identifiers/ports,
-UInt64 counters/intervals, DateTime timestamps, and an array of address strings.
-Absent or inapplicable fields return `$null`. Timestamps ending in `Utc` represent
-UTC; COM's DateTime representation has no timezone metadata. Interval properties
-ending in `Microseconds` use integer microseconds; divide by 1,000 for milliseconds.
-Counters start with each engine instance and saturate at UInt64's maximum value.
-Authentication keys and packet contents are not exposed.
-
-The properties describe these observations:
-
-| Properties | Meaning |
-| --- | --- |
-| `LocalAddress`, `PeerAddress`, `LastAcceptedSource` | Configured local/peer IP addresses and the last accepted packet's source address and UDP port. `PeerAddress` is absent for a reflector. |
-| `InterfaceIndex`, `LocalSourcePort`, `ControlPort` | Configured interface index and actual socket ports. |
-| `SessionType`, `TransportMode`, `Passive`, `PointToPoint` | Configured role, hop mode, and passive/point-to-point settings. |
-| `AllowedPeers`, `MinTtl` | Configured reflector source allowlist and optional minimum hop limit. |
-| `LocalDiscriminator`, `RemoteDiscriminator` | Local session/entity identifier and current learned or configured remote identifier. Classical expiry clears the learned identifier; an S-BFD initiator retains its configured target. |
-| `LocalState`, `RemoteState`, `LocalDiagnostic`, `RemoteDiagnostic` | Local protocol state/diagnostic and last accepted remote state/diagnostic. `RemoteDiagnostic` retains the numeric wire value. |
-| `Communicating` | Whether the stateful session has unexpired accepted communication. Absent for a stateless reflector. |
-| `StateSinceUtc`, `LastUpUtc`, `LastDownUtc`, `LastDownReason` | Time entered the local state and last Up/Down transition details. |
-| `LastValidReceiveUtc`, `LastSuccessfulSendUtc` | Last accepted receive and successful send. Rejected packets do not refresh valid-receive time. |
-| `ConfiguredMinTxIntervalMicroseconds`, `ConfiguredMinRxIntervalMicroseconds`, `StartupTxIntervalMicroseconds` | Active configured transmit, receive, and startup timing. |
-| `LocalDetectMultiplier`, `RemoteDetectMultiplier` | Active local and last accepted peer detection multipliers. |
-| `RemoteMinTxIntervalMicroseconds`, `RemoteMinRxIntervalMicroseconds` | Last accepted peer timing parameters. |
-| `EffectiveTxIntervalMicroseconds`, `DetectionTimeMicroseconds` | Effective session transmit and detection timing. Absent where a session does not apply. |
-| `PeriodicTransmitEnabled`, `PollPending` | Whether periodic transmission is enabled and a Poll sequence is pending. |
-| `PacketsReceivedAccepted`, `PacketsSentSuccessfully`, `PacketsRejected` | Accepted receives, successful sends, and rejected datagrams. |
-| `AuthenticationFailures`, `MalformedPackets`, `ProtocolRejections`, `TransportValidationFailures` | Rejection categories, including authentication, packet shape, protocol rules, and transport/path checks. |
-| `SocketErrors`, `DetectionTimeouts`, `UpTransitions`, `RepliesWithheld` | Socket failures, detection expiries, transitions to Up, and reflector replies withheld by policy. |
-| `LastRejectionReason`, `LastRejectionUtc`, `LastSocketErrorCode`, `LastSocketErrorUtc` | Last rejection reason/time and socket error code/time. |
-| `AuthenticationType`, `AuthenticationKeyId` | Configured authentication mode and non-secret key identifier. |
-| `LastConfigurationReloadUtc`, `LastConfigurationReloadSucceeded` | Last configuration reload attempt time and outcome, if one occurred. |
-
-For S-BFD reflectors, the local state describes entity availability. Peer session
-state, negotiated timing, and detection multipliers are absent because the
-reflector is stateless. Request/reply counters remain available.
-
-The endpoint provides protocol observations only. Windows reports service
-lifecycle separately. It does not expose `SnapshotAge`, `ReceiveAgeAtCapture`,
-`PublishInterval`, `BgpControlEnabled`, `CapturedAtUtc`, or `SchemaVersion`.
-It offers no configuration or BGP control methods. For access checks, see
-[Administrative COM status access](security.md#administrative-com-status-access).
+The BFD service exposes private read-only session telemetry to the broker over
+mutually authenticated local RPC. The broker uses an in-process worker and a
+validated cache; there is no administrative RPC client or public status endpoint.
+See [RPC session-status query](rpc-session-status-design.md) for fields and
+freshness. Use the lifecycle and event queries here for operator monitoring.
+RPC success authenticates the exchange but does not by itself establish a
+fresh snapshot or an Up session.
 
 ## Monitor lifecycle and state transitions
 
@@ -97,7 +23,8 @@ require elevation. Query the service's lifecycle status with:
 Get-Service BfdWinService, BfdBgpBroker
 ```
 
-`Running` means the engine started; it does not mean the BFD session reached `Up`.
+For BFD, `Running` means engine initialization completed; it does not mean the
+BFD session reached `Up`.
 Read recent local state-transition events with:
 
 ```powershell
@@ -130,11 +57,74 @@ Users read access and the BFD service SID Modify access; a custom log path uses
 its administrator-provisioned filesystem permissions. The Operational channel
 uses Windows Event Log permissions without a custom channel ACL.
 
+## Verify broker-to-BFD authentication
+
+On the installed host, query the broker's informational events:
+
+```powershell
+$since = (Get-Date).AddMinutes(-10)
+Get-WinEvent -FilterHashtable @{
+    LogName = 'BFD-Service/Operational'
+    Id = 300
+    StartTime = $since
+} | Where-Object {
+    $_.Message -like '*BFD local RPC*' -or
+    $_.Message -like '*BFD session*'
+} | Select-Object TimeCreated, Id, Message
+```
+
+`BFD local RPC mutual service identity verified` means an authenticated status
+fetch returned a record that passed conversion. Event 300 also carries BGP
+readiness/results, so the event ID alone is insufficient evidence. Success is
+logged on first connection or recovery, not after every one-second query.
+
+`BFD session status unavailable` reports a connection or RPC failure; the cache
+is cleared and the monitor retries. `BFD session telemetry stale` means the
+conservative snapshot age exceeds two seconds. That is a monitoring threshold,
+not the protocol's detection timer or a synthetic Down event.
+
+Error 301 `BFD status rejected` means the complete reply was discarded and the
+cache became `Unavailable`. Completed failures retry after 1, 2, 4, 8, 16, then
+30 seconds. A valid reply resets polling to one second. A rejection does not
+require a broker restart or change BGP state.
+
+Error 301 `BFD status worker stalled` means the worker exceeded its eight-second
+budget. The cache becomes `Quarantined` and further fetches stop until broker
+restart, retaining that one worker's native call storage. The broker remains
+Running and its provider operations continue. Stop interrupts retry waits and
+does not wait indefinitely for that worker.
+
+Query rejection and quarantine events on the installed host:
+
+```powershell
+Get-WinEvent -FilterHashtable @{
+    LogName = 'BFD-Service/Operational'
+    Id = 301
+    StartTime = (Get-Date).AddHours(-1)
+} | Where-Object {
+    $_.Message -like '*BFD status rejected*' -or
+    $_.Message -like '*BFD status worker stalled*'
+} | Select-Object TimeCreated, Id, Message
+```
+
+Investigate mismatched binaries, BFD startup errors, clock validity, and the
+record rejection category when errors repeat. Rejected replies recover
+automatically; a stuck-worker quarantine requires investigation and a restart
+through the normal service administration workflow. Do not broaden an ACL or
+treat an old successful event as current telemetry. Ordinary failures and
+rejected-data errors are each limited to one report per minute, even across
+successful replies; a stalled-worker quarantine logs once. Matching executables,
+installed accounts, service SIDs, and privilege policy remain required.
+
+For packet communication and session readiness, use events 100–112 separately.
+The private RPC endpoint needs no firewall rule or public client configuration.
+
 ## Broker communication
 
 Border Gateway Protocol (BGP) requests pass through the authenticated service
 pipe. The caller must
-carry both the enabled BFD service SID and the LocalService identity; an ordinary
+have LocalService in `TokenUser`, an enabled BFD service group, and the BFD SID
+in a restricted token's restricting list; an ordinary
 administrator process cannot submit broker requests. This service-to-service
 permission is required for BGP control. See [Control a Windows BGP peer](bgp.md)
 for the pipe protocol, broker identity checks, and native provider calls.

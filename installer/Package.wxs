@@ -8,11 +8,6 @@
   <?define FileSecurity = "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)(A;;FRFX;;;$(var.BfdServiceSid))" ?>
   <?define DirectorySecurity = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OICI;FRFX;;;$(var.BfdServiceSid))" ?>
   <?define ParametersSecurity = "O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;$(var.BfdServiceSid))" ?>
-  <?define StatusRegistrationSecurity = "O:SYG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;KR;;;LS)" ?>
-  <!-- Self-relative REG_BINARY descriptors: execute + local execute (0x3),
-       and execute + local launch + local activation (0xb). No remote grants. -->
-  <?define StatusAccessPermission = "010004901400000020000000000000002C00000001010000000000051200000001010000000000051200000002003400020000000000140003000000010100000000000512000000000018000300000001020000000000052000000020020000" ?>
-  <?define StatusLaunchPermission = "010004901400000020000000000000002C0000000101000000000005120000000101000000000005120000000200340002000000000014000B000000010100000000000512000000000018000B00000001020000000000052000000020020000" ?>
   <?define LogSecurity = "O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OICI;0x1301bf;;;$(var.BfdServiceSid))" ?>
   <!-- Query config/status, enumerate dependents, interrogate, and read the DACL
        remain available to authenticated users. Only SYSTEM and administrators
@@ -53,8 +48,9 @@
                           Description="Monitors a configured peer with Bidirectional Forwarding Detection."
                           Type="ownProcess" Start="auto" Account="NT AUTHORITY\LocalService"
                           ErrorControl="normal" Vital="yes">
+            <!-- The broker depends on RpcSs for its MI provider calls. BFD itself
+                 hosts a private local RPC interface and needs no COM activation. -->
             <ServiceDependency Id="BfdBgpBroker" />
-            <ServiceDependency Id="RpcSs" />
             <PermissionEx Id="BfdServiceSecurity" Sddl="$(var.ServiceSecurity)" />
             <!-- ConfigureServicePolicy also enables delayed start and recovery after a
                  nonzero exit. Administrator Stop requests always exit with code 0. -->
@@ -108,64 +104,6 @@
             <PermissionEx Id="LoggingScriptSecurity" Sddl="$(var.FileSecurity)" />
           </File>
         </Component>
-        <!-- COM activation starts the existing SCM service. There is no alternate
-             LocalServer32 executable or DLL surrogate. Standard MSI registry
-             actions provide install, repair, rollback, and uninstall behavior. -->
-        <Component Id="StatusClassRegistration" Bitness="always64">
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\CLSID\{E4A97D25-73E2-4E6C-9A35-281B6AE697C3}">
-            <RegistryValue Id="StatusClassName" Type="string" Value="BFD Windows Service status" KeyPath="yes">
-              <PermissionEx Id="StatusClassSecurity" Sddl="$(var.StatusRegistrationSecurity)" />
-            </RegistryValue>
-            <RegistryValue Id="StatusClassAppId" Name="AppID" Type="string" Value="{954E4BD0-8B46-4A93-B43A-35A4A40ED8F7}" />
-          </RegistryKey>
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\CLSID\{E4A97D25-73E2-4E6C-9A35-281B6AE697C3}\ProgID">
-            <RegistryValue Id="StatusClassProgId" Type="string" Value="BfdWinService.Status.1" />
-          </RegistryKey>
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\CLSID\{E4A97D25-73E2-4E6C-9A35-281B6AE697C3}\VersionIndependentProgID">
-            <RegistryValue Id="StatusClassVersionIndependentProgId" Type="string" Value="BfdWinService.Status" />
-          </RegistryKey>
-        </Component>
-        <Component Id="StatusProgIdRegistration" Bitness="always64">
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.Status.1">
-            <RegistryValue Id="StatusProgIdName" Type="string" Value="BFD Windows Service status" KeyPath="yes">
-              <PermissionEx Id="StatusProgIdSecurity" Sddl="$(var.StatusRegistrationSecurity)" />
-            </RegistryValue>
-          </RegistryKey>
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.Status.1\CLSID">
-            <RegistryValue Id="StatusProgIdClsid" Type="string" Value="{E4A97D25-73E2-4E6C-9A35-281B6AE697C3}" />
-          </RegistryKey>
-        </Component>
-        <Component Id="StatusVersionIndependentProgIdRegistration" Bitness="always64">
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.Status">
-            <RegistryValue Id="StatusVersionIndependentProgIdName" Type="string" Value="BFD Windows Service status" KeyPath="yes">
-              <PermissionEx Id="StatusVersionIndependentProgIdSecurity" Sddl="$(var.StatusRegistrationSecurity)" />
-            </RegistryValue>
-          </RegistryKey>
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.Status\CLSID">
-            <RegistryValue Id="StatusVersionIndependentProgIdClsid" Type="string" Value="{E4A97D25-73E2-4E6C-9A35-281B6AE697C3}" />
-          </RegistryKey>
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\BfdWinService.Status\CurVer">
-            <RegistryValue Id="StatusVersionIndependentProgIdCurVer" Type="string" Value="BfdWinService.Status.1" />
-          </RegistryKey>
-        </Component>
-        <Component Id="StatusAppRegistration" Bitness="always64">
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\AppID\{954E4BD0-8B46-4A93-B43A-35A4A40ED8F7}">
-            <RegistryValue Id="StatusAppName" Type="string" Value="BFD Windows Service status" KeyPath="yes">
-              <PermissionEx Id="StatusAppSecurity" Sddl="$(var.StatusRegistrationSecurity)" />
-            </RegistryValue>
-            <RegistryValue Id="StatusAppService" Name="LocalService" Type="string" Value="BfdWinService" />
-            <RegistryValue Id="StatusAppAuthenticationLevel" Name="AuthenticationLevel" Type="integer" Value="5" />
-            <RegistryValue Id="StatusAppAccessPermission" Name="AccessPermission" Type="binary" Value="$(var.StatusAccessPermission)" />
-            <RegistryValue Id="StatusAppLaunchPermission" Name="LaunchPermission" Type="binary" Value="$(var.StatusLaunchPermission)" />
-          </RegistryKey>
-        </Component>
-        <Component Id="StatusExeRegistration" Bitness="always64">
-          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\AppID\bfd-winservice.exe">
-            <RegistryValue Id="StatusExeAppId" Name="AppID" Type="string" Value="{954E4BD0-8B46-4A93-B43A-35A4A40ED8F7}" KeyPath="yes">
-              <PermissionEx Id="StatusExeAppSecurity" Sddl="$(var.StatusRegistrationSecurity)" />
-            </RegistryValue>
-          </RegistryKey>
-        </Component>
         <!-- Separate key paths prevent repair from resetting administrator settings. -->
         <Component Id="MultihopDefault" Bitness="always64" NeverOverwrite="yes">
           <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters"
@@ -202,7 +140,8 @@
     </StandardDirectory>
     <!-- Fixed-target native SCM actions avoid the documented MsiConfigureServices
          limitation. Snapshot before installation; restore accounts, SIDs, delayed
-         start, and non-crash recovery on rollback. -->
+         start, and non-crash recovery on rollback. RequiredPrivileges is changed
+         only at commit; neither service is started during installation. -->
     <CustomAction Id="PrepareServicePolicy" FileRef="BrokerExe" ExeCommand="--prepare-install" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="RollbackServicePolicy" FileRef="BrokerExe" ExeCommand="--rollback-install" Execute="rollback" Impersonate="no" Return="ignore" />
     <CustomAction Id="ConfigureServicePolicy" FileRef="BrokerExe" ExeCommand="--configure-install" Execute="deferred" Impersonate="no" Return="check" />
@@ -219,11 +158,6 @@
       <ComponentRef Id="BrokerComponent" />
       <ComponentRef Id="ManifestComponent" />
       <ComponentRef Id="LoggingScriptComponent" />
-      <ComponentRef Id="StatusClassRegistration" />
-      <ComponentRef Id="StatusProgIdRegistration" />
-      <ComponentRef Id="StatusVersionIndependentProgIdRegistration" />
-      <ComponentRef Id="StatusAppRegistration" />
-      <ComponentRef Id="StatusExeRegistration" />
       <ComponentRef Id="MultihopDefault" />
       <ComponentRef Id="LogToFileDefault" />
       <ComponentRef Id="ParametersSecurityComponent" />

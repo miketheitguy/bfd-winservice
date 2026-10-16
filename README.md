@@ -6,7 +6,10 @@ and configure the service. Optional Border Gateway Protocol (BGP)
 control starts and stops a configured Windows BGP peer as BFD state changes.
 
 The BFD service runs as LocalService. A separate LocalSystem broker manages BGP
-through a local pipe restricted to the BFD service identity.
+through a local pipe restricted to the BFD service identity. The broker also
+queries BFD session status through a private Windows local RPC interface with
+mutual service authentication. Queries read published snapshots on RPC workers,
+independently of packet processing.
 
 For probes that establish without a discriminator handshake, configure an
 IPv4/IPv6 [Seamless BFD initiator or reflector](docs/seamless.md).
@@ -24,7 +27,7 @@ The service uses these Windows names:
 
 You need:
 
-- 64-bit Windows 10 or later, or a corresponding Windows Server release, on an
+- 64-bit Windows 10 or later, or Windows Server 2016 or later, on an
   x64 processor.
 - An x64 MSI from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
@@ -88,6 +91,12 @@ confirm event `102` in `BFD-Service/Operational` to verify BFD reached `Up`.
 See [Verify peer communication](docs/setup.md#6-verify-peer-communication)
 for the query and expected events.
 
+Use Windows lifecycle queries and event logs for monitoring. The private local
+RPC interface between BFD and the broker provides an authenticated connection
+probe and read-only session telemetry for the broker; it exposes no
+administrative status client. See
+[Monitor service status and BFD events](docs/monitoring.md).
+
 Non-administrators can query service status and read event/file logs. Start/Stop
 and configuration changes require an elevated Administrator; SYSTEM retains
 Windows service lifecycle access.
@@ -112,6 +121,8 @@ Use these guides for the next task:
 | Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
 | Understand authentication, privilege boundaries, and compiler/linker protections | [Security, authentication, and build hardening](docs/security.md) |
 | Trace service inputs, outputs, and BGP actions | [Service communication](docs/service-communication.md) |
+| Review the RPC identity checks, privileges, and security guidance | [Local RPC authentication and authorization](docs/rpc-authentication.md) |
+| Use the broker's status call and understand validation, freshness, and quarantine | [RPC session-status query](docs/rpc-session-status-design.md) |
 | Review RFC 5880, RFC 7419, and RFC 7880 requirements, test coverage, and limits | [RFC conformance tests](docs/rfc-conformance.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |
 

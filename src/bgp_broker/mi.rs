@@ -917,6 +917,26 @@ pub(super) fn invoke(
 }
 
 #[cfg(test)]
+pub(super) fn rpc_schema_fixture() -> io::Result<()> {
+    let mut application = Application::open(&Logger::new(false)?)?;
+    let mut session = application.session()?;
+    let mut options = application.options()?;
+    let mut schema = schema_operation(
+        &mut session,
+        &mut options,
+        w!("root/StandardCimv2"),
+        w!("MSFT_NetAdapter"),
+    )?;
+    // SAFETY: the class operation supplies the SDK GetClass accessor.
+    let next: GetClass = unsafe { entry((*schema.handle.ft).GetClass, "GetClass") }?;
+    schema.drain(next, |class| {
+        // SAFETY: drain lends the live class for this callback only.
+        let _ = unsafe { enum_mapping(class, w!("InterfaceOperationalStatus")) }?;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

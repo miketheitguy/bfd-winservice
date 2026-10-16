@@ -1,6 +1,25 @@
 # Rust skills validation — current guide
 
-Updated 2026-10-08. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
+Updated 2026-10-15. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
+
+## Local RPC security validation — 2026-10-15
+
+The [RPC recovery review](CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15)
+records implementation checks and limits. The
+[RPC authentication reference](docs/rpc-authentication.md) and
+[service diagrams](docs/service-communication.md) describe the implemented
+status contract, native token checks, restricted BFD privileges, management
+denial, in-process broker worker, and completion-before-release ownership.
+
+Native cross-process tests cover both successful calls and rejected account,
+group, anonymous, replacement-server, and runtime-management paths. Cancellation
+and supervised-worker tests exercise resource lifetime, rejected-data recovery,
+capped backoff, stalled-worker quarantine, and bounded shutdown. The fixtures
+use real test tokens without granting service SIDs.
+SCM-created LocalService and
+broker service tokens require the disposable installed MSI check, independently
+of fixture results. Existing provider COM/MI compatibility remains covered by
+the explicit native schema query.
 
 ## State and diagnostic logging validation — 2026-10-08
 

@@ -18,7 +18,7 @@ Prepare the following:
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
   or matching `bfd-winservice.exe`, `BFD-Service.man`, and
   `Initialize-Logging.ps1` files from your service maintainer.
-- Use 64-bit Windows 10 or later, or a corresponding Windows Server release,
+- Use 64-bit Windows 10 or later, or Windows Server 2016 or later,
   on an x64 processor.
 - Open **PowerShell as Administrator**. Use the same
   window throughout the service procedure so its PowerShell variables remain set.
@@ -57,7 +57,15 @@ The MSI installs the following resources for all users:
 - The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
   LocalSystem account. BFD depends on the broker, so starting BFD also starts the
   broker. Without `BgpPeerName`, BFD never contacts it. Both services have their
-  own enabled service SID.
+  own enabled service SID. BFD uses restricted SID type `3`; its service SID is
+  also present in the token's restricting list. The broker retains unrestricted
+  SID type `1`.
+- A BFD `RequiredPrivileges` allowlist containing only
+  `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`. A native commit action
+  records the list after the MSI transaction succeeds; services remain stopped
+  until you start them. SCM applies the list when it creates the LocalService
+  process. BFD also permanently removes unused
+  privileges at startup. The broker's privilege list is unchanged.
 - Protected service ACLs for both services: SYSTEM and Administrators have full
   control. Authenticated users can query configuration/status, enumerate
   dependents, interrogate status, and read the service ACL. They cannot Start/Stop,
@@ -76,9 +84,11 @@ The MSI installs the following resources for all users:
 - The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
   Only the BFD service SID receives Modify access; shared LocalService processes
   receive no write grant. The Parameters key permits reads only by SYSTEM,
-  administrators, and that service SID. Installed code remains writable only by
+  administrators, and that service SID. BFD's write-restricted token requires
+  suitable service-SID grants as well as ordinary write permission. Installed
+  code remains writable only by
   SYSTEM and administrators.
-- Four executable-specific UDP firewall rules for classical and Seamless BFD.
+- Four executable-specific UDP allow rules for classical and Seamless BFD.
 - The broker's `RpcSs` service dependency for native MI. The BFD service depends
   on the broker. See [Monitor service status and BFD events](monitoring.md) for
   lifecycle queries and event-log monitoring.
@@ -135,21 +145,22 @@ references to configure authentication, multihop, S-BFD, or file output.
 
 ### MSI firewall rules
 
-All rules allow UDP for the installed executable on Domain, Private, and Public
+Four rules allow UDP for the installed executable on Domain, Private, and Public
 profiles. Remote addresses are unrestricted so multihop, anycast, and
-point-to-point configurations can use their configured peers. The rules have
-these port restrictions:
+point-to-point configurations can use their configured peers.
+The rules have these protocol and port restrictions:
 
-| Rule | Direction | Local ports | Remote ports |
-| --- | --- | --- | --- |
-| `BfdWinService - control inbound` | Inbound | 3784, 4784, 7784 | 49152–65535 |
-| `BfdWinService - S-BFD replies inbound` | Inbound | 49152–65535 | 7784 |
-| `BfdWinService - probes outbound` | Outbound | 49152–65535 | 3784, 4784, 7784 |
-| `BfdWinService - S-BFD replies outbound` | Outbound | 7784 | 49152–65535 |
+| Rule | Protocol / action | Direction | Local ports | Remote ports |
+| --- | --- | --- | --- | --- |
+| `BfdWinService - control inbound` | UDP / allow | Inbound | 3784, 4784, 7784 | 49152–65535 |
+| `BfdWinService - S-BFD replies inbound` | UDP / allow | Inbound | 49152–65535 | 7784 |
+| `BfdWinService - probes outbound` | UDP / allow | Outbound | 49152–65535 | 3784, 4784, 7784 |
+| `BfdWinService - S-BFD replies outbound` | UDP / allow | Outbound | 7784 | 49152–65535 |
 
 The high-port inbound rule is required for S-BFD initiators because replies
-return to their source port. No TCP or BFD Echo rule is installed. Network
-firewalls and organizational policy still control effective access.
+return to their source port. No BFD Echo rule is installed. Network firewalls
+and organizational policy still control effective access. The private local RPC
+interface uses `ncalrpc` and needs no network firewall rule.
 
 To inspect the installed rules, run:
 
@@ -235,6 +246,11 @@ their accounts, service SIDs, dependencies, and protected ACLs.
 The installer migrates an existing built-in service account to LocalService and
 restores its previous account/SID settings if the transaction rolls back. Custom
 service accounts are rejected because their passwords cannot be restored safely.
+Restricted BFD service-SID writes and the unrestricted broker policy require
+installed-host validation; the isolated tests do not create an SCM service token.
+BFD's service-mode startup checks the LocalService account, its enabled service
+group, and the BFD SID plus write-restricted marker in the restricting list
+before loading configuration, creating sockets, or registering its local RPC interface.
 Do not create just the BFD service with `New-Service`: startup requires an
 authenticated connection to the separately provisioned broker.
 
@@ -345,6 +361,11 @@ Stop request produce a nonzero SCM service-specific exit status, and SCM restart
 the service after 10 seconds. A requested Stop always reports exit code `0`; a
 failed cleanup is still recorded as event 3. For failure details, see
 [Operational events](logging.md#operational-events).
+
+The broker queries BFD session telemetry over private RPC in the background. To inspect
+the authentication event independently of BFD session readiness, see
+[Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
+The RPC interface has no administrator-facing configuration or public query client.
 
 ### 6. Verify peer communication
 

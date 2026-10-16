@@ -3,7 +3,7 @@
 //!
 //! On Windows, runtime and transport provide UDP execution; the executable also
 //! supports LocalService SCM operation and optional BGP control through a separate broker.
-//! The installed service hosts administrator-only COM Automation status queries.
+//! The installed service exposes private authenticated local RPC session telemetry.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 pub mod config;
 #[forbid(unsafe_code)]
@@ -20,10 +20,14 @@ mod bgp;
 #[cfg(windows)]
 pub mod bgp_broker;
 #[cfg(windows)]
+mod com_security;
+#[cfg(windows)]
 mod event_log;
+#[cfg(windows)]
+pub mod local_rpc;
 #[cfg(windows)]
 pub mod runtime;
 #[cfg(windows)]
-pub mod status_com;
+mod service_identity;
 #[cfg(windows)]
 pub mod transport;

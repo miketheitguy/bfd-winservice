@@ -1,7 +1,7 @@
 use bfd_winservice::{
     config::{load_registry, SERVICE_NAME},
-    runtime::{drop_privileges, Engine, Logger, StopSignal},
-    status_com::StatusComServer,
+    local_rpc::LocalRpcServer,
+    runtime::{drop_privileges, verify_bfd_service_identity, Engine, Logger, StopSignal},
 };
 use std::{
     error::Error,
@@ -92,6 +92,9 @@ fn run_service() -> Result<(), Box<dyn Error>> {
     let result = (|| -> Result<(), Box<dyn Error>> {
         // Startup can wait for the broker; advance StartPending checkpoints meanwhile.
         let mut engine = with_progress(&reporter, || -> Result<_, Box<dyn Error>> {
+            // Require the SCM account and restricted service SID before opening
+            // configured resources or accepting local RPC calls.
+            verify_bfd_service_identity()?;
             // Drop unused privileges, including SeImpersonatePrivilege, before
             // accepting network traffic.
             let removed = drop_privileges()?;
@@ -109,12 +112,9 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             log.open_file(&options)?;
             Ok(Engine::from_config(options, &mut log)?)
         })?;
-        // Register the Automation class before reporting Running. The dedicated
-        // COM host serves immutable snapshots on RPC threads; the UDP worker
-        // never waits for clients, marshaling, or endpoint shutdown.
-        let _status_com = with_progress(&reporter, || {
-            StatusComServer::start(engine.status_observer())
-        })?;
+        // The private RPC interface accepts broker queries before Running. RPC
+        // dispatch reads immutable snapshots separately from the UDP worker.
+        let _local_rpc = LocalRpcServer::start(engine.status_observer())?;
         let started = {
             let mut reporter = reporter.lock().unwrap_or_else(|error| error.into_inner());
             reporter.set(ServiceState::Running, ServiceExitCode::Win32(0))?;

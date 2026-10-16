@@ -16,6 +16,16 @@ use crate::{
 };
 use std::io;
 
+// Test-only bridge: exercise real MI traffic and local RPC in one process while
+// keeping the provider host's production COM initialization unchanged.
+#[cfg(test)]
+pub(crate) fn test_rpc_with_provider<R>(
+    work: impl FnOnce(fn() -> io::Result<()>) -> R,
+) -> io::Result<R> {
+    let _com = com::ComHost::initialize()?;
+    Ok(work(mi::rpc_schema_fixture))
+}
+
 /// Verify the installed broker's identity and the BFD service's pipe authorization.
 /// Provider errors do not prevent BFD startup; transport/authentication errors do.
 ///
@@ -37,7 +47,7 @@ pub fn verify_connection() -> io::Result<()> {
     }
 }
 
-/// Dispatch the broker's fixed installer commands or enter its SCM service.
+/// Dispatch fixed installer/probe commands or enter the broker's SCM service.
 ///
 /// # Errors
 /// Returns command-line, installer-provisioning, or SCM errors.

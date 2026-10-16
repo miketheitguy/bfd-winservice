@@ -11,11 +11,17 @@ use arc_swap::ArcSwapOption;
 use std::{
     fmt, io,
     net::{IpAddr, SocketAddr},
+    num::NonZeroU128,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
-const PUBLICATION_INTERVAL: Duration = Duration::from_secs(1);
+/// Minimum spacing between publications that carry new telemetry. Changes
+/// therefore reach readers within this interval without allocating per packet.
+pub(crate) const PUBLICATION_INTERVAL: Duration = Duration::from_millis(100);
+/// Maximum spacing between publications. An unchanged engine republishes its
+/// current view so stream readers can tell a live engine from a stalled one.
+pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Rejection classification that contains no packet contents or key material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +52,8 @@ impl fmt::Display for RejectionReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StatusSnapshot {
+    /// Internal capture metadata is published atomically with the protocol view.
+    pub(crate) publication: Publication,
     /// Configured local IP address bound by the BFD transport.
     pub local_address: IpAddr,
     /// Configured peer IP address; `None` for a stateless reflector.
@@ -165,6 +173,17 @@ pub struct StatusSnapshot {
     pub last_configuration_reload_succeeded: Option<bool>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Publication {
+    pub(crate) instance: NonZeroU128,
+    pub(crate) sequence: u64,
+    pub(crate) started: Instant,
+    pub(crate) captured: Instant,
+    pub(crate) utc: SystemTime,
+    pub(crate) received: Option<Instant>,
+    pub(crate) sent: Option<Instant>,
+}
+
 /// Clonable read-only handle that cannot hold a lock on the BFD packet loop.
 #[derive(Clone, Debug)]
 pub struct StatusObserver {
@@ -179,20 +198,29 @@ impl StatusObserver {
     }
 }
 
+/// Publishes changed telemetry at most every [`PUBLICATION_INTERVAL`] and an
+/// unchanged view every [`REFRESH_INTERVAL`]. The engine thread only compares a
+/// revision until publication is due; readers never delay a publication.
 pub(crate) struct StatusPublisher {
     observer: StatusObserver,
-    next_publish: Instant,
+    last_publish: Instant,
+    published_revision: u64,
     closed: bool,
+    sequence: u64,
 }
 
 impl StatusPublisher {
-    pub(crate) fn new(snapshot: StatusSnapshot, now: Instant) -> Self {
+    pub(crate) fn new(mut snapshot: StatusSnapshot, revision: u64, now: Instant) -> Self {
+        snapshot.publication.sequence = 1;
+        snapshot.publication.captured = now;
         Self {
             observer: StatusObserver {
                 value: Arc::new(ArcSwapOption::from(Some(Arc::new(snapshot)))),
             },
-            next_publish: now + PUBLICATION_INTERVAL,
+            last_publish: now,
+            published_revision: revision,
             closed: false,
+            sequence: 1,
         }
     }
 
@@ -200,22 +228,40 @@ impl StatusPublisher {
         self.observer.clone()
     }
 
-    pub(crate) fn deadline(&self) -> Instant {
-        self.next_publish
+    /// Returns when the next publication is due for the telemetry `revision`.
+    /// The engine's idle wait uses it, so an unchanged engine wakes only for
+    /// the one-second refresh.
+    pub(crate) fn deadline(&self, revision: u64) -> Instant {
+        self.last_publish
+            + if revision == self.published_revision {
+                REFRESH_INTERVAL
+            } else {
+                PUBLICATION_INTERVAL
+            }
     }
 
-    pub(crate) fn is_due(&self, now: Instant) -> bool {
-        !self.closed && now >= self.next_publish
+    pub(crate) fn is_due(&self, revision: u64, now: Instant) -> bool {
+        !self.closed && now >= self.deadline(revision)
     }
 
-    pub(crate) fn publish(&mut self, snapshot: StatusSnapshot, now: Instant) -> bool {
-        if !self.is_due(now) {
+    pub(crate) fn publish(
+        &mut self,
+        mut snapshot: StatusSnapshot,
+        revision: u64,
+        now: Instant,
+    ) -> bool {
+        if !self.is_due(revision, now) {
             return false;
         }
+        self.sequence = self.sequence.wrapping_add(1).max(1);
+        snapshot.publication.sequence = self.sequence;
+        snapshot.publication.captured = now;
+        // Refreshes carry new capture metadata even when protocol values match.
         self.observer.value.store(Some(Arc::new(snapshot)));
         // Skip missed periods: an engine delayed by scheduling publishes once,
-        // then waits another full second rather than allocating catch-up bursts.
-        self.next_publish = now + PUBLICATION_INTERVAL;
+        // then waits another full interval rather than allocating catch-up bursts.
+        self.last_publish = now;
+        self.published_revision = revision;
         true
     }
 
@@ -274,7 +320,11 @@ impl RecordedTime {
 
 /// Single-owner telemetry. Packet processing changes only scalars and existing
 /// monotonic clock samples; allocation and UTC conversion occur at publication.
+/// Every recorded event advances `revision`, which schedules the next publication.
 pub(crate) struct StatusTelemetry {
+    instance: NonZeroU128,
+    started: Instant,
+    revision: u64,
     anchor: Instant,
     anchor_utc: SystemTime,
     allowed_peers: Arc<[IpAddr]>,
@@ -308,6 +358,9 @@ pub(crate) struct StatusTelemetry {
 impl StatusTelemetry {
     pub(crate) fn new(now: Instant, utc: SystemTime, options: &ValidatedOptions) -> Self {
         Self {
+            instance: NonZeroU128::new(rand::random()).unwrap_or(NonZeroU128::MIN),
+            started: now,
+            revision: 0,
             anchor: now,
             anchor_utc: utc,
             allowed_peers: Arc::from(options.allowed_peers.as_slice()),
@@ -346,6 +399,16 @@ impl StatusTelemetry {
         time.calibrated(self.anchor, self.anchor_utc)
     }
 
+    /// Identifies the recorded events; it changes whenever a snapshot would.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn changed(&mut self) {
+        // Only equality matters, so wrapping cannot hide a change in practice.
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// Resolve newly recorded event times using one wall-clock observation per
     /// publication. A later clock correction never rewrites resolved history.
     pub(crate) fn calibrate(&mut self, now: Instant, utc: SystemTime) {
@@ -369,6 +432,7 @@ impl StatusTelemetry {
     }
 
     pub(crate) fn received(&mut self, source: SocketAddr, now: Instant) {
+        self.changed();
         self.packets_received_accepted = self.packets_received_accepted.saturating_add(1);
         self.last_received = Some(RecordedTime::pending(now));
         self.last_source = Some(source);
@@ -387,11 +451,13 @@ impl StatusTelemetry {
     }
 
     pub(crate) fn sent(&mut self, now: Instant) {
+        self.changed();
         self.packets_sent_successfully = self.packets_sent_successfully.saturating_add(1);
         self.last_sent = Some(RecordedTime::pending(now));
     }
 
     pub(crate) fn transition(&mut self, state: State, diagnostic: Diagnostic, now: Instant) {
+        self.changed();
         self.state_since = RecordedTime::pending(now);
         match state {
             State::Up => {
@@ -407,14 +473,17 @@ impl StatusTelemetry {
     }
 
     pub(crate) fn withheld(&mut self) {
+        self.changed();
         self.replies_withheld = self.replies_withheld.saturating_add(1);
     }
 
     pub(crate) fn detection_timeout(&mut self) {
+        self.changed();
         self.detection_timeouts = self.detection_timeouts.saturating_add(1);
     }
 
     pub(crate) fn rejected(&mut self, reason: RejectionReason, now: Instant) {
+        self.changed();
         self.packets_rejected = self.packets_rejected.saturating_add(1);
         self.last_rejection_reason = Some(reason);
         self.last_rejection = Some(RecordedTime::pending(now));
@@ -457,12 +526,14 @@ impl StatusTelemetry {
     }
 
     pub(crate) fn socket_error(&mut self, error: &io::Error, now: Instant) {
+        self.changed();
         self.socket_errors = self.socket_errors.saturating_add(1);
         self.last_socket_error_code = error.raw_os_error();
         self.last_socket_error = Some(RecordedTime::pending(now));
     }
 
     pub(crate) fn configuration_reload(&mut self, succeeded: bool, now: Instant) {
+        self.changed();
         self.last_configuration_reload = Some(RecordedTime::pending(now));
         self.last_configuration_reload_succeeded = Some(succeeded);
     }
@@ -477,6 +548,15 @@ impl StatusTelemetry {
         let reflector = options.session_type == SessionType::SbfdReflector;
         let peer = self.peer_report;
         StatusSnapshot {
+            publication: Publication {
+                instance: self.instance,
+                sequence: 0,
+                started: self.started,
+                captured: self.anchor,
+                utc: self.anchor_utc,
+                received: self.last_received.map(|time| time.instant),
+                sent: self.last_sent.map(|time| time.instant),
+            },
             local_address: options.local,
             peer_address: (!reflector).then_some(options.peer),
             last_accepted_source: self.last_source,
@@ -567,51 +647,171 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_publication_is_once_per_second_without_catch_up_bursts() {
+    fn changes_publish_after_100_ms_and_unchanged_views_refresh_each_second_without_bursts() {
         let (options, session, mut telemetry, now) = fixture();
-        let snapshot = telemetry.snapshot(&session, &options, options.timing(), 52001);
-        let mut publisher = StatusPublisher::new(snapshot, now);
+        let view = |telemetry: &StatusTelemetry| {
+            telemetry.snapshot(&session, &options, options.timing(), 52001)
+        };
+        let mut publisher = StatusPublisher::new(view(&telemetry), telemetry.revision(), now);
         let observer = publisher.observer();
         let original = observer.snapshot().unwrap();
-        for milliseconds in 0..1000 {
-            telemetry.sent(now + Duration::from_millis(milliseconds));
-            assert!(!publisher.is_due(now + Duration::from_millis(milliseconds)));
+        assert_eq!(PUBLICATION_INTERVAL, Duration::from_millis(100));
+        assert_eq!(REFRESH_INTERVAL, Duration::from_secs(1));
+        assert_eq!(
+            publisher.deadline(telemetry.revision()),
+            now + REFRESH_INTERVAL
+        );
+
+        // Changes wait for the publication interval rather than allocating per packet.
+        for milliseconds in 0..100 {
+            let at = now + Duration::from_millis(milliseconds);
+            telemetry.sent(at);
+            assert!(!publisher.publish(view(&telemetry), telemetry.revision(), at));
             assert!(Arc::ptr_eq(&original, &observer.snapshot().unwrap()));
         }
-        let one_second = now + Duration::from_secs(1);
-        assert!(publisher.is_due(one_second));
-        assert!(publisher.publish(
-            telemetry.snapshot(&session, &options, options.timing(), 52001),
-            one_second
-        ));
+        let revision = telemetry.revision();
+        let changed = now + PUBLICATION_INTERVAL;
+        assert_eq!(publisher.deadline(revision), changed);
+        assert!(publisher.publish(view(&telemetry), revision, changed));
         let updated = observer.snapshot().unwrap();
-        assert_eq!(updated.packets_sent_successfully, 1000);
+        assert_eq!(updated.packets_sent_successfully, 100);
         assert_eq!(original.packets_sent_successfully, 0);
-        assert!(!publisher.publish(
-            telemetry.snapshot(&session, &options, options.timing(), 52001),
-            one_second
-        ));
-        let late = now + Duration::from_secs(10);
-        assert!(publisher.publish(
-            telemetry.snapshot(&session, &options, options.timing(), 52001),
-            late
-        ));
-        assert!(!publisher.is_due(late + Duration::from_millis(999)));
-        assert_eq!(publisher.deadline(), late + Duration::from_secs(1));
+
+        // Without new events the next publication is the one-second refresh,
+        // which stores a new immutable snapshot with unchanged values.
+        assert_eq!(publisher.deadline(revision), changed + REFRESH_INTERVAL);
+        let before_refresh = changed + REFRESH_INTERVAL - Duration::from_millis(1);
+        assert!(!publisher.publish(view(&telemetry), revision, before_refresh));
+        assert!(publisher.publish(view(&telemetry), revision, changed + REFRESH_INTERVAL));
+        let refreshed = observer.snapshot().unwrap();
+        assert!(!Arc::ptr_eq(&updated, &refreshed));
+        assert_eq!(updated.local_state, refreshed.local_state);
+        assert_eq!(
+            updated.packets_sent_successfully,
+            refreshed.packets_sent_successfully
+        );
+        assert_ne!(updated.publication.sequence, refreshed.publication.sequence);
+        assert_eq!(updated.publication.instance, refreshed.publication.instance);
+
+        // A delayed engine publishes once, then waits a full interval.
+        let late = changed + Duration::from_secs(10);
+        telemetry.sent(late);
+        assert!(publisher.publish(view(&telemetry), telemetry.revision(), late));
+        assert!(!publisher.publish(view(&telemetry), telemetry.revision(), late));
+        telemetry.sent(late);
+        assert_eq!(
+            publisher.deadline(telemetry.revision()),
+            late + PUBLICATION_INTERVAL
+        );
+    }
+
+    #[test]
+    fn every_recorded_event_advances_the_revision_but_publication_work_does_not() {
+        let (options, session, mut telemetry, now) = fixture();
+        let mut revision = telemetry.revision();
+        let mut assert_changed = |telemetry: &StatusTelemetry, event: &str| {
+            assert_ne!(
+                telemetry.revision(),
+                revision,
+                "{event} must schedule publication"
+            );
+            revision = telemetry.revision();
+        };
+        let source = "127.0.0.81:52002".parse().unwrap();
+        telemetry.received(source, now);
+        assert_changed(&telemetry, "received");
+        telemetry.received_session(&session, source, now);
+        assert_changed(&telemetry, "received_session");
+        telemetry.sent(now);
+        assert_changed(&telemetry, "sent");
+        telemetry.transition(State::Up, Diagnostic::None, now);
+        assert_changed(&telemetry, "transition");
+        telemetry.withheld();
+        assert_changed(&telemetry, "withheld");
+        telemetry.detection_timeout();
+        assert_changed(&telemetry, "detection_timeout");
+        telemetry.rejected(RejectionReason::InvalidDatagram, now);
+        assert_changed(&telemetry, "rejected");
+        telemetry.socket_error(&io::Error::from_raw_os_error(10051), now);
+        assert_changed(&telemetry, "socket_error");
+        telemetry.configuration_reload(true, now);
+        assert_changed(&telemetry, "configuration_reload");
+        telemetry.calibrate(now, SystemTime::now());
+        let _ = telemetry.snapshot(&session, &options, options.timing(), 52001);
+        assert_eq!(
+            telemetry.revision(),
+            revision,
+            "publication must not reschedule itself"
+        );
+        telemetry.revision = u64::MAX;
+        telemetry.sent(now);
+        assert_eq!(
+            telemetry.revision(),
+            0,
+            "the revision wraps instead of overflowing"
+        );
+    }
+
+    #[test]
+    #[ignore = "measurement; run with: cargo test-release --lib publication_cost -- --ignored --nocapture"]
+    fn publication_cost_on_the_engine_thread_is_bounded() {
+        let (options, session, mut telemetry, now) = fixture();
+        let snapshot = telemetry.snapshot(&session, &options, options.timing(), 52001);
+        let mut publisher = StatusPublisher::new(snapshot, telemetry.revision(), now);
+        let observer = publisher.observer();
+        let running = std::sync::atomic::AtomicBool::new(true);
+        const ROUNDS: u32 = 200_000;
+        let elapsed = std::thread::scope(|scope| {
+            // Readers retain snapshots independently of the publisher.
+            for _ in 0..4 {
+                let observer = observer.clone();
+                let running = &running;
+                scope.spawn(move || {
+                    while running.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::hint::black_box(observer.snapshot());
+                    }
+                });
+            }
+            let started = Instant::now();
+            for round in 1..=ROUNDS {
+                // Exactly the engine's due-path work: calibrate, build, store.
+                let at = now + PUBLICATION_INTERVAL * round;
+                telemetry.sent(at);
+                telemetry.calibrate(at, SystemTime::now());
+                let snapshot = telemetry.snapshot(&session, &options, options.timing(), 52001);
+                assert!(publisher.publish(
+                    std::hint::black_box(snapshot),
+                    telemetry.revision(),
+                    at
+                ));
+            }
+            let elapsed = started.elapsed();
+            running.store(false, std::sync::atomic::Ordering::Relaxed);
+            elapsed
+        });
+        let each = elapsed / ROUNDS;
+        println!(
+            "PUBLICATION_COST: {each:?} per snapshot; {:?} per second at 100 ms",
+            each * 10
+        );
+        assert!(
+            each < Duration::from_micros(100),
+            "publication took {each:?}"
+        );
     }
 
     #[test]
     fn close_and_drop_clear_availability_but_retained_snapshots_remain_readable() {
         let (options, session, telemetry, now) = fixture();
         let snapshot = telemetry.snapshot(&session, &options, options.timing(), 52001);
-        let mut publisher = StatusPublisher::new(snapshot.clone(), now);
+        let mut publisher = StatusPublisher::new(snapshot.clone(), 0, now);
         let observer = publisher.observer();
         let retained = observer.snapshot().unwrap();
         publisher.close();
         assert!(observer.snapshot().is_none());
-        assert!(!publisher.publish(snapshot, now + Duration::from_secs(1)));
+        assert!(!publisher.publish(snapshot, 1, now + Duration::from_secs(1)));
         assert_eq!(retained.local_state, State::Down);
-        let publisher = StatusPublisher::new((*retained).clone(), now);
+        let publisher = StatusPublisher::new((*retained).clone(), 0, now);
         let observer = publisher.observer();
         drop(publisher);
         assert!(observer.snapshot().is_none());
@@ -896,7 +1096,7 @@ mod tests {
     fn concurrent_queries_observe_whole_immutable_snapshots() {
         let (options, session, telemetry, now) = fixture();
         let snapshot = telemetry.snapshot(&session, &options, options.timing(), 52001);
-        let mut publisher = StatusPublisher::new(snapshot.clone(), now);
+        let mut publisher = StatusPublisher::new(snapshot.clone(), 0, now);
         let observer = publisher.observer();
         std::thread::scope(|scope| {
             for _ in 0..4 {
@@ -916,7 +1116,7 @@ mod tests {
                 let mut next = snapshot.clone();
                 next.packets_received_accepted = generation;
                 next.packets_sent_successfully = generation;
-                assert!(publisher.publish(next, now + Duration::from_secs(generation)));
+                assert!(publisher.publish(next, generation, now + Duration::from_secs(generation)));
             }
         });
     }

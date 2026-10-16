@@ -1,0 +1,63 @@
+[
+    uuid(8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319),
+    version(1.1),
+    pointer_default(unique)
+]
+interface BfdLocal
+{
+    typedef struct BFD_RPC_ADDRESS {
+        [range(0,6)] unsigned long family;
+        [range(0,65535)] unsigned long port;
+        unsigned long scope;
+        byte bytes[16];
+    } BFD_RPC_ADDRESS;
+
+    typedef struct BFD_SESSION_STATUS_V1 {
+        [range(0,1)] unsigned long version;
+        [range(0,1024)] unsigned long size;
+        unsigned hyper fields;
+        byte instance[16];
+        unsigned hyper sequence;
+        unsigned hyper captured_utc;
+        unsigned hyper uptime_us;
+        unsigned hyper age_us;
+        unsigned hyper received_utc;
+        unsigned hyper received_age_us;
+        unsigned hyper sent_utc;
+        unsigned hyper sent_age_us;
+        unsigned hyper state_since_utc;
+        unsigned hyper up_utc;
+        unsigned hyper down_utc;
+        unsigned hyper tx_us;
+        unsigned hyper detection_us;
+        unsigned hyper received;
+        unsigned hyper sent;
+        unsigned hyper rejected;
+        unsigned hyper auth_failures;
+        unsigned hyper socket_errors;
+        unsigned hyper detection_timeouts;
+        unsigned hyper up_transitions;
+        [range(0,2)] unsigned long role;
+        [range(0,1)] unsigned long mode;
+        [range(0,3)] unsigned long local_state;
+        [range(0,3)] unsigned long peer_state;
+        [range(0,7)] unsigned long local_diag;
+        [range(0,31)] unsigned long peer_diag;
+        [range(0,1)] unsigned long communicating;
+        unsigned long local_disc;
+        unsigned long remote_disc;
+        [range(0,255)] unsigned long local_mult;
+        [range(0,255)] unsigned long peer_mult;
+        [range(0,7)] unsigned long down_reason;
+        unsigned long interface_index;
+        [range(0,65535)] unsigned long control_port;
+        BFD_RPC_ADDRESS local_address;
+        BFD_RPC_ADDRESS peer_address;
+        BFD_RPC_ADDRESS source_address;
+    } BFD_SESSION_STATUS_V1;
+
+    unsigned long Probe([in] handle_t binding);
+    unsigned long GetSessionStatusV1(
+        [in] handle_t binding,
+        [out, ref] BFD_SESSION_STATUS_V1 *status);
+}

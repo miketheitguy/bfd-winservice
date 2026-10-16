@@ -1,6 +1,6 @@
 //! An in-process state snapshot for library users and integration tests.
-//! This lightweight view stays in-process; the installed service's COM endpoint
-//! uses the separate rich StatusObserver.
+//! This lightweight view stays in-process. RPC reads a separate coherent
+//! multi-field snapshot rather than merging this atomic state into older data.
 #![forbid(unsafe_code)]
 
 use crate::packet::State;

@@ -1,6 +1,9 @@
-//! Embed version and ETW resources for the supported Windows target.
+//! Build native LRPC stubs and embed version and ETW resources for Windows.
 #![forbid(unsafe_code)]
 use std::{env, error::Error, fs, io, path::PathBuf, process::Command};
+
+#[path = "rpc/build.rs"]
+mod rpc_build;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
@@ -24,9 +27,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("the service supports only the 64-bit x86_64-pc-windows-msvc target".into());
     }
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
-    let manifest =
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest directory")?)
-            .join("events/BFD-Service.man");
+    let root =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest directory")?);
+    rpc_build::build(&out, &root)?;
+    let manifest = root.join("events/BFD-Service.man");
     run(Command::new(sdk_tool("mc.exe", "BFD_MC_PATH")?)
         .args(["-h", ".", "-r", "."])
         .arg(&manifest)

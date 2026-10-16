@@ -2,6 +2,98 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+## RPC status rejection recovery — 2026-10-15
+
+Cleanly rejected status data clears the cache and retries automatically.
+Both checked Rust conversion failures and recoverable native marshaling
+errors discard the entire reply and clear prior cached status to `Unavailable`.
+The same worker retries after 1, 2, 4, 8, 16, then 30 seconds; a valid reply resets
+the delay. Rejected-data errors and ordinary failures have independent
+one-minute reporting limits that successful replies do not reset.
+
+Only a stuck native worker retains the until-restart quarantine. Stop interrupts
+even the longest backoff wait, while pending native storage remains owned.
+Fatal native exceptions remain outside the RPC recovery handler. Authentication,
+wire bounds, packet processing, and the BGP provider contract are unchanged.
+See [the failure policy and Rust boundary](docs/rpc-session-status-design.md#secure-response-to-invalid-data).
+
+Validation: all 29 targeted RPC tests passed in both optimized and
+AddressSanitizer profiles. Regression coverage includes native and Rust
+rejection, recovery on the same worker, backoff capping/reset, and Stop during
+a 30-second retry wait. Authentication, replacement rejection, cancellation,
+and stalled-worker lifetime tests also passed. Strict all-target release Clippy,
+formatting, documentation links, 27 PowerShell examples, and three editable
+draw.io exports passed their checks. Installed-service MSI validation was not
+run locally; the opt-in MI/RPC coexistence test was not rerun for this policy
+change.
+
+## RPC session-status implementation — 2026-10-15
+
+The rejection-recovery entry above supersedes this revision's permanent
+quarantine for invalid data; its validation results describe that earlier policy.
+
+The broker now calls `GetSessionStatusV1` from a worker thread inside its
+existing process. The authenticated reply carries local and peer state,
+diagnostics, accepted receive and successful send times, addresses, timing,
+and counters from one immutable engine publication. Queries never request
+packet-loop work or change the existing snapshot publication frequency. The
+BGP provider COM/MI contract and process privileges remain unchanged.
+
+The fixed native record contains only integers and fixed arrays. Native MIDL
+range checks and one Rust `TryFrom` conversion construct enums, nonzero values,
+addresses, and checked times without adding a validation dependency. Invalid
+records and native marshaling faults clear the broker cache and quarantine
+telemetry until restart. They never fabricate Down, issue a BGP action, or
+restart the provider process. Transient failures clear the cache and retry.
+
+One supervisor bounds status fetching independently of native completion.
+Cancellation retains call storage until RPC completes; uncertain ownership
+retains that single worker without blocking broker shutdown or creating
+replacement workers. The implementation and operational limits are documented
+in [RPC session-status query](docs/rpc-session-status-design.md) and
+[RPC authentication](docs/rpc-authentication.md).
+
+Validation passed all 266 optimized default tests and strict all-target release
+Clippy. Coverage includes native C/Rust layout, native and Rust rejection,
+historical peer reports, stale data, quarantine, recovery, cancellation,
+responsive shutdown, and live BFD with concurrent retained snapshot readers.
+All 27 targeted RPC tests also passed under AddressSanitizer, including native
+cancellation and malformed replies. The explicit read-only native MI/RPC
+coexistence test also passed: real provider schema traffic and fixed-policy RPC
+share one process, reject a replacement
+server, and recover afterward. A 200,000-publication measurement with four
+concurrent readers averaged 609 ns per publication on this host; that is not a
+real-time latency guarantee. Formatting, three rustdoc tests, PowerShell syntax,
+documentation links, and the three editable draw.io exports were checked.
+Installed SCM-token first-start/repair validation
+remains a separate MSI check and was not run locally.
+
+## Local RPC security review — 2026-10-15
+
+This entry records the earlier probe-only implementation. The session-status
+implementation above supersedes its isolated-child design and cleanup policy.
+
+The private `ncalrpc` interface exposes a connection probe to an isolated broker
+child. The review checked Windows credentials, service-SID authorization,
+restricted BFD identity, Identify-level QOS, server identity descriptors,
+authorization-cache isolation, and asynchronous completion lifetimes against
+Microsoft's guidance. The mechanisms and primary references are in
+[Local RPC authentication and authorization](docs/rpc-authentication.md).
+
+Native testing reproduced the RPC runtime's separate management-query surface.
+BFD now denies every runtime management operation before opening its endpoint.
+The application interface still admits authenticated probes. Binding cleanup
+also fails closed inside the isolated child if unbind/free cannot complete.
+The BGP provider COM/MI contract and its host privileges remain unchanged.
+
+The implementation review passed 253 optimized tests, strict release Clippy,
+executable hardening checks, and an explicit native MI schema compatibility
+test. Native fixtures include wrong identities, anonymous callers, same-account
+server replacement, management denial, cancellation, and bounded child cleanup.
+The installed SCM-token handshake is a separate MSI first-start/repair check;
+it was not run locally. Documentation and diagram changes do not establish that
+deployment validation passed.
+
 ## RFC 5880 / RFC 7419 / RFC 7880 validation — 2026-10-09
 
 Reviewed the published base BFD, common interval, and S-BFD specifications,

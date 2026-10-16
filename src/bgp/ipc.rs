@@ -13,16 +13,11 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{
         LocalFree, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_NOT_FOUND,
-        ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
-        WAIT_TIMEOUT,
+        ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
     Security::{
-        Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
-            SDDL_REVISION_1,
-        },
-        CheckTokenMembership, DuplicateToken, RevertToSelf, SecurityIdentification,
-        SECURITY_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY,
+        Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
+        RevertToSelf, SECURITY_ATTRIBUTES, TOKEN_QUERY,
     },
     Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
@@ -35,10 +30,7 @@ use windows_sys::Win32::{
             ImpersonateNamedPipeClient, PeekNamedPipe, WaitNamedPipeW, PIPE_READMODE_MESSAGE,
             PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE,
         },
-        Threading::{
-            CreateEventW, GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
-            WaitForSingleObject,
-        },
+        Threading::{CreateEventW, GetCurrentThread, OpenThreadToken, WaitForSingleObject},
         IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
     },
 };
@@ -81,49 +73,9 @@ impl Drop for LocalAllocation {
     }
 }
 
-fn sid(value: &str) -> io::Result<LocalAllocation> {
-    let value = wide(value);
-    let mut result = ptr::null_mut();
-    // SAFETY: terminated input and writable output; success transfers LocalFree ownership.
-    if unsafe { ConvertStringSidToSidW(value.as_ptr(), &mut result) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(LocalAllocation(result))
-}
-
-fn member(token: HANDLE, value: &str) -> io::Result<bool> {
-    let sid = sid(value)?;
-    let mut present = 0;
-    // SAFETY: SID is live and valid; token is an impersonation token or NULL for this thread.
-    if unsafe { CheckTokenMembership(token, sid.0, &mut present) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(present != 0)
-}
-
 pub(crate) fn require_broker_identity() -> io::Result<()> {
-    let mut raw = ptr::null_mut();
-    // SAFETY: process pseudo-handle is valid; output is writable.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &mut raw) }
-        == 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful OpenProcessToken transfers a uniquely owned real handle.
-    let token = unsafe { OwnedHandle::from_raw_handle(raw) };
-    let mut raw = ptr::null_mut();
-    // SAFETY: duplicate at identification level; CheckTokenMembership requires an impersonation token.
-    if unsafe { DuplicateToken(token.as_raw_handle(), SecurityIdentification, &mut raw) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful duplication transfers a uniquely owned real handle.
-    let duplicate = unsafe { OwnedHandle::from_raw_handle(raw) };
-    if !member(duplicate.as_raw_handle(), "S-1-5-18")?
-        || !member(duplicate.as_raw_handle(), BROKER_SID)?
-    {
-        return Err(denied());
-    }
-    Ok(())
+    let token = crate::service_identity::process_token()?;
+    crate::service_identity::require_identity(token.as_raw_handle(), BROKER_SID, "S-1-5-18")
 }
 
 struct Identification;
@@ -151,10 +103,7 @@ fn identify_client(pipe: &OwnedHandle, client_sid: &str, account_sid: &str) -> i
     }
     // SAFETY: successful open transfers a uniquely owned real token handle.
     let token = unsafe { OwnedHandle::from_raw_handle(raw) };
-    if !member(token.as_raw_handle(), client_sid)? || !member(token.as_raw_handle(), account_sid)? {
-        return Err(denied());
-    }
-    Ok(())
+    crate::service_identity::require_identity(token.as_raw_handle(), client_sid, account_sid)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,6 +268,14 @@ fn read(
     deadline: Option<Instant>,
     stop: Option<&StopSignal>,
 ) -> io::Result<Frame> {
+    Frame::decode(&read_bytes(pipe, deadline, stop)?)
+}
+
+fn read_bytes(
+    pipe: &OwnedHandle,
+    deadline: Option<Instant>,
+    stop: Option<&StopSignal>,
+) -> io::Result<[u8; FRAME_SIZE]> {
     let (event, mut overlap) = operation()?;
     let mut bytes = [0; FRAME_SIZE];
     // SAFETY: fixed-size live buffer/OVERLAPPED retained until complete drains native I/O.
@@ -336,7 +293,7 @@ fn read(
     if count as usize != FRAME_SIZE {
         return Err(invalid("truncated BGP frame"));
     }
-    Frame::decode(&bytes)
+    Ok(bytes)
 }
 
 fn write(
@@ -387,8 +344,15 @@ pub(crate) mod fixtures {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
+        // World stands in for the service group; account identity must still
+        // match TokenUser exactly in positive fixtures.
+        let account = if account_sid == "S-1-1-0" {
+            crate::service_identity::current_user_sid().unwrap()
+        } else {
+            account_sid.to_owned()
+        };
         (
-            Listener::with_policy(&name, "S-1-1-0", account_sid).unwrap(),
+            Listener::with_policy(&name, "S-1-1-0", &account).unwrap(),
             name,
         )
     }
@@ -526,6 +490,31 @@ mod tests {
                 let _cleanup = fixtures::StopOnDrop(stop.clone());
                 let client = fixtures::connect_pipe(&name);
                 assert!(fixtures::request(&client, Method::Start, 1).is_err());
+                server.join().unwrap();
+            });
+        }
+    }
+
+    #[test]
+    fn malformed_frames_are_authorized_before_decoding() {
+        for (account, expected) in [
+            ("S-1-1-0", io::ErrorKind::InvalidData),
+            ("S-1-5-19", io::ErrorKind::PermissionDenied),
+        ] {
+            let (listener, name) = fixtures::listener(account);
+            let stop = StopSignal::new().unwrap();
+            thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    listener.accept(&stop).unwrap();
+                    let error = listener.request(0, &stop).unwrap_err();
+                    assert_eq!(error.kind(), expected);
+                    listener.disconnect();
+                });
+                let _cleanup = fixtures::StopOnDrop(stop.clone());
+                let client = fixtures::connect_pipe(&name);
+                // A complete native message establishes the caller's identity
+                // even though its protocol contents are invalid.
+                write_bytes(&client, &[0; FRAME_SIZE], Instant::now() + IO_TIMEOUT, None).unwrap();
                 server.join().unwrap();
             });
         }
@@ -1016,14 +1005,15 @@ impl Listener {
         .map(|_| ())
     }
     pub(crate) fn request(&self, previous: u64, stop: &StopSignal) -> io::Result<Frame> {
-        let frame = read(
+        let bytes = read_bytes(
             &self.pipe,
             (previous == 0).then(|| Instant::now() + IO_TIMEOUT),
             Some(stop),
         )?;
-        // Identification and reversion finish before any privileged provider operation.
+        // Windows identifies the sender of the last message read. Check that
+        // identity and revert before decoding or privileged provider work.
         identify_client(&self.pipe, &self.client_sid, &self.account_sid)?;
-        frame.validate_request(previous)
+        Frame::decode(&bytes)?.validate_request(previous)
     }
     pub(crate) fn respond(&self, frame: Frame, stop: &StopSignal) -> io::Result<()> {
         write(&self.pipe, frame, Instant::now() + IO_TIMEOUT, Some(stop))
@@ -1035,3 +1025,6 @@ impl Listener {
         }
     }
 }
+
+#[cfg(all(test, not(miri)))]
+mod tests_restricted;

@@ -96,6 +96,13 @@ locations need a corresponding service SID grant. Grant access to the specific
 service rather than the shared LocalService account. The broker writes its own
 diagnostics through ETW and does not open `LogFilePath`.
 
+The installed BFD token uses restricted service SID type `3`. Write checks use
+both its ordinary token and restricting SIDs, so custom paths must grant the
+BFD service SID the rights needed to create folders and write, rename, or replace
+the active and rotated log files. An account-only LocalService write grant does
+not satisfy this restriction. This leaves ordinary log-read ACLs unchanged;
+installed-token logging and ETW validation remain deferred.
+
 Each file line starts with the current UTC time in `YYYY-MM-DDTHH:mm:ss.sssZ` format. The trailing `Z` identifies UTC, and the fractional seconds provide millisecond precision. Multiline messages include the same entry timestamp on every line. For example:
 
 ```text
@@ -139,6 +146,18 @@ are separate records, with independent severity levels.
 The BGP broker uses this channel for event **300** (Information: readiness and
 management results) and **301** (Error: startup, authorization, or provider
 failure). These messages include the configured peer and operation when available.
+
+Event 300 also records `BFD local RPC mutual service identity verified`,
+`BFD session status unavailable`, and `BFD session telemetry stale`. The broker
+normally queries once per second and logs success on connection/recovery.
+Completed failures clear the cache and back off through 1, 2, 4, 8, 16, then
+30 seconds; a valid reply resets polling. Error 301 `BFD status rejected` discards
+the reply and retries. Ordinary failure and rejected-data reports are each
+limited to once per minute, including across successful replies. Only Error 301
+`BFD status worker stalled` quarantines telemetry until broker restart, stopping
+further fetches while retaining the single worker's native storage. Provider
+work continues without a BGP action from these query failures. See
+[Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
 
 ### Lifecycle, communication, and state events
 

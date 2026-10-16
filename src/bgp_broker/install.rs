@@ -26,6 +26,8 @@ const RECORD_LEN: usize = 8;
 /// Covers the maximum 60-second announcement, 60-second cleanup, and final logging.
 const BFD_PRESHUTDOWN_MS: u32 = 125_000;
 
+mod privileges;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Account {
     System,
@@ -297,33 +299,37 @@ pub(super) fn prepare() -> io::Result<()> {
     result
 }
 
+fn bfd_policy() -> Policy {
+    Policy {
+        account: Account::LocalService,
+        sid: ServiceSidType::Restricted,
+        delayed: true,
+        non_crash_recovery: true,
+        preshutdown_ms: BFD_PRESHUTDOWN_MS,
+    }
+}
+
+fn broker_policy(preshutdown_ms: u32) -> Policy {
+    Policy {
+        account: Account::System,
+        sid: ServiceSidType::Unrestricted,
+        delayed: true,
+        non_crash_recovery: false,
+        preshutdown_ms,
+    }
+}
+
 pub(super) fn configure() -> io::Result<()> {
     // A valid snapshot is required before changing either installed service.
     decode(&fs::read(snapshot_path()?)?)?;
     let manager = manager()?;
+    // RequiredPrivileges remains untouched until commit. That preserves absent,
+    // explicit-empty, and explicit-list policies on every ordinary rollback.
     // Both start after the boot-critical automatic services, when interface
     // addresses are more likely to exist. BFD recovery also covers nonzero exits.
-    set(
-        &open(&manager, NAMES[0])?,
-        Policy {
-            account: Account::LocalService,
-            sid: ServiceSidType::Unrestricted,
-            delayed: true,
-            non_crash_recovery: true,
-            preshutdown_ms: BFD_PRESHUTDOWN_MS,
-        },
-    )?;
+    set(&open(&manager, NAMES[0])?, bfd_policy())?;
     let broker = open(&manager, NAMES[1])?;
-    set(
-        &broker,
-        Policy {
-            account: Account::System,
-            sid: ServiceSidType::Unrestricted,
-            delayed: true,
-            non_crash_recovery: false,
-            preshutdown_ms: preshutdown_timeout(&broker)?,
-        },
-    )
+    set(&broker, broker_policy(preshutdown_timeout(&broker)?))
 }
 
 pub(super) fn rollback() -> io::Result<()> {
@@ -350,12 +356,57 @@ pub(super) fn rollback() -> io::Result<()> {
 }
 
 pub(super) fn commit() -> io::Result<()> {
-    fs::remove_file(snapshot_path()?)
+    let path = snapshot_path()?;
+    decode(&fs::read(&path)?)?;
+    let manager = manager()?;
+    let service = open(&manager, NAMES[0])?;
+    // MSI stops both services and never starts them. Commit is the final policy
+    // mutation before the next SCM launch, and the broker policy stays unchanged.
+    // Keep the snapshot if SCM rejects this last fallible operation so normal
+    // rollback can restore the other service settings.
+    privileges::commit_with(
+        || privileges::set_minimum(&service),
+        || fs::remove_file(&path),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn target_policies_restrict_only_bfd_and_keep_broker_system_authority() {
+        let bfd = bfd_policy();
+        assert_eq!(bfd.account, Account::LocalService);
+        assert_eq!(bfd.sid, ServiceSidType::Restricted);
+        assert!(bfd.delayed);
+        assert!(bfd.non_crash_recovery);
+        assert_eq!(bfd.preshutdown_ms, BFD_PRESHUTDOWN_MS);
+        let broker = broker_policy(12_345);
+        assert_eq!(broker.account, Account::System);
+        assert_eq!(broker.sid, ServiceSidType::Unrestricted);
+        assert!(broker.delayed);
+        assert!(!broker.non_crash_recovery);
+        assert_eq!(broker.preshutdown_ms, 12_345);
+    }
+
+    #[test]
+    fn rollback_snapshot_restores_previously_restricted_service_sid_types() {
+        let bfd = Policy {
+            sid: ServiceSidType::Restricted,
+            ..bfd_policy()
+        };
+        let broker = Policy {
+            sid: ServiceSidType::Restricted,
+            ..broker_policy(12_345)
+        };
+        let mut bytes = SNAPSHOT_MAGIC.to_vec();
+        bytes.extend_from_slice(&bfd.encode());
+        bytes.extend_from_slice(&broker.encode());
+        assert_eq!(bytes[SNAPSHOT_MAGIC.len() + 1], 3);
+        assert_eq!(bytes[SNAPSHOT_MAGIC.len() + RECORD_LEN + 1], 3);
+        assert_eq!(decode(&bytes).unwrap(), [Some(bfd), Some(broker)]);
+    }
+
     #[test]
     fn rollback_snapshot_rejects_unknown_accounts_sid_types_flags_and_extra_data() {
         let system = Policy {

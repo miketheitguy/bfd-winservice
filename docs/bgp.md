@@ -10,13 +10,22 @@ unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
 native MI query is started. The broker still starts as a service dependency and
 answers a read-only startup authorization probe when BGP control is configured.
 
+The broker-to-BFD local RPC status query is a separate channel and runs
+even without a BGP target. It authenticates the two services and reads published
+session telemetry without performing a provider operation. See
+[RPC authentication](rpc-authentication.md) and the
+[runtime diagram](service-communication.md#runtime-flow) for both directions.
+
 ## Service identities and authorization
 
 `BfdWinService` handles UDP as **LocalService**. `BfdBgpBroker` runs as
 **LocalSystem** and hosts the native Management Infrastructure (MI) client.
+BFD uses restricted service SID type `3`; the broker keeps unrestricted type `1`.
+The BFD service SID is an enabled normal group and a restricting SID, so the
+pipe's explicit service-SID data-write grant supports its write-restricted token.
 The broker's private COM initialization supports native MI and grants local
-execute rights only to SYSTEM and administrators, with packet integrity. It
-excludes Authenticated Users and the generic Service group. Outgoing proxies
+execute rights only to SYSTEM, with packet integrity. It sets strong unmarshaling
+and disables COM exception handling before opening MI. Outgoing proxies
 default to identification; the local MI destination explicitly requests
 impersonation so Windows providers can use the broker's LocalSystem identity.
 RRAS management requires administrative access; the broker retains that access
@@ -24,12 +33,15 @@ while the packet-processing service does not.
 See [Microsoft's router management requirements](https://learn.microsoft.com/en-us/windows/win32/rras/understanding-router-management-functions).
 
 The local pipe `\\.\pipe\BfdWinService.Bgp.v1` accepts only the enabled
-`NT SERVICE\BfdWinService` SID. For each request, the broker verifies that SID
-and the LocalService account using an identification-only token, then reverts
+`NT SERVICE\BfdWinService` SID. For each request, the broker checks LocalService
+in `TokenUser`, the BFD SID as an enabled, non-deny-only entry in `TokenGroups`,
+and its presence in a restricted client's restricting list. It uses an
+identification-only token, then reverts
 before calling MI. Unrelated LocalService processes and administrator clients
 are denied. Remote clients are rejected. The client checks the pipe server's
 Windows-reported process ID against the broker's running SCM process ID; the
-broker checks its own LocalSystem account and enabled service SID at startup.
+broker checks its own LocalSystem `TokenUser` account and enabled service group
+at startup. Installed restricted-token pipe behavior remains to be validated.
 
 The MSI separately protects Windows service control: authenticated users can
 query either service's status, while SYSTEM and elevated Administrators can
@@ -45,7 +57,8 @@ cannot create another server instance or alter the pipe ACL. If another process
 holds the pipe name, the broker stays Running, logs Error event 301 at most once a
 minute, and retries each second; BFD with `BgpPeerName` rejects the impostor
 through the process ID check and fails startup until the name is released. BFD
-without `BgpPeerName` doesn't contact the broker.
+without `BgpPeerName` doesn't open the BGP control pipe. The independent
+broker-to-BFD RPC status monitor still runs.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.

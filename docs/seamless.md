@@ -28,7 +28,7 @@ Prepare these prerequisites:
 
 For Windows service execution, the MSI creates the service and registers the
 Operational log. With supplied loose files, follow
-[Create the service](setup.md#1-create-the-service) and
+[Install the services](setup.md#1-install-the-services) and
 [Register the Operational log](setup.md#3-register-the-operational-log).
 Then configure one of the roles in this guide before starting the service.
 Each service process runs one role.

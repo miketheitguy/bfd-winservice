@@ -1,68 +1,85 @@
 # Service communication
 
 For developers and Windows administrators, this page maps the installed
-services' network endpoints, administrative COM queries, and BGP actions. See
-[Security, authentication, and build hardening](security.md) for privilege levels,
-authentication checks, and the ASCII and rendered draw.io diagrams.
+services' network endpoints, private local RPC interface, and BGP actions. See
+[Security, authentication, and build hardening](security.md) for identities,
+permissions, and authentication boundaries.
+
+BFD hosts an authenticated local RPC interface for the broker. The broker calls
+it from a worker thread inside its existing process. The existing BGP control
+pipe and Windows provider COM/MI API retain their separate contracts.
+
+The [editable draw.io source](service-communication.drawio) has three pages:
+runtime boundaries, service lifecycle, and RPC authentication. Each exported
+image embeds its editable page.
 
 ## Runtime flow
 
-The two executables run in separate processes:
+![Runtime: the LocalService BFD engine publishes immutable snapshots; the SYSTEM broker's in-process RPC worker reads session status over authenticated local RPC, validates it, and caches it. The separate BGP control pipe and Windows COM/MI provider path remain.](images/service-communication-runtime.png)
 
-1. `BfdWinService` receives and validates UDP packets, updates session state and
-   timers, and sends configured BFD or S-BFD packets. It runs as LocalService.
-   Its dedicated COM host and RPC query threads serve read-only snapshots from
-   the same process, separately from the packet/timer worker.
-2. When `BgpPeerName` is configured, its BGP worker sends fixed `Get`, `Start`, or
-   `Stop` requests on `\\.\pipe\BfdWinService.Bgp.v1`. The client verifies the
-   broker's SCM process ID, and the broker checks the BFD client's Windows token.
-3. `BfdBgpBroker` runs as LocalSystem and invokes native Management Infrastructure
-   (MI) against the local `PS_BgpPeer` Windows provider for one target read from
-   protected Parameters. It returns status/error replies to the BFD client.
-4. Windows RRAS manages the BGP connection to the remote peer.
+The two installed services use these paths:
 
-Packet processing, logging, and the optional BGP worker keep the BFD process
-identity. The broker has its own logging queue. Both services write Operational
-events and report lifecycle status to SCM; BFD can also write a configured file
-log. See [Configuration, lifecycle, and logs](security.md#configuration-lifecycle-and-logs)
-for those paths and [diagnostic access permissions](security.md#e-service-control-configuration-and-diagnostic-access)
-for administrative control and read-only monitoring.
+1. `BfdWinService` receives and validates UDP packets and executes BFD/S-BFD
+   timers as LocalService. Its mutable session has one engine owner.
+2. The engine coalesces telemetry into an immutable `ArcSwap` snapshot, normally
+   at most every 100 milliseconds, with a one-second unchanged refresh.
+3. BFD's private `ncalrpc` interface, `BfdWinService.Local.v1`, exposes `Probe`
+   and `GetSessionStatusV1`. An RPC worker authorizes the broker, loads one
+   snapshot, and copies a fixed record without requesting packet-loop work.
+4. The broker's RPC worker runs inside `bfd-bgp-broker.exe`. It authenticates BFD
+   and converts the reply into checked Rust types before publishing its cache.
+   There is no helper executable instance, stdout transport, or additional pipe.
+5. When `BgpPeerName` is configured, BFD's separate BGP worker sends `Get`,
+   `Start`, or `Stop` on `\\.\pipe\BfdWinService.Bgp.v1`. The client verifies the
+   broker's SCM process ID; the broker checks the BFD client's Windows token.
+6. The broker invokes native Management Infrastructure (MI) against the local
+   `PS_BgpPeer` provider for its configured target. Windows RRAS manages the BGP
+   connection to the remote peer.
 
-## Administrative status queries
+The status cache is observational. Invalid, unavailable, or stale telemetry does
+not request a BGP action or become a fabricated BFD state. The provider worker
+continues under its existing token and COM/MI security.
 
-The LocalService BFD process hosts the read-only
-`BfdWinService.Status.1` COM Automation endpoint. Local 64-bit PowerShell running
-as SYSTEM or with an enabled Administrators SID can call `GetSnapshot()` to obtain
-an immutable observation of session state, peer identity, active timing,
-communication timestamps, and packet/error counters. COM activation targets the
-installed SCM service, and status queries do not contact the BGP broker or
-provider. Protected 64-bit machine registration maps the ProgID/CLSID to an
-AppID whose `LocalService` value contains the service name `BfdWinService`.
-Local launch/activation rights (`0xb`) and call rights
-(`0x3`) grant only SYSTEM and Administrators. Windows starts the registered
-service when activation requires it. The BFD service depends on `BfdBgpBroker`
-and `RpcSs`; the broker depends on `RpcSs`.
+## Service lifecycle
 
-The engine replaces its published `Arc` at most once per second. COM query
-threads read that snapshot without requesting work from, or holding a lock on,
-the packet loop. Each returned object retains its values even after later
-publications; repeat `GetSnapshot()` for a later observation. Session data can
-lag BFD detection and peer reports preserve their last accepted values.
+![Lifecycle: SCM starts the broker first; its status monitor runs after Running. BFD validates its token, creates the engine and snapshot observer, and registers RPC before Running. Shutdown closes observation and drains BFD RPC; broker shutdown does not wait on an unfinished native worker.](images/service-communication-lifecycle.png)
 
-Checks F0-F3 in the diagrams cover activation permissions and each class-creation
-or dispatch call. The endpoint requires an authenticated COM call context and
-a local, non-null `ncalrpc` session. It briefly identifies the actual RPC caller,
-opens that thread's token with `TOKEN_QUERY` and `OpenAsSelf=true`, and uses
-`CheckTokenMembership` for SYSTEM or enabled Administrators. It requires checked
-`RevertToSelf` before the Arc read; there is no process-token identity fallback.
-Ordinary users, filtered Administrator tokens, remote callers, and missing
-identities are denied. The COM security setting `IDENTIFY` is the outgoing proxy
-default, not a cap on incoming caller tokens. The endpoint has no mutation
-methods or secret authentication data.
-Use Windows service queries for lifecycle status. See
-[Query a session snapshot](monitoring.md#query-a-session-snapshot) for PowerShell
-examples and [F: Administrative COM status access](security.md#f-administrative-com-status-access)
-for activation registration and caller checks.
+SCM starts `RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`.
+The broker reports Running before starting the monitor and retries while BFD
+initializes. BFD gives RPC a read-only observer before moving the engine to its
+packet worker. Neither SCM Running nor RPC success implies a session is Up.
+
+BFD closes its observer when the engine ends, then unregisters and drains its
+interface before releasing the security descriptor. The broker stops its
+supervisor without joining an unfinished native RPC worker. That single owned
+worker retains its native call storage until completion or process exit; it is
+never forcibly terminated or replaced repeatedly.
+
+## Private local RPC status
+
+`src/local_rpc.rs` owns registration and the fixed BFD client identity policy.
+`src/local_rpc/status.rs` owns the fixed record and conversion into Rust domain
+types. `src/local_rpc/monitor.rs` owns one supervised RPC worker and the cache.
+Both broker threads run inside the existing service process.
+
+Authentication pins LocalService plus the BFD service SID on the client. BFD
+requires SYSTEM plus the broker service SID on every call. Static Identify
+credentials and packet privacy protect the exchange without enabling additional
+privileges. The broker's provider process token and COM/MI policy are unchanged.
+The BFD token retains its existing two-entry privilege allowlist and restricted
+service SID policy. See [RPC authentication](rpc-authentication.md).
+
+Binding and the status call each have a two-second native asynchronous deadline.
+The supervisor imposes an eight-second monitoring budget. A stalled worker
+quarantines telemetry until broker restart. Invalid replies and transient
+failures clear the cache to `Unavailable` and retry after 1, 2, 4, 8, 16, then
+30 seconds; a valid reply restores one-second polling. Stop interrupts backoff.
+These query failures do not kill the provider host; fatal native faults remain
+outside the recoverable RPC handler.
+
+See [RPC session-status query](rpc-session-status-design.md) for response fields,
+accepted ranges, freshness, quarantine policy, and validation results. For
+operator queries, see [Monitor service status and BFD events](monitoring.md).
 
 ## UDP inputs and outputs
 

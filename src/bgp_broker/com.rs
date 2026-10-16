@@ -1,8 +1,8 @@
 //! Private COM lifetime and security for the BGP broker's native MI client.
 //!
-//! This module registers no class factory or Automation interface. The BFD service
-//! hosts its status interface under separate process security. Local SYSTEM and
-//! administrators are the only principals admitted by the broker's descriptor.
+//! This module registers no class factory or Automation interface; BFD hosts
+//! its private local RPC interface and uses no COM. Local SYSTEM is the only
+//! principal admitted by the broker's descriptor.
 #![allow(unsafe_code)] // COM lifetime and Windows security calls are confined here.
 
 use std::{
@@ -119,6 +119,8 @@ impl ComApartment {
             _thread_bound: PhantomData,
         };
         initialize_security()?;
+        // Apply both exception and unmarshaling policies before opening MI.
+        crate::com_security::configure_global_options()?;
         Ok(apartment)
     }
 }
@@ -144,7 +146,7 @@ fn initialize_security() -> Result<()> {
     // SAFETY: the SDDL is static and terminated; the output pointer is valid.
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            w!("O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)"),
+            w!("O:SYG:SYD:(A;;0x3;;;SY)"),
             SDDL_REVISION_1,
             &mut relative,
             None,

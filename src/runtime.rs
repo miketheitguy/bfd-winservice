@@ -29,9 +29,12 @@ mod logging;
 mod privileges;
 pub(crate) mod state;
 pub mod status;
+pub use crate::service_identity::verify_bfd_service_identity;
 pub use crate::transport::StopSignal;
 pub use logging::Logger;
 pub use privileges::drop_privileges;
+#[cfg(test)]
+pub(crate) use privileges::drop_rpc_privileges;
 pub use state::StateObserver;
 use state::StatePublisher;
 pub use status::{RejectionReason, StatusObserver, StatusSnapshot};
@@ -364,7 +367,11 @@ impl Engine {
             status_telemetry.snapshot(&session, &options, options.timing(), transport.source_port);
         Ok(Self {
             state_publisher: StatePublisher::new(session.state()),
-            status_publisher: StatusPublisher::new(initial_status, now),
+            status_publisher: StatusPublisher::new(
+                initial_status,
+                status_telemetry.revision(),
+                now,
+            ),
             status_telemetry,
             timing: options.timing(),
             sbfd_admin_down: options.sbfd_admin_down,
@@ -386,14 +393,16 @@ impl Engine {
         self.state_publisher.observer()
     }
 
-    /// Returns immutable administrative snapshots refreshed at most once a second.
+    /// Returns immutable administrative snapshots. Recorded changes publish at
+    /// most every 100 ms; an unchanged engine republishes its view each second.
     /// Queries read shared `Arc` snapshots without requesting packet-loop work.
     pub fn status_observer(&self) -> StatusObserver {
         self.status_publisher.observer()
     }
 
     fn publish_status(&mut self, now: Instant) {
-        if self.status_publisher.is_due(now) {
+        let revision = self.status_telemetry.revision();
+        if self.status_publisher.is_due(revision, now) {
             self.status_telemetry.calibrate(now, SystemTime::now());
             let snapshot = self.status_telemetry.snapshot(
                 &self.session,
@@ -401,7 +410,7 @@ impl Engine {
                 self.timing,
                 self.transport.source_port,
             );
-            self.status_publisher.publish(snapshot, now);
+            self.status_publisher.publish(snapshot, revision, now);
         }
     }
 
@@ -659,10 +668,11 @@ impl Engine {
     }
 
     /// Bounds a wait so the fallback settings read and the idle wakeup still occur.
+    /// Unpublished events shorten the status deadline to the publication interval.
     fn idle_wait(&self, now: Instant, next_poll: Instant) -> Duration {
         let status_wait = self
             .status_publisher
-            .deadline()
+            .deadline(self.status_telemetry.revision())
             .saturating_duration_since(now);
         if self.settings_retry {
             return next_poll
@@ -1183,23 +1193,34 @@ mod tests {
         let mut engine = Engine::from_config(options, &mut log).unwrap();
         let observer = engine.status_observer();
         let original = observer.snapshot().unwrap();
-        let deadline = engine.status_publisher.deadline();
-        let shortly_before = deadline - Duration::from_millis(100);
+        let created = engine
+            .status_publisher
+            .deadline(engine.status_telemetry.revision())
+            - status::REFRESH_INTERVAL;
+        let poll = created + Duration::from_secs(10);
+        // An unchanged engine sleeps until the one-second refresh.
         assert_eq!(
-            engine.idle_wait(shortly_before, deadline + Duration::from_secs(10)),
-            Duration::from_millis(100)
+            engine.idle_wait(created + Duration::from_millis(50), poll),
+            Duration::from_millis(950)
         );
+        // An unpublished change shortens the wait to the publication interval.
         engine.set_reflector_admin_down(true, &mut log);
-        engine.publish_status(shortly_before);
+        assert_eq!(
+            engine.idle_wait(created + Duration::from_millis(50), poll),
+            Duration::from_millis(50)
+        );
+        engine.publish_status(created + Duration::from_millis(99));
         assert!(Arc::ptr_eq(&original, &observer.snapshot().unwrap()));
         assert_eq!(engine.state_observer().current(), Some(State::AdminDown));
-        engine.publish_status(deadline);
+        let first = created + status::PUBLICATION_INTERVAL;
+        engine.publish_status(first);
         assert_eq!(observer.snapshot().unwrap().local_state, State::AdminDown);
         let published = observer.snapshot().unwrap();
+        // Changes inside one interval are coalesced into the next publication.
         engine.set_reflector_admin_down(false, &mut log);
-        engine.publish_status(deadline + Duration::from_millis(999));
+        engine.publish_status(first + Duration::from_millis(99));
         assert!(Arc::ptr_eq(&published, &observer.snapshot().unwrap()));
-        engine.publish_status(deadline + Duration::from_secs(1));
+        engine.publish_status(first + status::PUBLICATION_INTERVAL);
         assert_eq!(observer.snapshot().unwrap().local_state, State::Up);
         assert_eq!(original.local_state, State::Up);
         drop(engine);
