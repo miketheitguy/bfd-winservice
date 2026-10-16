@@ -4,6 +4,9 @@ This guide is for Windows operators checking service lifecycle and Bidirectional
 Forwarding Detection (BFD) session transitions. Use Windows service queries for
 process lifecycle and the Operational event log for transitions over time.
 
+`Running` isn't an Up-session flex: check the transition events and their
+timestamps before drawing conclusions about peer health.
+
 ## Available monitoring interfaces
 
 The BFD service exposes private read-only session telemetry to the broker over
@@ -16,8 +19,10 @@ fresh snapshot or an Up session.
 
 ## Monitor lifecycle and state transitions
 
-Use a PowerShell session on the installed host; these monitoring queries do not
-require elevation. Query the service's lifecycle status with:
+Use a PowerShell session on the installed host. Authenticated local users can
+query service lifecycle without elevation. Event queries also require permission
+to read the Operational channel under the host's Windows Event Log policy.
+Query the service's lifecycle status with:
 
 ```powershell
 Get-Service BfdWinService, BfdBgpBroker

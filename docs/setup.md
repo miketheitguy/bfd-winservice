@@ -10,14 +10,17 @@ requires the MSI to provision both services and their security settings.
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
 
+The startup vibe check has two parts: Windows reports `Running`, then BFD
+reports `Up` after it establishes peer communication.
+
 ## Before you begin
 
 Prepare the following:
 
 - Obtain the x64 MSI from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
-  or matching `bfd-winservice.exe`, `BFD-Service.man`, and
-  `Initialize-Logging.ps1` files from your service maintainer.
+  or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files from your
+  service maintainer for console execution.
 - Use 64-bit Windows 10 or later, or Windows Server 2016 or later,
   on an x64 processor.
 - Open **PowerShell as Administrator**. Use the same
@@ -56,7 +59,8 @@ The MSI installs the following resources for all users:
   are more likely to be assigned.
 - The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
   LocalSystem account. BFD depends on the broker, so starting BFD also starts the
-  broker. Without `BgpPeerName`, BFD never contacts it. Both services have their
+  broker. Without `BgpPeerName`, BFD doesn't open its BGP control pipe. The
+  broker still queries BFD's private RPC status interface. Both services have their
   own enabled service SID. BFD uses restricted SID type `3`; its service SID is
   also present in the token's restricting list. The broker retains unrestricted
   SID type `1`.
@@ -80,7 +84,8 @@ The MSI installs the following resources for all users:
   with message and resource paths pointing to the installed executable.
 - The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
   `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
-  Windows layout. The logging path uses the machine's ProgramData location.
+  Windows layout. The MSI path uses the machine's ProgramData location. The
+  executable fallback and logging script use the literal `C:\ProgramData` path.
 - The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
   Only the BFD service SID receives Modify access; shared LocalService processes
   receive no write grant. The Parameters key permits reads only by SYSTEM,
@@ -102,10 +107,15 @@ Download `BfdWinService-VERSION-x64.msi` and its `.sha256` file from the version
 the `BfdWinService-x64-COMMIT_SHA` Actions artifact; `COMMIT_SHA` identifies the
 source commit. The build workflow runs only for version tags; branch pushes
 and pull requests do not trigger it. In **PowerShell as Administrator**, install
-the MSI:
+the MSI after checking the downloaded checksum:
 
 ```powershell
 $msi = (Resolve-Path 'MSI_PATH').Path
+$expectedHash = (Get-Content -LiteralPath "$msi.sha256" -Raw).Split()[0]
+$actualHash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
+if ($actualHash -ne $expectedHash) {
+    throw 'MSI SHA-256 checksum mismatch'
+}
 $log = Join-Path $env:TEMP 'BfdWinService-install.log'
 $arguments = @(
     '/i', ('"' + $msi + '"'), '/qn', '/norestart',
@@ -122,7 +132,8 @@ Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
 Replace `MSI_PATH` with the local `.msi` path, such as
-`C:\Temp\BfdWinService-1.1.0-x64.msi`. Successful installation reports a **Stopped**,
+`C:\Temp\BfdWinService-1.1.0-x64.msi`. Keep its matching `.msi.sha256` file in the
+same folder. Successful installation reports a **Stopped**,
 **Automatic** service, which `Get-Service` also reports for delayed start, and the
 registered provider/channel. Exit code `3010`
 means installation succeeded and Windows requests a restart.
@@ -134,8 +145,7 @@ Before the first start, complete these steps:
 1. [Enable SEHOP for the executable](#enable-sehop-for-the-executable).
    The MSI doesn't change Windows Exploit Protection policy.
 2. [Configure the session](#2-configure-the-session), including the required
-   addresses and interface index. The MSI already provisions logging defaults;
-   omit the `Initialize-Logging.ps1` invocation if you want to retain them.
+   addresses and interface index. The MSI already provisions logging defaults.
 3. [Start the service](#4-start-the-service) and
    [verify startup](#5-verify-startup).
 4. Configure the remote peer and [verify peer communication](#6-verify-peer-communication).
@@ -188,14 +198,15 @@ remain consistent.
 
 ## Prepare installation files
 
-Copy the supplied files to a permanent installation folder:
+For a console-only deployment, copy the supplied files to a permanent folder.
+Skip this section when the MSI already installed them:
 
 ```powershell
 $deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
 $installDirectory = 'C:\Program Files\BfdWinService'
 New-Item -ItemType Directory -Path $installDirectory -Force
 foreach ($file in @(
-    'bfd-winservice.exe', 'BFD-Service.man', 'Initialize-Logging.ps1'
+    'bfd-winservice.exe', 'Initialize-Logging.ps1'
 )) {
     Copy-Item -LiteralPath (Join-Path $deploymentDirectory $file) `
         -Destination $installDirectory
@@ -207,25 +218,33 @@ Replace `DEPLOYMENT_DIRECTORY` with the folder containing the supplied files,
 such as `C:\Temp\BfdWinService`. Adjust `$installDirectory` if your organization
 uses another location.
 
-PowerShell displays the destination folder and the three installed filenames.
-Keep the executable at this path: SCM starts it here, and Event Viewer loads
-event messages from it.
+PowerShell displays the destination folder and the two copied filenames.
+These files support console execution. Use the MSI for service execution;
+copying files doesn't create services, service identities, or access policies.
 
 ## Enable SEHOP for the executable
 
 In **PowerShell as Administrator**, enable Structured Exception Handling
-Overwrite Protection (SEHOP) for both installed executables:
+Overwrite Protection (SEHOP) for the executable. For an MSI deployment, also
+apply it to the broker:
 
 ```powershell
 Set-ProcessMitigation -Name bfd-winservice.exe -Enable SEHOP
-Set-ProcessMitigation -Name bfd-bgp-broker.exe -Enable SEHOP
 Get-ProcessMitigation -Name bfd-winservice.exe |
     Select-Object -ExpandProperty SEHOP
 ```
 
-Confirm that `Enable` is `ON`. This Windows Exploit Protection policy applies
-to subsequent processes named `bfd-winservice.exe` and `bfd-bgp-broker.exe` on this
-machine. If a process is already running, restart it to apply the policy.
+Confirm that `Enable` is `ON`. For the installed broker, run:
+
+```powershell
+Set-ProcessMitigation -Name bfd-bgp-broker.exe -Enable SEHOP
+Get-ProcessMitigation -Name bfd-bgp-broker.exe |
+    Select-Object -ExpandProperty SEHOP
+```
+
+Confirm the broker's `Enable` is also `ON`. These Windows Exploit Protection
+policies apply to subsequent processes with the specified executable names on
+this machine. If a process is already running, restart it to apply the policy.
 
 SEHOP is a [Windows process mitigation](https://learn.microsoft.com/en-us/powershell/module/processmitigations/set-processmitigation?view=windowsserver2025-ps),
 not an executable build flag. The service is x64: its exception handlers use
@@ -246,13 +265,14 @@ their accounts, service SIDs, dependencies, and protected ACLs.
 The installer migrates an existing built-in service account to LocalService and
 restores its previous account/SID settings if the transaction rolls back. Custom
 service accounts are rejected because their passwords cannot be restored safely.
-Restricted BFD service-SID writes and the unrestricted broker policy require
-installed-host validation; the isolated tests do not create an SCM service token.
+The [MSI installation check](../scripts/Test-MsiInstall.ps1) exercises actual
+SCM-created service tokens on a disposable runner, including RPC authentication,
+ETW delivery, and file writes. Follow this guide to verify your deployment too.
 BFD's service-mode startup checks the LocalService account, its enabled service
 group, and the BFD SID plus write-restricted marker in the restricting list
 before loading configuration, creating sockets, or registering its local RPC interface.
-Do not create just the BFD service with `New-Service`: startup requires an
-authenticated connection to the separately provisioned broker.
+Use the MSI to provision both services. With `BgpPeerName` configured, BFD startup
+also requires an authenticated connection to the broker's BGP control pipe.
 
 Set the installed paths for the remaining commands:
 
@@ -268,7 +288,7 @@ event manifest.
 
 ### 2. Configure the session
 
-Provision the required session values and the default logging settings:
+Provision the required session values:
 
 ```powershell
 $localIp = 'LOCAL_IP'
@@ -283,7 +303,6 @@ New-ItemProperty -Path $parameters -Name Peer `
     -PropertyType String -Value $peerIp -Force
 New-ItemProperty -Path $parameters -Name InterfaceIndex `
     -PropertyType DWord -Value $interfaceIndex -Force
-& (Join-Path $installDirectory 'Initialize-Logging.ps1')
 ```
 
 Replace the following before running the commands:
@@ -292,8 +311,15 @@ Replace the following before running the commands:
 - `PEER_IP`: the remote peer's address, of the same address family.
 - `INTERFACE_INDEX`: the index from `Get-NetIPAddress`, such as `12`.
 
-The registry commands display the keys and values they create. The logging
-script creates `C:\ProgramData\BfdWinService`, displays the folder and registry
+The registry commands display the keys and values they create. The MSI already
+provisions logging defaults. For a loose-file console deployment, initialize
+those defaults with the supplied script:
+
+```powershell
+& (Join-Path $installDirectory 'Initialize-Logging.ps1')
+```
+
+The script creates `C:\ProgramData\BfdWinService`, displays the folder and registry
 objects, and prints this settings summary:
 
 ```text
@@ -301,28 +327,27 @@ LogFilePath (REG_SZ): C:\ProgramData\BfdWinService\trace.log
 LogToFile (REG_DWORD): 0
 ```
 
-It doesn't create or write `trace.log`. The default session uses single-hop.
+It doesn't create or write `trace.log`. Running it again resets `LogFilePath`
+and disables file output, so omit it when retaining existing logging settings.
+The default session uses single-hop.
 For authentication, multihop, or other settings, see the
 [registry configuration reference](configuration.md).
 
-### 3. Register the Operational log
+<a id="3-register-the-operational-log"></a>
 
-Register the Event Tracing for Windows (ETW) manifest on the target machine
-before starting the service:
+### 3. Verify the Operational log
+
+The MSI registers the Event Tracing for Windows (ETW) manifest. Confirm that
+the provider and channel are available:
 
 ```powershell
-$manifest = (Resolve-Path (Join-Path $installDirectory 'BFD-Service.man')).Path
-wevtutil.exe im $manifest "/rf:$exe" "/mf:$exe"
-if ($LASTEXITCODE -ne 0) {
-    throw 'BFD-Service manifest registration failed'
-}
 Get-WinEvent -ListProvider 'BFD-Service'
 Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
 The queries display the `BFD-Service` provider and its Operational channel.
-Use the final installed executable path: Event Viewer loads messages and
-metadata from it. Starting the executable doesn't install the manifest.
+If either is missing, repair the MSI installation before starting BFD.
+Starting the executable doesn't install the manifest.
 
 ### 4. Start the service
 
@@ -408,9 +433,9 @@ then `Stopped`. Stop and Shutdown initiate this status transition immediately.
 The engine sets `AdminDown` and never stops a configured BGP peer; if BFD had
 stopped the peer after a failure, the engine starts it again, as RFC 5882
 requires while BFD is disabled. With a communicating classical peer, it continues
-  permitted announcements for one Detection Time, up to `MaxShutdownAnnounceMs`
-  (30 seconds by default), before finishing cleanup. The installer sets the Windows
-  preshutdown timeout to 125 seconds to cover announcements and cleanup. Other roles
+permitted announcements for one Detection Time, up to `MaxShutdownAnnounceMs`
+(30 seconds by default), before finishing cleanup. The installer sets the Windows
+preshutdown timeout to 125 seconds to cover announcements and cleanup. Other roles
 or sessions without a communicating peer attempt one role-permitted notification.
 See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 
@@ -421,10 +446,15 @@ Run it as Administrator when using the MSI-protected key. Console mode does not
 authorize BGP operations; leave `BgpPeerName` and `BgpRoutingDomain`
 unset for foreground execution.
 
+Stop an installed `BfdWinService` before running the same session in a console;
+both processes would otherwise compete for the same addresses and ports.
+
 ### 1. Configure the registry values
 
-Run the commands in [Configure the session](#2-configure-the-session) to provision
-the local/peer addresses, interface index, and default logging settings.
+Set `$installDirectory` to the MSI installation folder or the folder from
+[Prepare installation files](#prepare-installation-files). Run the commands in
+[Configure the session](#2-configure-the-session) to provision the local/peer
+addresses, interface index, and default logging settings.
 
 ### 2. Start the foreground session
 

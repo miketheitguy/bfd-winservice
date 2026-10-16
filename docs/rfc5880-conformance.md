@@ -7,6 +7,9 @@ code, records regression evidence, and identifies deployment and feature limits.
 The review covers the complete RFC, including its security considerations and
 non-normative backward-compatibility appendix.
 
+The linked code and tests are the implementation receipts: use them to check
+the supported profile before choosing a deployment.
+
 Classical IPv4/IPv6 sessions use the single-hop and multihop transport profiles
 described in [Network and protocol behavior](protocol.md). S-BFD uses RFC 5880
 where [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html) retains its rules;
@@ -14,8 +17,8 @@ its role marker, stateless reflector, and state machine differ as specified in
 [Configure Seamless BFD](seamless.md). The implementation doesn't provide every
 optional RFC 5880 mode or forwarding-plane integration.
 
-For the combined RFC 5880, RFC 7419, and RFC 7880 test matrix, the latest
-congestion-control correction, and validation limits, see
+For the combined RFC 5880, RFC 7419, and RFC 7880 test matrix,
+congestion-control behavior, and validation limits, see
 [RFC conformance tests](rfc-conformance.md).
 
 ## Requirement mapping
@@ -77,6 +80,12 @@ or TTL policy checks. Out-of-band discriminator signaling, automatic routing
 protocol advertisement, Echo, local Demand mode, and external forwarding-plane
 notifications require additional integration.
 
+The RFC 5880 updates for
+[RFC 8562 multipoint BFD](https://www.rfc-editor.org/rfc/rfc8562.html) and
+[RFC 9747 Unaffiliated BFD Echo](https://www.rfc-editor.org/rfc/rfc9747.html)
+are outside this profile: multicast endpoints and the Multipoint bit are
+rejected, and the service has no Echo implementation.
+
 Classical shutdown uses the section 6.8.16 announcement period, bounded by
 `MaxShutdownAnnounceMs` (30 seconds by default, at most 60 seconds). Truncating
 that period is a documented deviation from the announcement recommendation and
@@ -100,19 +109,21 @@ guarantee hardware-level detection latency.
 
 ## Regression evidence
 
-The first eight tests in [rfc5880.rs](../tests/rfc5880.rs) failed against the
-preceding implementation. They verify retained diagnostics, stale zero-RX
+[rfc5880.rs](../tests/rfc5880.rs) verifies retained diagnostics, stale zero-RX
 recovery, both AdminDown validity-clock cases, unsent Poll acknowledgement,
 delayed Up TX increases, separation of timer changes, and multihop discovery
-backoff. A ninth regression failed during this review, demonstrating that
-backoff must retain a slow peer's negotiated rate as its floor after RX expiry.
+backoff. Slow-peer regressions check that backoff retains the preceding
+negotiated rate as its floor after RX expiry and reduces traffic even when the
+peer's interval already exceeds 30 seconds.
 Session unit tests also verify failed-send preparation, exact sequence
 wraparound, and preservation of an unsent S-BFD Final/probe record.
 
-The shutdown test in [windows_udp.rs](../tests/windows_udp.rs) first failed with
-a missing second AdminDown packet, then passed with the grace period. Existing
-byte fixtures, all 16 state transitions, authentication rejection tests, and
-native Poll scheduling checks remain part of the suite.
+The shutdown tests in [windows_udp.rs](../tests/windows_udp.rs) check repeated
+AdminDown packets, both detection directions, and truncation warnings at the
+configured grace-period limit. Byte fixtures, all 16 state transitions,
+authentication rejection tests, and native Poll scheduling checks cover the
+base protocol. BGP unit tests in [bgp.rs](../src/bgp.rs) check administrative
+release of this controller's Stop, including a queued final Start at shutdown.
 
 The logging regressions verify all state/diagnostic ID and level mappings against
 the SDK-compiled manifest, exact payload fields, paired ETW/file output, disabled
@@ -124,6 +135,6 @@ Invalid-header and authentication tests verify that rejected packets don't
 change the recorded peer state or diagnostic.
 
 For the validation commands, see [Run development checks](../CONTRIBUTING.md#run-development-checks).
-For executed checks and their limits, see the latest
+For recorded checks and their limits, see the dated
 [correctness review](../CODE_REVIEW.md) and
 [Rust skills validation](../RUST_SKILLS_VALIDATION.md).

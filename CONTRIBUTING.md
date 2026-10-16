@@ -25,6 +25,9 @@ generates RPC stubs from the interface definition and compiles a small native
 wrapper that contains Windows RPC exceptions. Service logic and authentication
 remain in Rust.
 
+Before you ship, bring receipts: record the checks you ran and the deployment
+behavior that still needs a provisioned Windows Server.
+
 ## Build the executable
 
 Build the executable and inspect its command-line help:
@@ -70,7 +73,7 @@ Debug and release builds use these protections:
 | Control-flow Enforcement Technology (CET) shadow-stack compatibility | `/CETCOMPAT` |
 | Integer overflow detection | `overflow-checks = true` |
 | Immediate termination on panic | `panic = "abort"` in the release profile |
-| Full debug information for development and ASan | `debug = 2` in the development profile; ASan inherits it |
+| Full Rust debug information for development and ASan | `debug = 2` in the development profile; ASan inherits it |
 | Release builds without debug information or symbols | `debug = 0`, `strip = "symbols"`, and release-only `/DEBUG:NONE` |
 | SHA-256 source checksums when debug information is enabled | `-Z src-hash-algorithm=sha256` |
 
@@ -184,18 +187,24 @@ The overflow setting checks ordinary integer arithmetic; intentional
 
 ### Compiler flags and lint policy
 
-The service compiles Rust with `rustc` and links with MSVC. It has no C/C++
-source compilation step. The following table maps the requested C++ compiler
-settings to this build:
+The build compiles service logic with `rustc`, generates robust x64 RPC stubs
+with MIDL, and compiles those stubs plus `rpc/client.c`, `rpc/server.c`, and
+`rpc/allocator.c` with MSVC `cl.exe`. The native bridge contains Windows RPC
+exceptions before returning to Rust. [The native build](rpc/build.rs) uses
+`/MD`, `/GS`, `/guard:cf`, `/guard:ehcont`, `/sdl`, and `/W4`; `lib.exe` packages
+the objects, and MSVC links them into the executables.
 
-| C++ setting | Rust implementation or applicability |
+The following table distinguishes Rust settings from native C settings:
+
+| Compiler setting | Rust and native C implementation |
 | --- | --- |
-| `/GS` | Rust stack protector on all functions. |
-| `/guard:cf` | Rust CFG instrumentation and the MSVC `/GUARD:CF` linker setting. |
-| `/sdl` | C/C++ only. Rust uses compile-time initialization and ownership checks, denied unsafe operations outside the FFI boundaries, stack protection, and strict Clippy checks. These aren't identical to MSVC SDL analysis. |
-| `/analyze` | C/C++ only. Run strict Clippy and Miri for Rust static and dynamic checks. |
-| `/ZH:SHA_256` | Rust uses SHA-256 source checksums. `/ZH:SHA_SHA256` isn't a valid MSVC spelling. |
-| `/Zi` | Rust full debug information and the generated PDB in development and ASan builds. Release builds disable symbols. |
+| `/GS` | Native C uses `/GS`; Rust uses `-Z stack-protector=all`. |
+| `/guard:cf` | Native C and Rust both receive CFG instrumentation; the linker uses `/GUARD:CF`. |
+| `/guard:ehcont` | Native C uses `/guard:ehcont`; Rust uses `-Z ehcont-guard=yes`; the linker uses `/GUARD:EHCONT`. |
+| `/sdl` | Enabled for native C. Rust uses ownership and initialization checks, restricted unsafe boundaries, stack protection, and strict Clippy; these checks aren't identical to MSVC SDL analysis. |
+| `/analyze` | The native build does not enable MSVC static analysis. Use Clippy and Miri for the applicable Rust checks. |
+| `/ZH:SHA_256` | Rust uses SHA-256 source checksums. The native build does not enable this option. `/ZH:SHA_SHA256` isn't a valid MSVC spelling. |
+| `/Zi` | Rust emits full debug information in development and ASan builds. Native C does not receive `/Zi`; release builds disable Rust symbols and linker PDB output. |
 
 See Microsoft's
 [`/sdl` reference](https://learn.microsoft.com/en-us/cpp/build/reference/sdl-enable-additional-security-checks?view=msvc-170),
@@ -204,9 +213,10 @@ and [source-checksum options](https://learn.microsoft.com/en-us/cpp/build/refere
 
 Cargo denies warnings, `unsafe_code`, `unsafe_op_in_unsafe_fn`,
 `clippy::undocumented_unsafe_blocks`, and `clippy::unwrap_used`. Packet,
-session, and stateless-reflector modules also forbid unsafe code. The registry,
-ETW, Winsock, and native MI modules explicitly allow the unsafe code required
-to call Windows APIs; the UTC-clock function has its own narrow exception.
+session, and stateless-reflector modules also forbid unsafe code. Windows FFI
+modules, including registry, ETW, Winsock, service identity, local RPC, BGP pipe,
+COM, and native MI code, explicitly allow the unsafe code required to call
+Windows APIs; the UTC-clock function has its own narrow exception.
 A crate-wide `unsafe_code = "forbid"` would reject those required FFI calls.
 Unsafe operations still need explicit blocks and safety explanations.
 
@@ -261,7 +271,8 @@ again after a toolchain update.
 
 ASan is a [testing tool](https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/sanitizer.html#addresssanitizer).
 Distribute the normal release executable. ASan tests don't instrument Windows
-system DLLs or the prebuilt MSVC runtime.
+system DLLs, the prebuilt MSVC runtime, or the native RPC C objects. The native
+build does not pass MSVC's `/fsanitize=address` option.
 
 ## Use the Rust configuration and error APIs
 
@@ -366,7 +377,7 @@ Run native RPC tests on a Windows host with a normal token:
 
 ```powershell
 cargo test-release --lib local_rpc::
-cargo test-release --lib native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection -- --ignored
+cargo test-release --lib native_provider_traffic -- --ignored
 ```
 
 The second command exercises real read-only CIM schema traffic in the same
@@ -687,32 +698,40 @@ Model (CIM) schema test requires namespace access and is opt-in. Run it separate
 cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
 ```
 
-The default suite reports this schema test as ignored. Install Miri for the
-repository's nightly toolchain, then check portable logic:
+The default suite leaves both this schema test and the native RPC/MI coexistence
+test opt-in. It also contains ignored RPC child fixtures that parent tests launch
+automatically; do not run those fixtures directly. Install
+[Miri](https://github.com/rust-lang/miri#using-miri) for the repository's pinned
+nightly toolchain, then check portable logic:
 
 ```powershell
 $env:MIRIFLAGS = '-Zmiri-strict-provenance'
 rustup component add miri
-cargo +nightly miri test --locked --lib -- --test-threads=1
+cargo miri test --locked --lib config:: -- --test-threads=1
+cargo miri test --locked --lib packet:: -- --test-threads=1
+cargo miri test --locked --lib session:: -- --test-threads=1
 ```
 
-Miri checks the portable logic and synthetic ancillary-data parser. Native Winsock, MI, registry, named-pipe, ETW, and subprocess tests are excluded. To check the parser with both strict provenance and tree borrows, run:
+These filters select portable configuration, packet, and session logic; native
+registry fixtures are disabled under Miri. An unfiltered Windows library run also
+selects native RPC and service-token tests, which Miri cannot execute. To check
+the synthetic ancillary-data parser with strict provenance and tree borrows, run:
 
 ```powershell
 $env:MIRIFLAGS = '-Zmiri-strict-provenance -Zmiri-tree-borrows'
-cargo +nightly miri test --locked --lib ancillary_metadata
+cargo miri test --locked --lib ancillary_metadata
 ```
 
 To check S-BFD state, reflection, timers, and authentication under Miri, run:
 
 ```powershell
-cargo +nightly miri test --locked --test seamless
+cargo miri test --locked --test seamless
 ```
 
 To check the RFC 5880 boundary regressions under Miri, run:
 
 ```powershell
-cargo +nightly miri test --locked --test rfc5880
+cargo miri test --locked --test rfc5880
 ```
 
 These tests cover diagnostic retention, AdminDown validity clocks, stale zero-RX
@@ -721,6 +740,12 @@ requirements and native shutdown coverage, see the
 [RFC 5880 conformance review](docs/rfc5880-conformance.md).
 For the expanded RFC 5880, RFC 7419, and RFC 7880 suites and their validation
 limits, see [RFC conformance tests](docs/rfc-conformance.md).
+
+Run these commands from the repository root so rustup selects
+`rust-toolchain.toml`; `+nightly` would select a separate floating toolchain.
+Miri interprets Rust and does not execute the native RPC C bridge. If the pinned
+nightly has no Miri component for your host, record that limit rather than
+silently changing the toolchain for the check.
 
 Native S-BFD tests additionally check IPv4/IPv6 sockets, source-port reflection,
 return-route lookup, concurrent initiators, anycast response sources, and the

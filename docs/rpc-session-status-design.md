@@ -7,6 +7,9 @@ response to invalid data. The client runs on a worker thread inside
 directly; there is no helper process, stdout transport, or additional named pipe.
 For Windows identity checks, see [RPC authentication](rpc-authentication.md).
 
+A valid reply still needs freshness receipts: check `BrokerStatus::is_fresh()`
+before treating a cached observation as current.
+
 ## Function call and ownership
 
 Inside a broker worker function returning `Result`, fetch one observation with:
@@ -29,8 +32,9 @@ unsigned long GetSessionStatusV1(
     [out, ref] BFD_SESSION_STATUS_V1 *status);
 ```
 
-Interface `BfdLocal` version `1.1` appends this operation after the unchanged
-`Probe`. The UUID and `BfdWinService.Local.v1` endpoint remain unchanged. There
+Interface `BfdLocal` version `1.1` defines this operation after
+`Probe`. It uses UUID `8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319` and endpoint
+`BfdWinService.Local.v1`. There
 is one configured session per BFD process, so the call accepts no session ID,
 filter, output length, or configuration. Application and native failures return
 errors; the client does not interpret a failed call's output record.
@@ -97,9 +101,10 @@ rather than clamped, transmuted, or mapped to a default state.
 ## Snapshot coherence and packet isolation
 
 BFD's engine exclusively owns mutable session state. It updates scalar telemetry
-and existing monotonic samples during packet processing. Its existing publisher
-coalesces changes at most every 100 milliseconds and refreshes unchanged data
-each second. The capture metadata, instance, sequence, and event instants belong
+and existing monotonic samples during packet processing. Changed publications
+have a 100-millisecond minimum spacing; unchanged refresh targets one second.
+Scheduling can delay either publication. The capture metadata, instance,
+sequence, and event instants belong
 to the same immutable publication as the protocol values.
 
 During startup, BFD gives RPC `Engine::status_observer()` before moving the engine
@@ -114,11 +119,11 @@ snapshot: that can combine observations that never existed together. ArcSwap's
 [single-load consistency guidance](https://docs.rs/arc-swap/latest/arc_swap/struct.ArcSwapAny.html#method.load)
 supports reading one immutable view per operation.
 
-Scheduled snapshot allocation and reclamation remain on the engine's existing
+Scheduled snapshot allocation and reclamation remain on the engine's
 publication path. ArcSwap is lock-free, not a hard elapsed-time guarantee. See
 [ArcSwap performance](https://docs.rs/arc-swap/1.9.2/arc_swap/docs/performance/index.html).
-A preallocated SPSC handoff to a publisher worker remains an alternative if
-packet-thread allocator work must be removed; no such dependency is added here.
+Readers cannot request extra publications. A stalled or delayed engine can
+therefore produce valid telemetry that fails the broker's freshness policy.
 
 ## Broker cache and freshness
 
@@ -204,8 +209,9 @@ starts no replacement. Broker shutdown joins the supervisor but never waits
 indefinitely for or forcibly terminates that worker. Ordinary query failures do
 not abort the provider process.
 
-BFD closes its observer on engine shutdown, then unregisters and drains its RPC
-interface before releasing the descriptor. A previously loaded snapshot remains
+BFD closes its observer when packet processing ends, before announcements and
+BGP cleanup. It then unregisters and drains its RPC interface before releasing
+the descriptor. A previously loaded snapshot remains
 safe to read; its existence does not imply the engine is still running.
 
 ## Verification and source map

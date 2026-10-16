@@ -447,9 +447,9 @@ impl Engine {
         );
         self.state_publisher.publish(self.session.state());
         if let Some(bgp) = &self.bgp {
-            // Stopping a BFD service, here or at the peer, is administrative rather
-            // than a path failure (RFC 5882 section 3.2), so it leaves BGP unchanged.
-            // Local AdminDown maps to no BGP action; a peer's AdminDown is skipped here.
+            // Administrative disablement must allow the BGP adjacency (RFC 5882
+            // section 4.1). The controller releases its Stop on local AdminDown;
+            // peer_report_changed handles the peer's AdminDown separately.
             if !self.session.down_by_peer_admin() {
                 bgp.state_changed(previous, self.session.state);
             }
@@ -903,7 +903,8 @@ impl Engine {
         self.state_changed(previous, log);
         self.report_suppressed_events(Instant::now(), true, log);
         let announcements = self.announce_shutdown(grace, log);
-        // Wait for the pending Stop attempt and propagate failure before completion.
+        // Finish the latest action, including a Start that releases BFD's Stop,
+        // and propagate failure before completion.
         let shutdown = self.bgp.take().map_or(Ok(()), Controller::shutdown);
         self.state_publisher.close();
         result.and(announcements).and(shutdown)

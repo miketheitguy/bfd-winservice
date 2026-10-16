@@ -17,10 +17,10 @@ use std::{
 };
 
 /// Minimum spacing between publications that carry new telemetry. Changes
-/// therefore reach readers within this interval without allocating per packet.
+/// are coalesced without allocating per packet; scheduling can delay publication.
 pub(crate) const PUBLICATION_INTERVAL: Duration = Duration::from_millis(100);
-/// Maximum spacing between publications. An unchanged engine republishes its
-/// current view so stream readers can tell a live engine from a stalled one.
+/// Nominal refresh interval for an unchanged engine. Scheduling can delay it;
+/// readers use capture age rather than treating the interval as a hard deadline.
 pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Rejection classification that contains no packet contents or key material.

@@ -2,6 +2,9 @@
 
 This reference is for Windows network administrators selecting settings for one Bidirectional Forwarding Detection (BFD) session. For initial provisioning, see [Set up a BFD session](setup.md).
 
+Configuration vibe check: the registry is the source of truth. The executable
+accepts `--console`, `--help`, and `--version`; session settings aren't CLI flags.
+
 Both console execution and execution through the Windows Service Control Manager (SCM) read this registry key:
 
 ```text
@@ -47,6 +50,11 @@ configure the addresses and transport:
 `Multihop` must be a `REG_DWORD` with value `0` or `1`. Any other value or
 registry type fails startup.
 
+The legacy `Mode` value is ignored. Use `Multihop`; a stored `Mode=multihop`
+doesn't select multihop. Single-hop always requires a received TTL/hop limit of
+255 and rejects `MinTtl` and `Passive=1`. An optional `InterfaceIndex` on another
+role still constrains incoming traffic to that interface.
+
 ## Seamless BFD
 
 Use these values to select an S-BFD role and its target or source policy:
@@ -63,12 +71,19 @@ and `Passive` absent or `0` for these roles. A reflector requires an assigned
 `Discriminator` and doesn't read `Peer`. For provisioning and the supported
 use cases, see [Configure Seamless BFD](seamless.md).
 
+`AllowedPeers` is unsupported for classical BFD. Omit it to use the default;
+an empty string is an invalid IP list. An initiator always accepts its configured
+target in addition to the listed sources. A reflector with no list accepts any
+source that passes its transport, discriminator, and authentication checks.
+Reflectors reject `BgpPeerName`, `SourcePort`, and `RemoteDiscriminator`.
+
 ## Address validation
 
 IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`; do not add a `%scope` suffix.
 
 For S-BFD, `Local`, `Peer`, and `AllowedPeers` must be usable unicast addresses.
-Reserved IPv4 addresses and IPv4-mapped IPv6 addresses are rejected. `Peer`
+IPv4 `0.0.0.0/8`, IPv4 `240.0.0.0/4`, and IPv4-mapped IPv6 addresses are
+rejected, along with unspecified, multicast, and limited-broadcast addresses. `Peer`
 and each allowed source must match `Local`'s address family and loopback scope:
 use loopback sources with a loopback local address, and non-loopback sources
 with a non-loopback local address. Reflectors don't read `Peer`.
@@ -121,6 +136,9 @@ These values select the authentication algorithm and key:
 
 Configure the same authentication type, key ID, and key at both ends. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is enabled. Password/MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. One key is active at a time.
 
+With `Auth=none`, omit both key values; a nonempty key fails validation. To change
+from `AuthKey` to `AuthKeyHex`, remove the earlier value before restarting.
+
 For example, after setting `Local` and `Peer`, configure an authenticated multihop session:
 
 ```powershell
@@ -147,7 +165,7 @@ S-BFD keyed authentication uses request sequence reflection and outstanding-prob
 correlation instead of the classical receive window. See
 [Authentication and loop prevention](seamless.md#authentication-and-loop-prevention).
 
-These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) interoperability. The RFC discourages MD5, and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) recommends cryptographic authentication for multihop. Registry key contents are unencrypted: restrict Parameters access to administrators and accounts that need it, including the service account. Authentication keys never appear in logs or configuration errors.
+These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) interoperability. The RFC discourages MD5, and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) recommends cryptographic authentication for multihop. Registry key contents are unencrypted. Preserve the MSI's Parameters ACL, including read access for the BFD service SID. Authentication keys never appear in logs or configuration errors.
 
 ## Logging and BGP
 
@@ -160,5 +178,15 @@ These values control text logging and integration with a Windows Border Gateway 
 | `Verbose` | `REG_DWORD` | `0` | Log generic packet discard reasons, at most once per second |
 | `BgpPeerName` | `REG_SZ` | None | Enable control of this configured Windows BGP peer |
 | `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional domain; requires `BgpPeerName` |
+
+`LogFilePath` defaults to the literal path shown when absent. The MSI provisions
+its value from the machine's ProgramData location; `Initialize-Logging.ps1`
+resets it to the literal `C:\ProgramData` path. Logging values reload at startup.
+File output rotates at 64 MiB with one `.1` backup; see
+[log destinations and limits](logging.md#log-destinations).
+
+Both BGP names must contain a non-whitespace character. Console execution
+rejects BGP control. Restart both installed services when changing either BGP
+value so the BFD worker and broker use the same target.
 
 For provisioning and verification, see [Logs and events](logging.md) and [Control a Windows BGP peer](bgp.md).

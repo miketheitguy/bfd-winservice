@@ -2,6 +2,21 @@
 
 This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
 
+These are revision-specific receipts: each entry preserves the behavior, test
+counts, and limits recorded at that time. A passing check in one entry does not
+validate later changes. Use the [validation guide](RUST_SKILLS_VALIDATION.md)
+and [contributor guide](CONTRIBUTING.md) for the implemented API and commands.
+
+These later changes supersede descriptions in older entries:
+
+| Older description | Implemented behavior and reference |
+| --- | --- |
+| An isolated broker child performs RPC probes, or invalid status stays quarantined until restart. | One worker inside the broker queries typed status. Rejected replies clear the cache and retry; only a stuck native worker quarantines telemetry. See [RPC session-status query](docs/rpc-session-status-design.md). |
+| Stop always stops BGP, or AdminDown never changes BGP. | Local or peer AdminDown releases a Stop issued by BFD by queuing Start; it leaves other peers untouched. See [BGP behavior](docs/bgp.md). |
+| Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
+| Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
+| One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [MSI installation](docs/setup.md#install-with-an-msi) and [security boundaries](docs/security.md). |
+
 ## RPC status rejection recovery — 2026-10-15
 
 Cleanly rejected status data clears the cache and retries automatically.
@@ -29,7 +44,8 @@ change.
 
 ## RPC session-status implementation — 2026-10-15
 
-The rejection-recovery entry above supersedes this revision's permanent
+The [rejection-recovery entry](#rpc-status-rejection-recovery--2026-10-15)
+supersedes this revision's permanent
 quarantine for invalid data; its validation results describe that earlier policy.
 
 The broker now calls `GetSessionStatusV1` from a worker thread inside its
@@ -70,8 +86,9 @@ remains a separate MSI check and was not run locally.
 
 ## Local RPC security review — 2026-10-15
 
-This entry records the earlier probe-only implementation. The session-status
-implementation above supersedes its isolated-child design and cleanup policy.
+This entry records the earlier probe-only implementation. The
+[session-status implementation](#rpc-session-status-implementation--2026-10-15)
+supersedes its isolated-child design and cleanup policy.
 
 The private `ncalrpc` interface exposes a connection probe to an isolated broker
 child. The review checked Windows credentials, service-SID authorization,
@@ -497,7 +514,7 @@ Also corrected unsafe union-access comments, replaced the ancillary parser's inv
 
 ### Compatibility at that revision
 
-The 2026-10-05 changes retained the command-line interface then in use. Library callers had to handle `Session::new(...) -> Result<Session, String>`, use `AuthConfig::kind()`, and use the session's state/diagnostic/discriminator/polling accessors instead of public fields. Supplied session authentication must match its options. These API guarantees remain; the subsequent registry configuration change removes the former command-line settings.
+The 2026-10-05 changes retained the command-line interface then in use. Library callers had to handle `Session::new(...) -> Result<Session, String>`, use `AuthConfig::kind()`, and use the session's state/diagnostic/discriminator/polling accessors instead of public fields. Supplied session authentication had to match its options. Later changes replace the string error with typed errors and remove the former command-line settings; see the [configuration and error API guide](CONTRIBUTING.md#use-the-rust-configuration-and-error-apis).
 
 ### Validation at that revision
 

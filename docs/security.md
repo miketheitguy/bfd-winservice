@@ -14,6 +14,9 @@ integration. Windows access-control lists (ACLs) govern service control,
 configuration, logs, and the existing BGP control pipe; optional BFD wire
 authentication checks remote packets. These checks protect different boundaries.
 
+The security receipts are the actual token checks, ACLs, and packet validation.
+A service name or an open endpoint doesn't prove who is calling.
+
 ## Identities and privileges
 
 A security identifier (SID) identifies a Windows account or group. The installer
@@ -406,8 +409,31 @@ following settings control diagnostics and code checks:
 Cargo's [profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html)
 describes optimization and debug settings. Rust ownership, initialization, and
 bounds checks protect safe Rust code; Windows API calls still depend on correctly
-reviewed unsafe boundaries. The build has no C/C++ source compilation step:
-`/GS`, `/sdl`, `/analyze`, and `/Zi` are not flags passed to `rustc`.
+reviewed unsafe boundaries. The build also compiles native C for local RPC;
+those files have a separate compiler configuration.
+
+### Native RPC compiler options
+
+[rpc/build.rs](../rpc/build.rs) runs the Windows SDK MIDL compiler with
+`/env x64 /robust /Oicf /app_config`. It generates separate client and server
+stubs; the client ACF selects asynchronous calls. MSVC `cl.exe` compiles both
+generated stubs and `rpc/client.c`, `rpc/server.c`, and `rpc/allocator.c` with
+`/MD /GS /guard:cf /guard:ehcont /sdl /W4 /D_WIN32_WINNT=0x0602`.
+`lib.exe` combines the objects into `bfd_local_rpc.lib`, which links with
+`Rpcrt4` into the Rust executables.
+
+`/GS` provides native stack-buffer checks, `/guard:cf` and `/guard:ehcont`
+provide native control-flow metadata, and `/sdl` enables additional MSVC security
+checks. `/W4` selects warnings; the script does not pass `/WX`. These C compiler
+options are separate from the Rust flags. See Microsoft's
+[MSVC security checks](https://learn.microsoft.com/en-us/cpp/build/reference/sdl-enable-additional-security-checks?view=msvc-170).
+
+The native compile step does not pass `/analyze`, `/Zi`, or an AddressSanitizer
+option. `cargo asan` instruments Rust and the rebuilt Rust standard library;
+it does not instrument these C translation units. Native stubs and wrappers
+remain outside safe Rust's guarantees.
+
+### Test-profile differences
 
 The `test-release` alias overrides panic handling to `unwind` for the test graph.
 It tests release optimizations but does not reproduce production's abort strategy.
@@ -445,6 +471,7 @@ These files define the authentication and privilege boundaries:
 | [src/local_rpc.rs](../src/local_rpc.rs) and [src/local_rpc/monitor.rs](../src/local_rpc/monitor.rs) | Private local RPC listener, in-process client, authentication, authorization, supervised worker, and telemetry cache |
 | [src/local_rpc/identity.rs](../src/local_rpc/identity.rs) | Per-call transport/authentication checks and bounded Authz identity queries without token attachment |
 | [rpc/bfd_local.idl](../rpc/bfd_local.idl), [rpc/client.c](../rpc/client.c), and [rpc/server.c](../rpc/server.c) | Probe/status contract, fixed record, MIDL stub bridge, native asynchronous deadlines, and RPC exception boundary |
+| [rpc/build.rs](../rpc/build.rs) and [rpc/allocator.c](../rpc/allocator.c) | Native MIDL/MSVC build flags, static library assembly, and RPC allocation hooks |
 | [src/runtime/status.rs](../src/runtime/status.rs), [src/local_rpc/status.rs](../src/local_rpc/status.rs), and [src/runtime/state.rs](../src/runtime/state.rs) | Immutable publications and checked RPC projection; the immediate atomic state observer stays separate from detailed telemetry |
 | [src/bgp_broker/com.rs](../src/bgp_broker/com.rs) | Private broker COM security for native MI |
 | [src/bgp/ipc.rs](../src/bgp/ipc.rs) | `require_broker_identity`, `identify_client`, `verify_server`, frame validation, and pipe listener |

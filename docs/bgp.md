@@ -2,6 +2,9 @@
 
 This guide is for Windows Server network administrators connecting Bidirectional Forwarding Detection (BFD) state changes to a configured Border Gateway Protocol (BGP) peer. Provision the BFD session using [Set up a BFD session](setup.md) first.
 
+The BGP vibe check is separate from BFD readiness: `Up` requests a Start, but
+provider errors can leave the BGP peer stopped. Verify the peer and event logs.
+
 ## Before you begin
 
 The peer must already exist on a Windows Server with Remote Access/BGP configured.
@@ -41,7 +44,10 @@ before calling MI. Unrelated LocalService processes and administrator clients
 are denied. Remote clients are rejected. The client checks the pipe server's
 Windows-reported process ID against the broker's running SCM process ID; the
 broker checks its own LocalSystem `TokenUser` account and enabled service group
-at startup. Installed restricted-token pipe behavior remains to be validated.
+at startup. Native fixtures cover restricted-token authorization. The MSI
+installation harness checks service identities, denies an unrelated pipe client,
+and tests broker recovery; verify the configured BGP control path on your target
+server too. The harness doesn't mutate a live RRAS peer.
 
 The MSI separately protects Windows service control: authenticated users can
 query either service's status, while SYSTEM and elevated Administrators can
@@ -65,7 +71,12 @@ monitor peer state and reject `BgpPeerName`.
 
 ## Configure the peer
 
-Set `BgpPeerName` to the **configured BGP peer name**, such as `Site17`. This is separate from the BFD peer IP address. Set `BgpRoutingDomain` for a named domain.
+Configure the existing peer in PowerShell as Administrator, then restart both
+services to load the target.
+
+### 1. Set the peer name
+
+Set `BgpPeerName` to the **configured BGP peer name**, such as `Site17`. This is separate from the BFD peer IP address.
 
 In PowerShell as Administrator, configure the peer name:
 
@@ -76,8 +87,25 @@ New-ItemProperty -Path $parameters -Name BgpPeerName `
 ```
 
 Replace `BGP_PEER_NAME` with the existing peer's name before running the command.
-PowerShell displays the `BgpPeerName` value. Restart **both** services after
-changing `BgpPeerName` or `BgpRoutingDomain`:
+PowerShell displays the `BgpPeerName` value.
+
+### 2. Optional: Set the routing domain
+
+For a named routing domain, set the optional value:
+
+```powershell
+New-ItemProperty -Path $parameters -Name BgpRoutingDomain `
+    -PropertyType String -Value 'BGP_ROUTING_DOMAIN' -Force
+```
+
+Replace `BGP_ROUTING_DOMAIN` with the peer's existing routing domain. Omit this
+value for the default domain; remove an earlier value when returning to the
+default. Both names must contain a non-whitespace character.
+
+### 3. Restart both services
+
+After changing `BgpPeerName` or `BgpRoutingDomain`, restart **both** services.
+Apply the configuration with a coordinated restart:
 
 ```powershell
 Stop-Service BfdWinService
@@ -87,6 +115,11 @@ Start-Service BfdWinService
 
 Starting BFD starts its broker dependency. Do not stop the broker while BFD is
 running except during coordinated maintenance.
+
+The startup probe validates the broker connection and client authorization.
+A valid provider-error reply still passes that probe: a missing or unreadable
+BGP peer doesn't prevent BFD startup. Check the initial status-query log and
+later broker results to confirm the configured target is usable.
 
 ## Verify state changes and actions
 
@@ -99,9 +132,28 @@ Watch the BFD logs and BGP peer status. The worker applies these actions:
 | Enter Down after BFD has been Up | Stop |
 | Peer signals AdminDown, for example because its BFD service stopped | Never Stop; if BFD's latest action was a Stop, Start the peer |
 | BFD service stop or OS shutdown | Never Stop; if BFD's latest action was a Stop, Start the peer; announce AdminDown for a Detection Time |
-| Fatal (non-transient) receive/wait error or crash | Leave BGP unchanged |
+| Fatal (non-transient) receive/wait error that returns through engine cleanup | Enter local AdminDown; if BFD's latest action was a Stop, attempt a Start; no negotiated announcement grace |
+| Crash or abrupt process termination | No cleanup action; the broker leaves BGP unchanged on disconnection |
 
 A running BGP peer continues during the initial BFD handshake. A stopped peer waits for BFD to reach Up. Failed or ambiguous status checks never trigger a speculative Start. Init does not cancel a previously queued Stop.
+
+On the installed server, inspect BFD transitions and broker results:
+
+```powershell
+$eventFilter = @{
+    LogName = 'BFD-Service/Operational'
+    Id = 102, 103, 106, 110, 300, 301
+}
+Get-WinEvent -FilterHashtable $eventFilter -MaxEvents 30 |
+    Select-Object TimeCreated, Id, LevelDisplayName, Message
+```
+
+Confirm event 102 when BFD reaches Up and broker event 300 for successful BGP
+operations. An already running peer needs no mutation, so Up needn't produce a
+Start result. Event 301 identifies broker authorization or provider failures.
+For an end-to-end check in a maintenance window, test a peer that
+starts stopped, a peer that starts running, BFD failure/recovery, and AdminDown.
+Compare the actual peer state with the action table after each transition.
 
 Stopping BFD is administrative, not a path failure, so it never stops BGP. Local
 AdminDown, set only when the service stops, never stops the peer. Following
@@ -118,9 +170,10 @@ at either end. This service blocks an adjacency by stopping the peer after a
 detected failure. So when the local service stops, or the peer reports AdminDown,
 the worker withdraws its own Stop: if its latest action was a Stop, it starts the
 peer. A peer that BFD never stopped, for example one an operator stopped, is left
-unchanged. A failure or crash closes the broker connection without an
-administrative signal; the broker never changes the peer on disconnection or on
-its own shutdown.
+unchanged. A fatal receive/wait error that returns through engine cleanup also
+sets local AdminDown and attempts this release, with no negotiated announcement
+grace. A crash or abrupt termination skips that cleanup. The broker never
+changes the peer merely because the pipe disconnects or because the broker stops.
 
 A dedicated worker handles provider calls while BFD continues running. Failed actions retry after one second unless replaced by a newer action or shutdown. At most a Stop/Start pair remains queued; Down discards queued Starts. An already issued call finishes before the next action runs, unless shutdown queues a newer final action, which cancels it.
 

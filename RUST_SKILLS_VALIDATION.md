@@ -1,6 +1,41 @@
 # Rust skills validation — current guide
 
-Updated 2026-10-15. This guide describes the current API and validation workflow, using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The [correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits. The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves the original 265-rule matrix; its defect examples, source hashes, rule counts, and test counts are historical.
+Updated 2026-10-15. This guide helps Rust maintainers check the implemented API
+and choose validation commands using the local
+[Rust skill](.codex/skills/rust-skills/SKILL.md). The
+[correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits.
+The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves
+the original 265-rule matrix; its defect examples, source hashes, rule counts,
+and test counts are historical.
+
+## Read the validation receipts
+
+Each dated section records its own revision. Counts and successful checks are
+historical evidence, not a passing result for this checkout. The documentation
+audit on 2026-10-15 checks descriptions against source and build configuration;
+it does not rerun or replace the recorded runtime tests.
+
+Use these implementation details when an older entry describes a superseded
+design:
+
+- Production releases omit Rust debug information, symbols, and linker PDBs.
+  Development and ASan retain Rust debug information. The RPC stubs and C bridge
+  compile with MSVC; Rust ASan does not instrument those native objects. See
+  [build security](CONTRIBUTING.md#build-security).
+- A classical communicating session announces AdminDown for the longer local
+  or peer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds,
+  range 1–60000 ms). The former five-second limit is historical. See
+  [protocol behavior](docs/protocol.md).
+- Local or peer AdminDown releases a BGP Stop previously requested by this
+  controller by queuing Start. Disconnects and broker shutdown do not issue
+  Stop. See [BGP action rules](docs/bgp.md).
+- One RPC worker runs inside the broker. Rejected records clear telemetry and
+  retry with capped backoff; only a stuck native worker quarantines telemetry
+  until restart. See [RPC session-status query](docs/rpc-session-status-design.md).
+- The pinned toolchain and [tagged MSI workflow](.github/workflows/build-msi.yml)
+  provide repeatable build inputs and release checks. The workflow does not run
+  on branch pushes or pull requests and does not run ASan or Miri. Run those
+  checks locally when applicable; see [development checks](CONTRIBUTING.md#run-development-checks).
 
 ## Local RPC security validation — 2026-10-15
 
@@ -94,6 +129,10 @@ The production release image passed the x64 hardening/PDB regression. Formatting
 strict Clippy, and rustdoc checks passed. One opt-in CIM schema test was ignored.
 
 ## Expanded hardening review — 2026-10-08
+
+This entry records the Rust-only build and release PDBs at that revision. The
+native RPC bridge and symbol-free release policy described in
+[build security](CONTRIBUTING.md#build-security) supersede those details.
 
 Mapped the requested MSVC and Rust settings to the Rust-only build in
 [Build security](CONTRIBUTING.md#build-security). Added explicit PIC, release
@@ -302,9 +341,34 @@ File log entries use `YYYY-MM-DDTHH:mm:ss.sssZ` timestamps sampled immediately b
 
 Session reception verifies authentication before modifying state, timers, or sequence tracking. Verification returns a sequence for the session to commit; verification alone does not update tracking. Transport peer/path checks happen before session processing in the runtime.
 
-The MI wrappers own their native handles, keep them on the calling thread, and release children before their session/application. Borrowed MI result data is consumed before the next result fetch or operation close. Normal retrieval drains results; error cleanup attempts cancellation and draining and logs failures. Native cleanup can block.
+The broker's MI wrappers own their native handles, keep them on the calling
+thread, and release children before their session/application. Borrowed MI
+result data is consumed before the next result fetch or operation close. Normal
+retrieval drains results; error cleanup attempts cancellation and draining and
+logs failures. MI's requested timeout does not guarantee completion. A separate
+watchdog detects provider requests, including schema lookup and cleanup, active
+for 20 seconds and ends the broker process; SCM recovery handles unrequested
+failure exits.
 
-BGP provider calls run on a separate worker outside the mailbox mutex. The mailbox holds at most a Stop/Start pair; Down/AdminDown discard queued recovery. Start checks for supersession before and after its status query, but the subsequent call is not atomic with packet processing. An in-flight call finishes before the next action. Shutdown waits for pending Stop attempts and propagates a failed final Stop; the requested MI timeout is not a hard shutdown deadline.
+BGP IPC runs outside the BFD mailbox mutex, and native provider work runs in the
+separate broker. The mailbox holds at most a failure/recovery pair; Down
+supersedes queued recovery. Local or peer AdminDown withdraws this controller's
+Stop by queuing Start. Start checks for supersession before and after its status
+query, but provider mutation is not atomic with packet processing. Closing
+publishes cancellation before the worker can dequeue its final action. Each
+final IPC call has a 20-second budget; final-action failures propagate.
+
+For SCM execution, BFD's supervisor bounds requested-stop cleanup to 60 seconds
+plus the chosen announcement period; the broker has a 60-second stop budget.
+These process-level limits can terminate native cleanup. See
+[BGP shutdown and recovery](docs/bgp.md) and
+[protocol shutdown behavior](docs/protocol.md).
+
+RPC status replies borrow one immutable publication on an RPC worker. Rust
+converts the fixed native record into typed values once. Pending call storage
+remains owned until native completion; a stuck worker is retained and
+quarantined without blocking broker shutdown or spawning replacements. This
+telemetry never supplies BGP control decisions.
 
 The unsafe ancillary parser checks buffer bounds before unaligned reads. Its synthetic unit tests run under Miri without using Winsock. Miri cannot verify actual Winsock, registry, ETW, or `mi.dll` execution. Console logging has a subprocess test verifying lifecycle and failure messages reach STDOUT, leave STDERR empty, and run without ETW registration; subprocess tests are excluded under Miri.
 
@@ -322,21 +386,29 @@ $env:RUSTDOCFLAGS = '-D warnings -D missing-docs'
 cargo doc --locked --no-deps
 ```
 
-The native schema test is opt-in because it requires CIM namespace access:
+The native schema test and the RPC/MI coexistence test are opt-in because they
+require native namespace access and a normal Windows token:
 
 ```powershell
 cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
+cargo test-release --lib native_provider_traffic -- --ignored
 ```
 
-Follow the [contributor guide](CONTRIBUTING.md) for Miri checks and [Set up a BFD session](docs/setup.md) for deployment. Recorded test totals in the correctness review apply to that review's checks, not automatically to future revisions. Actual BGP Start/Stop and SCM lifecycle behavior need validation on a provisioned Windows Server; local fixtures do not establish provider behavior.
+Follow the [contributor guide](CONTRIBUTING.md) for release, ASan, filtered Miri,
+and production artifact checks, and [Set up a BFD session](docs/setup.md) for
+deployment. The native RPC child fixtures are ignored entry points launched by
+their parent tests; do not run them directly. Recorded test totals apply to each
+review's checks, not automatically to later revisions. Actual BGP Start/Stop and
+SCM lifecycle behavior need validation on a provisioned Windows Server; local
+fixtures do not establish provider behavior.
 
 Registry configuration checks on 2026-10-07 passed: 69 tests including the doctest, with one opt-in native schema test ignored; formatting; strict Clippy including undocumented unsafe blocks; documentation with warnings denied; and the release build. Seven configuration tests passed under Miri with strict provenance, and the final string decoder was checked again after the parity-check lint correction. Release smoke checks confirmed that help exposes only `--console` plus help/version, removed configuration arguments are rejected, and a missing Parameters key produces exit code 1 with lifecycle/failure messages on STDOUT and empty STDERR. No installed service configuration was modified.
 
 No full 265-rule reassessment or complete Rust skill compliance is claimed. The
 string-based configuration errors noted in that registry review have since been
-replaced by typed enums. The crate uses a pinned nightly toolchain and has no
-checked-in CI workflow; these are project constraints rather than confirmed
-runtime defects.
+replaced by typed enums. The crate pins its nightly toolchain. Its tagged-release
+workflow checks optimized tests, Clippy, production hardening, MSI installation,
+and rollback; branch and pull-request CI, ASan CI, and Miri CI are not configured.
 
 ## Code and documentation review — 2026-10-07
 

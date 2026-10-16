@@ -31,8 +31,8 @@ impl Method {
         }
     }
 
-    /// Local AdminDown is set only when the BFD service stops. Stopping BFD is
-    /// administrative, not a path failure, so it leaves BGP unchanged.
+    /// Maps ordinary state changes to provider actions. The controller handles
+    /// local AdminDown separately by withdrawing its own latest Stop.
     fn transition(previous: State, current: State) -> Option<Self> {
         if previous == current {
             return None;

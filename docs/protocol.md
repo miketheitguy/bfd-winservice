@@ -2,6 +2,9 @@
 
 This reference is for network administrators checking Bidirectional Forwarding Detection (BFD) interoperability, firewall requirements, and session limits. For a fresh installation, see [Set up a BFD session](setup.md).
 
+The TL;DR: choose one protocol role per process, match the peer's authentication,
+and allow the role's actual UDP traffic through your firewall.
+
 The implementation supports asynchronous [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) sessions, [RFC 5881](https://www.rfc-editor.org/rfc/rfc5881.html) single-hop User Datagram Protocol (UDP), and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) multihop. For the requirement mapping, regression evidence, and optional features, see the [RFC 5880 conformance review](rfc5880-conformance.md).
 
 IP-routed Seamless BFD (S-BFD) uses [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html)
@@ -19,7 +22,9 @@ The transport profiles use these destination ports and received time-to-live (TT
 
 All outgoing packets use TTL/hop limit 255. Classical sessions and S-BFD
 initiators use a stable source port in 49152–65535. Reflectors reply from port
-7784 to the request's source port. Configure firewall rules for the chosen
+7784 to the request's source port. Classical traffic arrives on the profile's
+control port through a separate receive socket; an S-BFD initiator receives
+replies on its own source socket. Configure firewall rules for the chosen
 transport. The service doesn't create them; the
 [MSI installs executable-specific rules](setup.md#msi-firewall-rules) for all
 supported roles. Manual installations need equivalent firewall provisioning.
@@ -50,6 +55,11 @@ diagnostic describes the peer; it doesn't replace the local diagnostic.
 S-BFD's Demand flag follows
 [RFC 7880 section 7.3.2](https://www.rfc-editor.org/rfc/rfc7880.html#section-7.3.2).
 All roles advertise a zero Echo receive interval.
+
+Reception also rejects unsupported versions, truncated or inconsistent lengths,
+a zero multiplier, a zero sender discriminator, and a zero desired TX interval.
+`Your Discriminator` can be zero only in Down or AdminDown. Trailing UDP padding
+outside the declared BFD `Length` doesn't participate in authentication.
 
 ## States and diagnostics
 
@@ -107,7 +117,9 @@ Transmit (TX) and receive (RX) behavior follows these rules:
 ## Supported modes and limits
 
 Classical sessions originate **asynchronous BFD mode**. Classical Demand
-initiation, Echo, and out-of-band discriminator signaling aren't implemented.
+initiation, Echo, multipoint BFD, and out-of-band discriminator signaling aren't
+implemented. This also excludes
+[RFC 9747 Unaffiliated BFD Echo](https://www.rfc-editor.org/rfc/rfc9747.html).
 S-BFD provides live timing updates and uses the Demand bit to identify initiators.
 
 Classical periodic transmission stops when the peer advertises a zero required
@@ -135,4 +147,7 @@ Zero-RX suppression and passive-role restrictions still apply to periodic traffi
 Without a communicating peer, after a fatal (non-transient) transport error, or for an S-BFD
 initiator, shutdown attempts one role-permitted notification. Passive sessions
 with no learned discriminator and S-BFD reflectors send none. Shutdown leaves BGP
-unchanged; only a Stop already queued by an earlier Down can extend total shutdown.
+eligible to run: local or received AdminDown withdraws a Stop that this BFD
+controller imposed. A queued Stop can be superseded by Start; a peer that BFD
+hasn't stopped remains unchanged. Waiting for the final broker action can extend
+total shutdown. See [BGP lifecycle policy](bgp.md).

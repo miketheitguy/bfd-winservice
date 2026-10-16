@@ -54,8 +54,8 @@ fn run_service() -> Result<(), Box<dyn Error>> {
     }));
     let stop_reporter = Arc::clone(&reporter);
     let handle = service_control_handler::register(SERVICE_NAME, move |event| match event {
-        // Preshutdown lets the final BGP Stop reach the broker, which keeps running
-        // until the later shutdown phase, before Windows ends service processes.
+        // Preshutdown lets the final BGP action reach the broker, including a Start
+        // that releases BFD's Stop, before Windows ends service processes.
         // Shutdown is handled too, in case an older registration delivers it.
         ServiceControl::Stop | ServiceControl::Shutdown | ServiceControl::Preshutdown => {
             // Serialize with startup/final reporting so a racing Running update

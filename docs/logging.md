@@ -4,13 +4,17 @@ This guide is for Windows operators reading Bidirectional Forwarding Detection
 (BFD) events and administrators configuring log destinations. Use [Set up a BFD
 session](setup.md) to provision a fresh installation.
 
+Log vibe check: event 1 means the engine started; event 102 means BFD reached
+`Up`. Broker event 300 for mutual RPC authentication proves a separate service
+identity check, even when BFD is `Down`.
+
 ## Log destinations
 
 In Windows Service Control Manager (SCM) mode, the service uses Event Tracing for Windows (ETW) to publish Operational events. In console mode, it writes to standard output (STDOUT). The service supports these destinations:
 
 | Destination | When used | Content |
 | --- | --- | --- |
-| `BFD-Service/Operational` | SCM mode, with manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, and authentication failures |
+| `BFD-Service/Operational` | SCM mode, with manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, authentication failures, and broker readiness/provider/status messages |
 | STDOUT | `--console` | BFD log messages; no ETW registration |
 | `LogFilePath` | Either mode, with `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
 
@@ -26,11 +30,13 @@ character boundaries. When output resumes, the writer reports how many records
 were dropped to STDOUT or the enabled file log. This diagnostic does not produce
 an Operational event.
 
-File output is capped by size. When the file reaches 64 MiB, the writer renames
+File output rotates by size. When the file reaches 64 MiB, the writer renames
 it to `LogFilePath` with `.1` appended, replacing any earlier backup, and
-continues in a new file, so file logging uses at most about 128 MiB. If another
+continues in a new file. Successful rotation retains about 128 MiB plus record
+size overhead. If another
 process holds the file without delete sharing, the rename fails; writing
-continues and the rename is retried after another 4 MiB.
+continues and the rename is retried after another 4 MiB. Repeated rotation
+failures can grow the active file beyond 64 MiB; this isn't a disk quota.
 
 File output uses an 8 KiB buffer to group writes. While output is responsive,
 the writer flushes pending bytes within 100 milliseconds, when the buffer
@@ -39,8 +45,10 @@ callers can use `Logger::flush(timeout)` to wait for queued output and buffered
 file bytes. In console mode, the writer flushes the file before writing to
 STDOUT.
 
-At shutdown, the logger allows up to 500 milliseconds for queued output to drain.
-If output remains blocked, execution ends without waiting for that writer.
+Before reporting Stopped, each service explicitly waits up to two seconds for
+queued output to flush. Releasing the last logger then allows up to another
+500 milliseconds for the writer to drain; console shutdown uses this final-drop
+wait. If output remains blocked, execution ends without waiting for that writer.
 Queued events can be lost in this case; abrupt termination can also lose
 buffered file entries. File timestamps record when the writer formats each
 entry. Slow output can delay that timestamp relative to the underlying BFD
@@ -68,7 +76,11 @@ copy the logging script using [Set up a BFD session](setup.md) first.
 
 ### 1. Provision the defaults
 
-The [logging setup script](../scripts/Initialize-Logging.ps1) sets the default registry values and creates `C:\ProgramData\BfdWinService` without creating or writing `trace.log`. Run the script:
+The MSI already provisions the log folder and default registry values. For a
+loose-file console deployment, the [logging setup
+script](../scripts/Initialize-Logging.ps1) creates
+`C:\ProgramData\BfdWinService` and sets the defaults without creating or writing
+`trace.log`. To initialize or deliberately reset those settings, run:
 
 ```powershell
 $installDirectory = 'C:\Program Files\BfdWinService'
@@ -76,7 +88,8 @@ $installDirectory = 'C:\Program Files\BfdWinService'
 ```
 
 Adjust `$installDirectory` if you installed the service elsewhere. The script
-displays the folder and registry objects, disables file output, and prints this
+displays the folder and registry objects, replaces any existing `LogFilePath`,
+disables file output, and prints this
 settings summary:
 
 ```text
@@ -85,6 +98,10 @@ LogToFile (REG_DWORD): 0
 ```
 
 At startup, the process reads `LogFilePath` and `LogToFile` from the Parameters key. If `LogFilePath` is absent, it uses `C:\ProgramData\BfdWinService\trace.log`.
+
+The script and executable fallback use that literal path. The MSI instead
+provisions the path under the machine's ProgramData location, which can differ.
+The script doesn't install the MSI's service-specific folder ACLs.
 
 If `LogToFile` is absent or `0`, file output is disabled: the logger does not open, create, or write the configured file, or create its parent folders. The other [log destinations](#log-destinations) remain available.
 
@@ -100,8 +117,10 @@ The installed BFD token uses restricted service SID type `3`. Write checks use
 both its ordinary token and restricting SIDs, so custom paths must grant the
 BFD service SID the rights needed to create folders and write, rename, or replace
 the active and rotated log files. An account-only LocalService write grant does
-not satisfy this restriction. This leaves ordinary log-read ACLs unchanged;
-installed-token logging and ETW validation remain deferred.
+not satisfy this restriction. This leaves ordinary log-read ACLs unchanged.
+The [MSI installation harness](../scripts/Test-MsiInstall.ps1) checks rendered ETW
+events and file writes from the installed BFD token on a disposable runner.
+Verify file output on your host after changing its location or ACLs.
 
 Each file line starts with the current UTC time in `YYYY-MM-DDTHH:mm:ss.sssZ` format. The trailing `Z` identifies UTC, and the fractional seconds provide millisecond precision. Multiline messages include the same entry timestamp on every line. For example:
 
@@ -159,6 +178,12 @@ further fetches while retaining the single worker's native storage. Provider
 work continues without a BGP action from these query failures. See
 [Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
 
+The monitor has an eight-second wall-clock query budget and treats telemetry
+older than two seconds as stale. Age includes the reported snapshot age, fetch
+duration, and time since receipt; it doesn't use wall-clock subtraction.
+Neither stale data nor quarantine replaces the BFD worker's state-driven BGP
+actions.
+
 ### Lifecycle, communication, and state events
 
 The following events identify execution, communication, and state changes:
@@ -203,8 +228,9 @@ packets never update the recorded peer state or diagnostic.
 Events 100–104, 110–113, and 201–208 share a budget of 32 records per second,
 so a flapping peer or spoofed packets cannot flood the log. Records beyond the
 budget are suppressed, and Warning event 4 reports the suppressed count at most
-once a minute and at shutdown. Local AdminDown records (106 and 207) are always
-written. Suppression affects logging only; BFD state and BGP actions are unchanged.
+once a minute and at shutdown. Local AdminDown records (106 and 207) bypass this
+event-rate budget. The output queue and delivery limits still apply.
+Suppression affects logging only; BFD state and BGP actions are unchanged.
 
 ### Diagnostic events
 
@@ -288,6 +314,9 @@ Warning event 4 carries a text message. The service writes it in these cases:
 - When session events or S-BFD replies are suppressed. A reflector answers at
   most 1,000 requests per second from any one source address, which bounds the
   traffic that spoofed requests can reflect toward a victim.
+- When `MaxShutdownAnnounceMs` truncates the classical AdminDown announcement
+  period at shutdown. The peer might detect a failure before learning that BFD
+  was administratively stopped.
 
 ### Authentication events and provider identity
 

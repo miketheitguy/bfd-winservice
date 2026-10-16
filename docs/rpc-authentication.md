@@ -6,6 +6,9 @@ Windows rights they use, and how the implementation follows Microsoft's
 security guidance. For the complete process topology, see
 [Service communication](service-communication.md).
 
+The endpoint name isn't the identity check. The receipts are the authenticated
+account and enabled service SID on each side.
+
 The implemented interface provides a connection probe and a bounded read-only
 session-status operation. Status data returns directly to a worker inside the
 broker process over packet-private RPC. It carries no configuration commands,
@@ -259,8 +262,9 @@ allocations afterward. If ownership becomes uncertain, that one worker retains
 its stack and allocations. The supervisor quarantines telemetry rather than
 aborting the provider host or launching replacement workers. Shutdown joins the
 responsive supervisor and detaches an unfinished worker with its storage still
-owned. No unsafe thread termination or early buffer release occurs. Native
-structured exceptions stay inside C. See
+owned. No unsafe thread termination or early buffer release occurs. The C wrapper
+converts recoverable RPC exceptions into errors with `RpcExceptionFilter`;
+fatal native faults continue outside that handler. See
 [unbind requirements](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingunbind)
 and [binding lifetime requirements](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcbindingfree).
 

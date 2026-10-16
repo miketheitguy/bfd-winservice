@@ -5,6 +5,9 @@ services' network endpoints, private local RPC interface, and BGP actions. See
 [Security, authentication, and build hardening](security.md) for identities,
 permissions, and authentication boundaries.
 
+The key receipt: the packet engine drives BGP actions. The broker's status cache
+is for observation, and an SCM `Running` status doesn't mean the session is Up.
+
 BFD hosts an authenticated local RPC interface for the broker. The broker calls
 it from a worker thread inside its existing process. The existing BGP control
 pipe and Windows provider COM/MI API retain their separate contracts.
@@ -42,18 +45,29 @@ continues under its existing token and COM/MI security.
 
 ## Service lifecycle
 
-![Lifecycle: SCM starts the broker first; its status monitor runs after Running. BFD validates its token, creates the engine and snapshot observer, and registers RPC before Running. Shutdown closes observation and drains BFD RPC; broker shutdown does not wait on an unfinished native worker.](images/service-communication-lifecycle.png)
+![Lifecycle: SCM starts the broker first; its status monitor runs after Running. BFD validates its token and registers RPC before Running. Shutdown closes observation before announcements and final BGP cleanup, then drains RPC. Broker shutdown does not wait on an unfinished native RPC worker.](images/service-communication-lifecycle.png)
 
 SCM starts `RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`.
 The broker reports Running before starting the monitor and retries while BFD
 initializes. BFD gives RPC a read-only observer before moving the engine to its
 packet worker. Neither SCM Running nor RPC success implies a session is Up.
 
-BFD closes its observer when the engine ends, then unregisters and drains its
-interface before releasing the security descriptor. The broker stops its
+BFD closes its observer as soon as packet processing ends, before announcements
+and BGP cleanup. After cleanup, it unregisters and drains its interface before
+releasing the security descriptor. The broker stops its
 supervisor without joining an unfinished native RPC worker. That single owned
 worker retains its native call storage until completion or process exit; it is
 never forcibly terminated or replaced repeatedly.
+
+An administrative BFD stop repeats AdminDown announcements for a communicating
+classical session's detection period, capped by `MaxShutdownAnnounceMs`. Other
+roles or sessions attempt one role-permitted notification; reflectors send none.
+It also withdraws the controller's own
+latest BGP Stop with Start when needed, then finishes the latest queued action.
+Each final broker call has a 20-second limit. BFD's SCM supervisor allows
+60 seconds plus the announcement period for cleanup; the broker's stop budget
+is 60 seconds. These service cleanup budgets are separate from the eight-second
+RPC telemetry budget. See [BGP lifecycle and shutdown](bgp.md).
 
 ## Private local RPC status
 

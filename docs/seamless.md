@@ -13,8 +13,9 @@ describes the use cases and requirements.
 
 Prepare these prerequisites:
 
-- Install the [MSI package](setup.md#install-with-an-msi), or prepare supplied
-  loose files using [Prepare installation files](setup.md#prepare-installation-files).
+- Install the [MSI package](setup.md#install-with-an-msi) for service execution,
+  or prepare supplied loose files for console execution using
+  [Prepare installation files](setup.md#prepare-installation-files).
 - Follow [Enable SEHOP for the executable](setup.md#enable-sehop-for-the-executable)
   for both service and console execution.
 - Open **PowerShell as Administrator**. These examples use
@@ -25,13 +26,26 @@ Prepare these prerequisites:
   IPv6, also set `InterfaceIndex`.
 - Allow initiator traffic to User Datagram Protocol (UDP) port `7784`, and
   replies from `7784` to each initiator's selected source port.
+- Stop an existing `BfdWinService` before changing its role or startup settings.
+  Remove values that are invalid for the selected role before starting it.
 
 For Windows service execution, the MSI creates the service and registers the
-Operational log. With supplied loose files, follow
-[Install the services](setup.md#1-install-the-services) and
-[Register the Operational log](setup.md#3-register-the-operational-log).
-Then configure one of the roles in this guide before starting the service.
-Each service process runs one role.
+Operational log. Configure one of the roles in this guide before starting the
+service. Each process runs one role. Supplied loose files use
+[`--console`](setup.md#run-in-a-console); copying them doesn't provision the
+service identities or access policies required for service execution.
+
+Optional: For loose-file console execution, initialize the default logging
+settings:
+
+```powershell
+& 'C:\Program Files\BfdWinService\Initialize-Logging.ps1'
+```
+
+The script displays the default folder and registry objects, then prints
+`LogFilePath` and `LogToFile=0`. It creates the folder without writing
+`trace.log`. Running it resets the path and disables file output; omit it when
+retaining existing settings. The MSI already provisions the defaults.
 
 ## Configure an initiator
 
@@ -40,7 +54,6 @@ Each service process runs one role.
 Set the initiator's addresses and the reflector's provisioned discriminator:
 
 ```powershell
-$installDirectory = 'C:\Program Files\BfdWinService'
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
 $localIp = 'LOCAL_IP'
 $targetIp = 'TARGET_IP'
@@ -58,7 +71,6 @@ New-ItemProperty -Path $parameters -Name Discriminator `
     -PropertyType DWord -Value $localDiscriminator -Force
 New-ItemProperty -Path $parameters -Name RemoteDiscriminator `
     -PropertyType DWord -Value $remoteDiscriminator -Force
-& (Join-Path $installDirectory 'Initialize-Logging.ps1')
 ```
 
 Replace these placeholders before running the commands:
@@ -69,9 +81,7 @@ Replace these placeholders before running the commands:
   and classical sessions.
 - `REFLECTOR_DISCRIMINATOR`: the identifier assigned to the target entity.
 
-The commands display the registry keys and values they create. The logging
-script also displays the default folder and prints the default log path and
-`LogToFile=0`. It creates the folder without writing `trace.log`.
+The commands display the registry keys and values they create.
 
 Leave `Multihop` and `Passive` absent or `0`. S-BFD uses its own transport for
 both single-hop and multihop paths.
@@ -94,7 +104,12 @@ Event `100` marks a valid response, and event `102` marks `Up`.
 The first valid `Up` response establishes the session without entering `Init`.
 
 The initial request already contains `RemoteDiscriminator`. No discriminator
-exchange or routing-protocol advertisement is required by the service.
+exchange or routing-protocol advertisement is required by the service. The
+establishment vibe check is one valid `Up` response; an `AdminDown` response
+proves communication while the entity remains unavailable.
+
+For operator checks and the broker's private telemetry contract, see
+[Available monitoring interfaces](monitoring.md#available-monitoring-interfaces).
 
 ## Configure a reflector
 
@@ -103,7 +118,6 @@ exchange or routing-protocol advertisement is required by the service.
 On the responder machine, set the local address and discriminator:
 
 ```powershell
-$installDirectory = 'C:\Program Files\BfdWinService'
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
 $localIp = 'LOCAL_IP'
 $discriminator = [uint32]'REFLECTOR_DISCRIMINATOR'
@@ -115,18 +129,16 @@ New-ItemProperty -Path $parameters -Name Local `
     -PropertyType String -Value $localIp -Force
 New-ItemProperty -Path $parameters -Name Discriminator `
     -PropertyType DWord -Value $discriminator -Force
-& (Join-Path $installDirectory 'Initialize-Logging.ps1')
 ```
 
 Replace `LOCAL_IP` with the reflector's local address and
 `REFLECTOR_DISCRIMINATOR` with its assigned nonzero identifier.
-The registry commands display the keys and values they create. The logging
-script displays its folder and registry objects, then reports the default path
-and disabled file output.
+The registry commands display the keys and values they create.
 
 The reflector doesn't require `Peer`. It answers multiple initiators through
 one listener and retains no per-initiator timers or authentication windows.
 `RemoteDiscriminator`, `SourcePort`, and `BgpPeerName` are invalid for this role.
+Its runtime still retains bounded per-source counters to limit reflected traffic.
 
 ### 2. Start the listener
 
@@ -198,14 +210,17 @@ The Windows runtime records probes only after a successful socket send.
 Tracking is bounded to the newest 1,024 transmitted keyed probes. Choose rates and
 round-trip budgets that keep the number of outstanding probes within this bound.
 
-Initiators set the Demand bit; reflectors clear it. Each role rejects packets
-with the opposite role's Demand setting. Reflectors also reject source port
-`7784`, preventing reflector-to-reflector loops. Invalid packets never refresh
-liveness or cause a response. Authentication failures use Operational event `105`.
+Initiators send Demand=1 and accept only Demand=0 responses. Reflectors accept
+only Demand=1 requests and send Demand=0 responses. Reflectors also reject source
+ports `0` and `7784`, preventing reflector-to-reflector loops. Invalid packets
+never refresh liveness or cause a response. Authentication failures use
+Operational event `105`.
 A reflector answers at most 1,000 valid requests per second from any one source
-address and reports withheld replies with Warning event 4, which bounds traffic
-reflected toward a spoofed source. Without `AllowedPeers`, startup also logs
-Warning event 4.
+address. The limiter tracks at most 4,096 source addresses in a one-second
+window; additional sources receive no reply until the window resets. These are
+runtime traffic limits, not per-peer BFD sessions. The service reports withheld
+replies with Warning event 4. Without `AllowedPeers`, startup also logs Warning
+event 4.
 
 ## Change timing and entity availability
 
@@ -213,9 +228,10 @@ In S-BFD service and console execution, `MinTxUs`, `MinRxUs`, `DetectMult`, and
 the reflector's `SbfdAdminDown` are reloaded when a registry change notification
 reports a write to the Parameters key; if notification is unavailable, they are
 read once per second. Valid changes apply without restarting or resetting the
-session. Invalid values and timer changes that overlap a transmitted Poll leave
-the preceding settings active and produce a text diagnostic. Rejected updates
-are retried once per second until they apply, including after a Poll completes;
+session. Invalid values and Up initiator wire-timing changes that overlap a
+transmitted Poll leave the preceding settings active and produce a text
+diagnostic. Rejected updates are retried once per second until they apply,
+including after a Poll completes;
 another registry write is not required. Each retry reads the latest requested
 values, and repeated rejection diagnostics are limited to once per minute.
 Other registry settings are read
@@ -267,9 +283,11 @@ channel and the file when enabled; console mode uses STDOUT and the enabled file
 
 Library callers can use `Timing::new`, `Session::set_timing`,
 `Engine::set_timing`, and `Reflector::set_timing` without registry access.
-Initiator timing calls return `ConfigError::PollInProgress` while a transmitted
-Poll or its separation period protects a preceding change. Reflectors apply
-their stateless response settings immediately.
+For an Up initiator, changes to `MinTxUs` or `DetectMult` return
+`ConfigError::PollInProgress` while a transmitted Poll or its separation period
+protects a preceding change. A `MinRxUs`-only RTT allowance change doesn't alter
+wire parameters and can apply during that period. Reflectors apply their
+stateless response settings immediately.
 
 ## RFC 7882 use-case coverage and limits
 
