@@ -13,6 +13,16 @@ a stateless responder, use [Configure Seamless BFD](seamless.md).
 The startup vibe check has two parts: Windows reports `Running`, then BFD
 reports `Up` after it establishes peer communication.
 
+Choose the path for your deployment:
+
+- For Windows services, [install the MSI](#install-with-an-msi), then
+  [configure and verify the service](#configure-and-verify-the-windows-service).
+- For foreground execution, [prepare loose files](#prepare-installation-files)
+  if needed, [enable SEHOP](#enable-sehop-for-the-executable), then
+  [run in a console](#run-in-a-console).
+- For removal, use the [MSI uninstall procedure](#remove-an-msi-installation) or
+  the [legacy manual removal procedure](#remove-a-legacy-manual-installation).
+
 ## Before you begin
 
 Prepare the following:
@@ -47,56 +57,6 @@ Installation, repair, and removal require administrator privileges. The MSI
 requests elevation for its per-machine installation and rejects installation
 sessions without the required privileges. Run command-line installation from
 **PowerShell as Administrator**.
-
-The MSI installs the following resources for all users:
-
-- Both executables, the manifest, and logging script in
-  `C:\Program Files\BfdWinService`.
-- The `BfdWinService` service with display name **BFD Windows Service**,
-  the LocalService account, and **Automatic (Delayed Start)** startup. The MSI
-  leaves it stopped; configure it before starting the service or restarting
-  Windows. Delayed start runs after boot-time services, when interface addresses
-  are more likely to be assigned.
-- The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
-  LocalSystem account. BFD depends on the broker, so starting BFD also starts the
-  broker. Without `BgpPeerName`, BFD doesn't open its BGP control pipe. The
-  broker still queries BFD's private RPC status interface. Both services have their
-  own enabled service SID. BFD uses restricted SID type `3`; its service SID is
-  also present in the token's restricting list. The broker retains unrestricted
-  SID type `1`.
-- A BFD `RequiredPrivileges` allowlist containing only
-  `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`. A native commit action
-  records the list after the MSI transaction succeeds; services remain stopped
-  until you start them. SCM applies the list when it creates the LocalService
-  process. BFD also permanently removes unused
-  privileges at startup. The broker's privilege list is unchanged.
-- Protected service ACLs for both services: SYSTEM and Administrators have full
-  control. Authenticated users can query configuration/status, enumerate
-  dependents, interrogate status, and read the service ACL. They cannot Start/Stop,
-  pause, reconfigure, delete, or send custom controls to either service. Use an
-  elevated Administrator session for lifecycle commands. Log reads remain
-  available to non-administrators under the existing log permissions.
-- SCM recovery: the broker restarts five seconds after a crash. BFD restarts
-  10 seconds after a crash or an unrequested failure exit, such as a local address
-  that isn't assigned yet. A Stop request always ends BFD with exit code `0`, so
-  recovery never restarts a service that an administrator stopped.
-- The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
-  with message and resource paths pointing to the installed executable.
-- The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
-  `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
-  Windows layout. The MSI path uses the machine's ProgramData location. The
-  executable fallback and logging script use the literal `C:\ProgramData` path.
-- The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
-  Only the BFD service SID receives Modify access; shared LocalService processes
-  receive no write grant. The Parameters key permits reads only by SYSTEM,
-  administrators, and that service SID. BFD's write-restricted token requires
-  suitable service-SID grants as well as ordinary write permission. Installed
-  code remains writable only by
-  SYSTEM and administrators.
-- Four executable-specific UDP allow rules for classical and Seamless BFD.
-- The broker's `RpcSs` service dependency for native MI. The BFD service depends
-  on the broker. See [Monitor service status and BFD events](monitoring.md) for
-  lifecycle queries and event-log monitoring.
 
 ### 1. Install the package
 
@@ -152,6 +112,58 @@ Before the first start, complete these steps:
 
 The MSI registers the manifest automatically. Use the session and logging
 references to configure authentication, multihop, S-BFD, or file output.
+
+### Installed resources and security settings
+
+The MSI installs the following resources for all users:
+
+- Both executables, the manifest, and logging script in
+  `C:\Program Files\BfdWinService`.
+- The `BfdWinService` service with display name **BFD Windows Service**,
+  the LocalService account, and **Automatic (Delayed Start)** startup. The MSI
+  leaves it stopped; configure it before starting the service or restarting
+  Windows. Delayed start runs after boot-time services, when interface addresses
+  are more likely to be assigned.
+- The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
+  LocalSystem account. BFD depends on the broker, so starting BFD also starts the
+  broker. Without `BgpPeerName`, BFD doesn't open its BGP control pipe. The
+  broker still queries BFD's private RPC status interface. Both services have their
+  own enabled service SID. BFD uses restricted SID type `3`; its service SID is
+  also present in the token's restricting list. The broker retains unrestricted
+  SID type `1`.
+- A BFD `RequiredPrivileges` allowlist containing only
+  `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`. A native commit action
+  records the list after the MSI transaction succeeds; services remain stopped
+  until you start them. SCM applies the list when it creates the LocalService
+  process. BFD also permanently removes unused
+  privileges at startup. The broker's privilege list is unchanged.
+- Protected service ACLs for both services: SYSTEM and Administrators have full
+  control. Authenticated users can query configuration/status, enumerate
+  dependents, interrogate status, and read the service ACL. They cannot Start/Stop,
+  pause, reconfigure, delete, or send custom controls to either service. Use an
+  elevated Administrator session for lifecycle commands. Log reads remain
+  available to non-administrators under the existing log permissions.
+- SCM recovery: the broker restarts five seconds after a crash. BFD restarts
+  10 seconds after a crash or an unrequested failure exit, such as a local address
+  that isn't assigned yet. A Stop request always ends BFD with exit code `0`, so
+  recovery never restarts a service that an administrator stopped.
+- The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
+  with message and resource paths pointing to the installed executable.
+- The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
+  `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
+  Windows layout. The MSI path uses the machine's ProgramData location. The
+  executable fallback and logging script use the literal `C:\ProgramData` path.
+- The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
+  Only the BFD service SID receives Modify access; shared LocalService processes
+  receive no write grant. The Parameters key permits reads only by SYSTEM,
+  administrators, and that service SID. BFD's write-restricted token requires
+  suitable service-SID grants as well as ordinary write permission. Installed
+  code remains writable only by
+  SYSTEM and administrators.
+- Four executable-specific UDP allow rules for classical and Seamless BFD.
+- The broker's `RpcSs` service dependency for native MI. The BFD service depends
+  on the broker. See [Monitor service status and BFD events](monitoring.md) for
+  lifecycle queries and event-log monitoring.
 
 ### MSI firewall rules
 
@@ -253,15 +265,19 @@ The supplied binary also contains EH continuation metadata and is marked
 compatible with CET shadow stacks. Enforcement of those protections requires
 Windows and hardware support; see [Build security](../CONTRIBUTING.md#build-security).
 
-## Install the Windows service
+<a id="install-the-windows-service"></a>
+
+## Configure and verify the Windows service
 
 Before creating or starting the service, complete
 [Enable SEHOP for the executable](#enable-sehop-for-the-executable).
 
 ### 1. Install the services
 
-Follow [Install with an MSI](#install-with-an-msi) to create both services with
-their accounts, service SIDs, dependencies, and protected ACLs.
+If you haven't installed the package, follow [Install with an MSI](#install-with-an-msi)
+to create both services with their accounts, service SIDs, dependencies, and
+protected ACLs. If the MSI is already installed, continue with the installed paths
+in this step.
 The installer migrates an existing built-in service account to LocalService and
 restores its previous account/SID settings if the transaction rolls back. Custom
 service accounts are rejected because their passwords cannot be restored safely.
@@ -503,7 +519,9 @@ redirection:
 The output file contains console messages with Unix-millisecond timestamps.
 This shell redirection is separate from the `LogToFile` setting.
 
-## Remove the service and manifest
+<a id="remove-the-service-and-manifest"></a>
+
+## Remove a legacy manual installation
 
 For an MSI installation, use [Remove an MSI installation](#remove-an-msi-installation).
 The following procedure removes services from a legacy manual installation.
@@ -551,4 +569,4 @@ if (Get-Service BfdBgpBroker -ErrorAction SilentlyContinue) {
 The command reports successful deletion. After SCM completes deletion,
 `Get-Service BfdWinService` no longer finds the service.
 
-For another fresh installation, return to [Install the Windows service](#install-the-windows-service).
+For another fresh installation, return to [Install with an MSI](#install-with-an-msi).

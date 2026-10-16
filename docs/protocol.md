@@ -5,12 +5,21 @@ This reference is for network administrators checking Bidirectional Forwarding D
 The TL;DR: choose one protocol role per process, match the peer's authentication,
 and allow the role's actual UDP traffic through your firewall.
 
+Use [transport profiles](#transport-profiles-and-firewall-rules) to check the
+network path, [classical session behavior](#classical-session-behavior) to check
+timers and packet handling, and [administrative shutdown](#administrative-shutdown)
+to check stop behavior.
+
+## Protocol scope
+
 The implementation supports asynchronous [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) sessions, [RFC 5881](https://www.rfc-editor.org/rfc/rfc5881.html) single-hop User Datagram Protocol (UDP), and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) multihop. For the requirement mapping, regression evidence, and optional features, see the [RFC 5880 conformance review](rfc5880-conformance.md).
 
 IP-routed Seamless BFD (S-BFD) uses [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html)
 and [RFC 7881](https://www.rfc-editor.org/rfc/rfc7881.html). Its capabilities and
 [RFC 7882](https://www.rfc-editor.org/rfc/rfc7882.html) use-case limits are documented
 in [Configure Seamless BFD](seamless.md).
+
+## Transport profiles and firewall rules
 
 The transport profiles use these destination ports and received time-to-live (TTL) or IPv6 hop-limit checks:
 
@@ -101,18 +110,38 @@ event. See the [event IDs and diagnostic levels](logging.md#operational-events).
 
 ## Classical session behavior
 
-Transmit (TX) and receive (RX) behavior follows these rules:
+The following rules describe classical transmit (TX) and receive (RX) behavior.
+
+### Session ownership and packet acceptance
+
+Sessions use these ownership and acceptance rules:
 
 - One process runs one local/peer session. The receive address/port is exclusively bound; multiple peers sharing it are unsupported. Another process can use a different local address or transport profile.
 - Incoming packets must pass peer/path metadata, discriminator, and authentication checks before affecting the session. Point-to-point mode permits source-address changes on the configured single-hop interface. Missing required receive metadata is discarded.
+
+### Intervals and expiry
+
+The session applies these timing rules:
+
 - Outside Up, the base desired TX is `max(StartupTxUs, MinTxUs)`. Classical multihop doubles the greater of this base and its preceding negotiated interval after an unanswered discovery window or detection timeout. Backoff stops at the greater of 30 seconds and twice that base, bounded by the wire format's maximum interval. This allows even a slow peer's rate to decrease after loss. A valid peer packet clears backoff. Single-hop keeps the base interval.
-- Transient network faults, such as an adapter reset or a removed route, don't stop the engine. Socket use pauses with a 10–250 millisecond backoff while protocol timers continue, so an unusable path still expires detection. Other socket errors end the engine; SCM then restarts the service.
-- Entering Up starts a Poll sequence when desired TX changes. A received Final completes only a Poll that has been transmitted. Valid peer timer changes are honored; timeouts move Init/Up to Down.
 - Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Both clocks use accepted, authenticated packets, including reception in AdminDown. Passive transmission stops when the learned discriminator expires.
+
+### Poll sequences and state notifications
+
+The session handles interval changes and state notifications as follows:
+
+- Entering Up starts a Poll sequence when desired TX changes. A received Final completes only a Poll that has been transmitted. Valid peer timer changes are honored; timeouts move Init/Up to Down.
 - State changes trigger immediate notifications when the active/passive role
   permits transmission, including when a zero peer RX interval suppresses
   periodic traffic. A Final reply can carry the changed state. Separate state
   notifications keep Poll clear; pending Poll sequences use scheduled packets.
+
+### Socket recovery
+
+Transient network faults, such as an adapter reset or a removed route, don't
+stop the engine. Socket use pauses with a 10–250 millisecond backoff while
+protocol timers continue, so an unusable path still expires detection. Other
+socket errors end the engine; SCM then restarts the service.
 
 ## Supported modes and limits
 
@@ -121,6 +150,8 @@ initiation, Echo, multipoint BFD, and out-of-band discriminator signaling aren't
 implemented. This also excludes
 [RFC 9747 Unaffiliated BFD Echo](https://www.rfc-editor.org/rfc/rfc9747.html).
 S-BFD provides live timing updates and uses the Demand bit to identify initiators.
+
+### Periodic transmission and suppression
 
 Classical periodic transmission stops when the peer advertises a zero required
 RX interval, or when both ends are Up, the peer sets Demand, and no local Poll is
@@ -131,6 +162,8 @@ interval and multiplier remain available for detection calculations. Accepted cl
 Polls receive immediate Final replies unless local state is AdminDown; replies
 do not postpone periodic transmissions. S-BFD initiators continue periodic
 probing; reflectors answer requests and send no periodic packets.
+
+## Administrative shutdown
 
 On normal classical shutdown with a communicating peer, the service sends an
 immediate AdminDown notification and continues permitted periodic announcements

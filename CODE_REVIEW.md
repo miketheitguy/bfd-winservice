@@ -7,6 +7,21 @@ counts, and limits recorded at that time. A passing check in one entry does not
 validate later changes. Use the [validation guide](RUST_SKILLS_VALIDATION.md)
 and [contributor guide](CONTRIBUTING.md) for the implemented API and commands.
 
+## Find a review
+
+Use these links to locate the dated evidence for a topic:
+
+| Topic | Review entries |
+| --- | --- |
+| Private local RPC | [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
+| Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
+| Service reliability and security | [Reliability follow-up](#reliability-follow-up--2026-10-09) and [reliability/security review](#reliability-and-security-review--2026-10-09) |
+| Deployment and observability | [MSI packaging](#msi-packaging-review--2026-10-08) and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
+| Earlier Rust remediation | [rust-security remediation](#rust-security-remediation--2026-10-08), [rust-check remediation](#rust-check-remediation--2026-10-07), and [review before remediation](#review-before-remediation--2026-10-07) |
+| Original review and rule assessment | [Historical review](#historical-review--2026-10-05) and [archived rule matrix](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) |
+
+## Read superseded behavior
+
 These later changes supersede descriptions in older entries:
 
 | Older description | Implemented behavior and reference |

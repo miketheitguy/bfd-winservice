@@ -21,6 +21,10 @@ For the combined RFC 5880, RFC 7419, and RFC 7880 test matrix,
 congestion-control behavior, and validation limits, see
 [RFC conformance tests](rfc-conformance.md).
 
+Use the [requirement mapping](#requirement-mapping) to locate an RFC rule,
+[errata interpretation](#errata-interpretation) to distinguish correction status,
+and [deployment limits](#deployment-and-implementation-limits) to assess a host.
+
 ## Requirement mapping
 
 The following table groups related RFC requirements. Paths identify the
@@ -34,7 +38,7 @@ implementation or its regression tests:
 | 5, 6.4, 6.8.5, 6.8.8–6.8.10 | Optional Echo function | Echo is unsupported. Every transmitted control packet advertises zero Required Min Echo RX Interval. No Echo state or diagnostic 2 is originated. |
 | 6.1–6.2, 6.8.6 | Ordered reception and classical four-state machine | [session.rs](../src/session.rs) tests every local/remote state pair. Transport, structural, discriminator, and authentication rejection precede session mutation. Local AdminDown updates authenticated peer parameters before stopping state-machine processing. |
 | 4.1, 6.2 | Assigned diagnostic codes and all four state values in logs | [event_log.rs](../src/event_log.rs) maps local and peer states to separate Operational IDs and reports diagnostics 1–8 with origin context. Code 0 has no standalone diagnostic event. The output worker mirrors each state/diagnostic record to the enabled file. [Event IDs and severity policy](logging.md#operational-events) are service policy, not an RFC severity requirement. |
-| 6.3 | Nonzero, unique local discriminator; Your Discriminator selects a session | The runtime provisions one session per process and exclusively binds its receive socket. Known Your Discriminator must match; zero is accepted only for Down/AdminDown startup with matching path metadata. See the uniqueness and transport limits below. |
+| 6.3 | Nonzero, unique local discriminator; Your Discriminator selects a session | The runtime provisions one session per process and exclusively binds its receive socket. Known Your Discriminator must match; zero is accepted only for Down/AdminDown startup with matching path metadata. See [Deployment and implementation limits](#deployment-and-implementation-limits) for uniqueness and transport limits. |
 | 6.5, 6.8.6–6.8.7 | Scheduled Poll sequence and prompt Final responses | Pending and transmitted Polls are distinct states. An unsolicited Final cannot complete an unsent Poll. Valid peer Polls receive Final with P clear, independently of periodic traffic; local AdminDown stops processing before replying, following the ordered reception procedure. |
 | 6.6, 6.8.11–6.8.14 | Optional local Demand mode; peer Demand suppression | Local Demand mode is unsupported. When both classical ends are Up and the peer advertises D, periodic traffic stops unless a Poll is pending. A Final reply doesn't complete the local Poll. S-BFD D identifies an initiator instead of enabling classical Demand mode. |
 | 6.7.1 | Authentication enable/disable and key provisioning | Authentication and one key are read at startup. Live key rollover and authentication transitions are unsupported; restart with matching peer settings. Type, key ID, length, and digest checks precede sequence commitment. |
@@ -68,11 +72,17 @@ different status:
 
 ## Deployment and implementation limits
 
+The following limits apply when using the implemented protocol profile.
+
+### Discriminator allocation
+
 Assign a distinct `Discriminator` to each coexisting BFD session on the same
 system. An omitted classical discriminator uses a random nonzero value; the
 service doesn't coordinate allocation with other processes or other BFD
 implementations. S-BFD reflector identifiers must also be unique in their
 configured discriminator domain.
+
+### Transport and feature scope
 
 Path validation implements the configured single-hop/multihop profiles.
 Discriminator-based session selection doesn't remove source, interface, port,
@@ -86,6 +96,8 @@ The RFC 5880 updates for
 are outside this profile: multicast endpoints and the Multipoint bit are
 rejected, and the service has no Echo implementation.
 
+### Shutdown announcements
+
 Classical shutdown uses the section 6.8.16 announcement period, bounded by
 `MaxShutdownAnnounceMs` (30 seconds by default, at most 60 seconds). Truncating
 that period is a documented deviation from the announcement recommendation and
@@ -95,11 +107,15 @@ period and cleanup. Fatal transport errors, sessions without a communicating pee
 S-BFD initiators use one permitted notification. Passive and zero-RX restrictions
 remain in force. A final BGP action can extend total stop time.
 
+### Library transmission ownership
+
 The public `Session::packet` convenience APIs treat returned bytes as a
 transmission for sequence and probe tracking. Callers must deliver those bytes;
 retry the same bytes if a send fails. The Windows runtime uses separate prepare
 and commit steps, so actual send failure preserves its sequence and pending
 Poll/Final state.
+
+### Authentication and scheduling
 
 MD5, SHA-1, and cleartext passwords are provided for protocol interoperability.
 An unauthenticated peer has no cryptographic identity check. Sequence windows
@@ -108,6 +124,10 @@ depend on host scheduling and network capacity; this user-mode service doesn't
 guarantee hardware-level detection latency.
 
 ## Regression evidence
+
+The following suites cover protocol behavior, shutdown, and diagnostic output.
+
+### Session and packet regressions
 
 [rfc5880.rs](../tests/rfc5880.rs) verifies retained diagnostics, stale zero-RX
 recovery, both AdminDown validity-clock cases, unsent Poll acknowledgement,
@@ -118,12 +138,16 @@ peer's interval already exceeds 30 seconds.
 Session unit tests also verify failed-send preparation, exact sequence
 wraparound, and preservation of an unsent S-BFD Final/probe record.
 
+### Shutdown and BGP regressions
+
 The shutdown tests in [windows_udp.rs](../tests/windows_udp.rs) check repeated
 AdminDown packets, both detection directions, and truncation warnings at the
 configured grace-period limit. Byte fixtures, all 16 state transitions,
 authentication rejection tests, and native Poll scheduling checks cover the
 base protocol. BGP unit tests in [bgp.rs](../src/bgp.rs) check administrative
 release of this controller's Stop, including a queued final Start at shutdown.
+
+### State and diagnostic logging regressions
 
 The logging regressions verify all state/diagnostic ID and level mappings against
 the SDK-compiled manifest, exact payload fields, paired ETW/file output, disabled
@@ -133,6 +157,8 @@ checks repeated-report suppression. Runtime tests cover reflector maintenance,
 shutdown, and Informational recovery with a retained local failure diagnostic.
 Invalid-header and authentication tests verify that rejected packets don't
 change the recorded peer state or diagnostic.
+
+### Validation commands and recorded results
 
 For the validation commands, see [Run development checks](../CONTRIBUTING.md#run-development-checks).
 For recorded checks and their limits, see the dated

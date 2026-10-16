@@ -19,6 +19,10 @@ from [RFC 8562](https://www.rfc-editor.org/rfc/rfc8562.html) and Unaffiliated BF
 Echo from [RFC 9747](https://www.rfc-editor.org/rfc/rfc9747.html) are outside the
 implemented profile.
 
+To execute the suites, see [Run and interpret validation](#run-and-interpret-validation).
+For a section-by-section implementation review of the base protocol, see
+[RFC 5880 conformance review](rfc5880-conformance.md).
+
 ## RFC 5880: base protocol
 
 For the complete section mapping, see the
@@ -119,6 +123,10 @@ operator responsibilities, rather than claims made by these tests.
 
 ## Run and interpret validation
 
+Complete the prerequisites in
+[Run development checks](../CONTRIBUTING.md#run-development-checks).
+ASan requires the MSVC sanitizer runtime on `PATH`.
+
 From the repository root on the supported Windows target, run:
 
 ```powershell
@@ -127,12 +135,14 @@ cargo test-release --offline
 cargo asan --offline
 ```
 
+### Test coverage and timing
+
 The focused suites use monotonic synthetic times for long periods and exact
 boundaries, avoiding real multi-minute waits. Native tests exercise actual
 Windows UDP, IPv4/IPv6 metadata, private broker COM security, pipe, and temporary
-registry fixtures. ASan
-requires the MSVC sanitizer runtime on `PATH`; see
-[Run development checks](../CONTRIBUTING.md#run-development-checks).
+registry fixtures.
+
+### Deployment validation limits
 
 The remaining deployment limits include coordinated discriminator uniqueness,
 optional features listed above, short-timer scheduling under load, and the

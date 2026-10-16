@@ -18,9 +18,13 @@ In Windows Service Control Manager (SCM) mode, the service uses Event Tracing fo
 | STDOUT | `--console` | BFD log messages; no ETW registration |
 | `LogFilePath` | Either mode, with `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
 
+### Console and packet text
+
 Ordinary send errors are logged at most once per second. Generic discard reasons require `Verbose=1` and have a separate one-second limit. These messages go to STDOUT or the configured file; they do not produce Operational events.
 
 If a STDOUT write fails, the shared writer disables further console writes and attempts one standard error (STDERR) diagnostic. File logging, BFD execution, and Border Gateway Protocol (BGP) control continue. A failed diagnostic write is ignored.
+
+### Output queue and loss
 
 One background writer handles text output and ETW events for the engine and its
 BGP worker. Slow output does not delay BFD timers or Stop processing. The queue
@@ -29,6 +33,8 @@ of delaying protocol execution. Text messages are limited to 16 KiB on UTF-8
 character boundaries. When output resumes, the writer reports how many records
 were dropped to STDOUT or the enabled file log. This diagnostic does not produce
 an Operational event.
+
+### File rotation and buffering
 
 File output rotates by size. When the file reaches 64 MiB, the writer renames
 it to `LogFilePath` with `.1` appended, replacing any earlier backup, and
@@ -44,6 +50,8 @@ fills, before replacing the output file, and on normal shutdown. Library
 callers can use `Logger::flush(timeout)` to wait for queued output and buffered
 file bytes. In console mode, the writer flushes the file before writing to
 STDOUT.
+
+### Shutdown and timestamps
 
 Before reporting Stopped, each service explicitly waits up to two seconds for
 queued output to flush. Releasing the last logger then allows up to another
@@ -72,9 +80,13 @@ events](monitoring.md).
 ## Configure file logging
 
 Run the commands in **PowerShell as Administrator**. Provision the session and
-copy the logging script using [Set up a BFD session](setup.md) first.
+copy the logging script using [Set up a BFD session](setup.md) first. For a custom
+destination, review [File paths, permissions, and timestamps](#file-paths-permissions-and-timestamps)
+before enabling output.
 
-### 1. Provision the defaults
+<a id="1-provision-the-defaults"></a>
+
+### 1. Optional: Provision the defaults
 
 The MSI already provisions the log folder and default registry values. For a
 loose-file console deployment, the [logging setup
@@ -96,6 +108,36 @@ settings summary:
 LogFilePath (REG_SZ): C:\ProgramData\BfdWinService\trace.log
 LogToFile (REG_DWORD): 0
 ```
+
+### 2. Enable file output
+
+Set the output path and enable file logging:
+
+```powershell
+$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
+New-ItemProperty -Path $parameters -Name LogFilePath `
+    -PropertyType String `
+    -Value 'C:\ProgramData\BfdWinService\trace.log' -Force
+New-ItemProperty -Path $parameters -Name LogToFile `
+    -PropertyType DWord -Value 1 -Force
+```
+
+PowerShell displays the `LogFilePath` and `LogToFile` values. To use a different
+location, replace the path with an absolute file path.
+
+### 3. Verify file output
+
+Start the service or console process, or restart it if already running, to load the settings. Inspect the default file after startup:
+
+```powershell
+Get-Content 'C:\ProgramData\BfdWinService\trace.log' -Tail 20
+```
+
+Confirm that each line has a UTC timestamp ending in `Z`. Console output uses Unix milliseconds; redirecting STDOUT to a file preserves that console format.
+
+To disable file output, set `LogToFile` to DWORD `0` and restart execution. See the [configuration reference](configuration.md#logging-and-bgp) for the setting types and defaults.
+
+## File paths, permissions, and timestamps
 
 At startup, the process reads `LogFilePath` and `LogToFile` from the Parameters key. If `LogFilePath` is absent, it uses `C:\ProgramData\BfdWinService\trace.log`.
 
@@ -128,39 +170,13 @@ Each file line starts with the current UTC time in `YYYY-MM-DDTHH:mm:ss.sssZ` fo
 2026-10-08T12:34:56.789Z service started mode=service
 ```
 
-### 2. Enable file output
-
-Set the output path and enable file logging:
-
-```powershell
-$parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
-New-ItemProperty -Path $parameters -Name LogFilePath `
-    -PropertyType String `
-    -Value 'C:\ProgramData\BfdWinService\trace.log' -Force
-New-ItemProperty -Path $parameters -Name LogToFile `
-    -PropertyType DWord -Value 1 -Force
-```
-
-PowerShell displays the `LogFilePath` and `LogToFile` values. To use a different
-location, replace the path with an absolute file path.
-
-### 3. Verify file output
-
-Start the service or console process, or restart it if already running, to load the settings. Inspect the default file after startup:
-
-```powershell
-Get-Content 'C:\ProgramData\BfdWinService\trace.log' -Tail 20
-```
-
-Confirm that each line has a UTC timestamp ending in `Z`. Console output uses Unix milliseconds; redirecting STDOUT to a file preserves that console format.
-
-To disable file output, set `LogToFile` to DWORD `0` and restart execution. See the [configuration reference](configuration.md#logging-and-bgp) for the setting types and defaults.
-
 ## Operational events
 
 In Event Viewer, open **Applications and Services Logs → BFD-Service → Operational**.
 The provider uses one Operational channel. State events and diagnostic events
 are separate records, with independent severity levels.
+
+### BGP broker and RPC telemetry events
 
 The BGP broker uses this channel for event **300** (Information: readiness and
 management results) and **301** (Error: startup, authorization, or provider
@@ -333,3 +349,5 @@ failure doesn't disable later ETW writes. Queue loss, blocked output, and
 shutdown drain limits still apply to both destinations.
 
 The logger starts before configuration is read. Its output worker registers the provider before processing queued events, allowing registry and file-log startup failures to emit event 3. Dispatcher/control-handler failures, registration failures, blocked output, queue overflow, or abrupt process termination can prevent lifecycle events. A successful ETW write does not guarantee Event Log delivery; install the manifest and keep the channel enabled.
+
+For operator queries, see [Monitor service status and BFD events](monitoring.md).

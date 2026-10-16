@@ -9,6 +9,12 @@ for protocol behavior and [RFC 7881](https://www.rfc-editor.org/rfc/rfc7881.html
 for IPv4/IPv6 UDP transport. [RFC 7882](https://www.rfc-editor.org/rfc/rfc7882.html)
 describes the use cases and requirements.
 
+After completing [Before you begin](#before-you-begin), choose
+[Configure an initiator](#configure-an-initiator) or
+[Configure a reflector](#configure-a-reflector). For an existing deployment, see
+[source filtering and anycast](#restrict-sources-and-support-anycast) or
+[timing and entity availability](#change-timing-and-entity-availability).
+
 ## Before you begin
 
 Prepare these prerequisites:
@@ -35,6 +41,8 @@ service. Each process runs one role. Supplied loose files use
 [`--console`](setup.md#run-in-a-console); copying them doesn't provision the
 service identities or access policies required for service execution.
 
+### Initialize loose-file logging
+
 Optional: For loose-file console execution, initialize the default logging
 settings:
 
@@ -48,6 +56,8 @@ The script displays the default folder and registry objects, then prints
 retaining existing settings. The MSI already provisions the defaults.
 
 ## Configure an initiator
+
+Use this procedure on the node that sends probes to a provisioned reflector.
 
 ### 1. Provision the target and discriminators
 
@@ -112,6 +122,8 @@ For operator checks and the broker's private telemetry contract, see
 [Available monitoring interfaces](monitoring.md#available-monitoring-interfaces).
 
 ## Configure a reflector
+
+Use this procedure on the node that answers initiator probes.
 
 ### 1. Provision the local entity
 
@@ -202,6 +214,8 @@ Configure matching `Auth`, `AuthKeyId`, and `AuthKey` or `AuthKeyHex` using the
 [authentication reference](configuration.md#authentication). All existing
 password, MD5, and SHA-1 modes are available.
 
+### Keyed probe correlation
+
 A keyed reflector verifies the digest and returns the request's sequence
 number with a newly computed digest. It doesn't apply a sequence window to
 incoming requests. An initiator accepts a keyed response only for an outstanding,
@@ -210,11 +224,16 @@ The Windows runtime records probes only after a successful socket send.
 Tracking is bounded to the newest 1,024 transmitted keyed probes. Choose rates and
 round-trip budgets that keep the number of outstanding probes within this bound.
 
+### Role and port checks
+
 Initiators send Demand=1 and accept only Demand=0 responses. Reflectors accept
 only Demand=1 requests and send Demand=0 responses. Reflectors also reject source
 ports `0` and `7784`, preventing reflector-to-reflector loops. Invalid packets
 never refresh liveness or cause a response. Authentication failures use
 Operational event `105`.
+
+### Reflection limits
+
 A reflector answers at most 1,000 valid requests per second from any one source
 address. The limiter tracks at most 4,096 source addresses in a one-second
 window; additional sources receive no reply until the window resets. These are
@@ -223,6 +242,11 @@ replies with Warning event 4. Without `AllowedPeers`, startup also logs Warning
 event 4.
 
 ## Change timing and entity availability
+
+S-BFD supports live timing updates and reflector maintenance without restarting
+the session. Other settings retain their startup-only behavior.
+
+### Registry reload behavior
 
 In S-BFD service and console execution, `MinTxUs`, `MinRxUs`, `DetectMult`, and
 the reflector's `SbfdAdminDown` are reloaded when a registry change notification
@@ -236,6 +260,8 @@ another registry write is not required. Each retry reads the latest requested
 values, and repeated rejection diagnostics are limited to once per minute.
 Other registry settings are read
 at startup.
+
+### Initiator probe and detection timing
 
 An initiator uses `MinRxUs` as its expected round-trip time (RTT) allowance. Choose a value
 that covers the path's latency and responder scheduling delay. Before jitter,
@@ -252,6 +278,9 @@ traffic. Backoff stops at the greater of 30 seconds and twice the base interval,
 where the base includes the reflector's advertised receive limit. The wire
 format's maximum interval bounds this calculation. A slow reflector therefore
 still receives fewer probes after loss. A valid response clears this backoff.
+
+### Poll sequence protection
+
 Poll/Final exchanges acknowledge interval changes without adding an `Init` phase.
 When `MinTxUs` increases in Up, probes advertise the requested value but continue
 at the preceding local TX rate until the Poll receives a Final. The probe and
@@ -259,6 +288,8 @@ detection calculations use that effective rate while acknowledgement is pending.
 Another wire timer change waits for both the Final and a subsequent response
 with Final clear, preventing an older Final from acknowledging a newer change.
 Changes combined before the first Poll transmission share that Poll.
+
+### Put a reflector in maintenance
 
 To mark a reflector entity temporarily unavailable while keeping the listener
 active, set its maintenance flag:
@@ -280,6 +311,8 @@ diagnostic event 207. Restoring the entity emits Informational Up event 102.
 Administrative shutdown uses the same AdminDown events if the entity wasn't
 already in maintenance. In service mode, these records go to the Operational
 channel and the file when enabled; console mode uses STDOUT and the enabled file.
+
+### Library timing APIs
 
 Library callers can use `Timing::new`, `Session::set_timing`,
 `Engine::set_timing`, and `Reflector::set_timing` without registry access.
@@ -309,5 +342,8 @@ advertisement through routing protocols aren't implemented. These require
 additional network or forwarding-plane integration. Classical BFD and S-BFD
 use separate ports and can coexist where their local bindings are available.
 
+## Next steps
+
 For all registry types and defaults, see the
 [configuration reference](configuration.md#seamless-bfd).
+For deployment checks, see [Monitor service status and BFD events](monitoring.md).

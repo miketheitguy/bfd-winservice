@@ -15,7 +15,12 @@ The program reads this key without creating or modifying it. Missing optional va
 
 - **Strings:** `REG_SZ`. `REG_EXPAND_SZ` and environment-variable expansion are unsupported.
 - **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
-- **Apply changes:** restart to reload startup settings. S-BFD timing and maintenance settings reload when the Parameters key changes; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
+
+Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
+
+## Apply changes and access settings
+
+Restart to reload startup settings. S-BFD timing and maintenance settings reload when the Parameters key changes; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 The MSI protects this key: SYSTEM and administrators have full control, and the
 enabled BFD service SID has read access. Console execution and configuration
@@ -24,8 +29,6 @@ the configured BGP target; restart both services after changing either BGP value
 Service configuration changes and Start/Stop require elevation. Non-administrators
 can still query service status and read logs; see [Monitor service status and BFD
 events](monitoring.md).
-
-Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
 
 ## Addresses and transport
 
@@ -55,6 +58,19 @@ doesn't select multihop. Single-hop always requires a received TTL/hop limit of
 255 and rejects `MinTtl` and `Passive=1`. An optional `InterfaceIndex` on another
 role still constrains incoming traffic to that interface.
 
+### Address validation
+
+IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`; do not add a `%scope` suffix.
+
+For S-BFD, `Local`, `Peer`, and `AllowedPeers` must be usable unicast addresses.
+IPv4 `0.0.0.0/8`, IPv4 `240.0.0.0/4`, and IPv4-mapped IPv6 addresses are
+rejected, along with unspecified, multicast, and limited-broadcast addresses. `Peer`
+and each allowed source must match `Local`'s address family and loopback scope:
+use loopback sources with a loopback local address, and non-loopback sources
+with a non-loopback local address. Reflectors don't read `Peer`.
+
+With `PointToPoint=1`, outgoing packets still go to the configured `Peer`. Incoming packets must pass the destination, interface, TTL, source-port, discriminator, and authentication checks.
+
 ## Seamless BFD
 
 Use these values to select an S-BFD role and its target or source policy:
@@ -76,19 +92,6 @@ an empty string is an invalid IP list. An initiator always accepts its configure
 target in addition to the listed sources. A reflector with no list accepts any
 source that passes its transport, discriminator, and authentication checks.
 Reflectors reject `BgpPeerName`, `SourcePort`, and `RemoteDiscriminator`.
-
-## Address validation
-
-IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`; do not add a `%scope` suffix.
-
-For S-BFD, `Local`, `Peer`, and `AllowedPeers` must be usable unicast addresses.
-IPv4 `0.0.0.0/8`, IPv4 `240.0.0.0/4`, and IPv4-mapped IPv6 addresses are
-rejected, along with unspecified, multicast, and limited-broadcast addresses. `Peer`
-and each allowed source must match `Local`'s address family and loopback scope:
-use loopback sources with a loopback local address, and non-loopback sources
-with a non-loopback local address. Reflectors don't read `Peer`.
-
-With `PointToPoint=1`, outgoing packets still go to the configured `Peer`. Incoming packets must pass the destination, interface, TTL, source-port, discriminator, and authentication checks.
 
 ## Timing
 
@@ -139,6 +142,8 @@ Configure the same authentication type, key ID, and key at both ends. Set exactl
 With `Auth=none`, omit both key values; a nonempty key fails validation. To change
 from `AuthKey` to `AuthKeyHex`, remove the earlier value before restarting.
 
+### Configure an authenticated multihop session
+
 For example, after setting `Local` and `Peer`, configure an authenticated multihop session:
 
 ```powershell
@@ -159,6 +164,8 @@ remote peer. PowerShell displays the values you set, including the authenticatio
 key. Restart execution to load the values, then
 [verify peer communication](setup.md#6-verify-peer-communication).
 
+### Authentication behavior
+
 Unauthenticated packets cannot establish an authenticated session, refresh its detection timer, or trigger a reply. All outgoing packets use the configured authentication. Classical keyed modes check digests and sequence windows, including wraparound and restart resynchronization. Authentication failures are logged regardless of `Verbose`; see [event 105](logging.md#operational-events).
 
 S-BFD keyed authentication uses request sequence reflection and outstanding-probe
@@ -169,21 +176,32 @@ These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html)
 
 ## Logging and BGP
 
-These values control text logging and integration with a Windows Border Gateway Protocol (BGP) peer:
+These values control text logging and integration with a Windows Border Gateway Protocol (BGP) peer.
+
+### Text logging
+
+These values control text logging:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LogFilePath` | `REG_SZ` | `C:\ProgramData\BfdWinService\trace.log` | Append log path; use an absolute path under SCM |
 | `LogToFile` | `REG_DWORD` | `0` | `0` = disable file output; `1` = enable file output |
 | `Verbose` | `REG_DWORD` | `0` | Log generic packet discard reasons, at most once per second |
-| `BgpPeerName` | `REG_SZ` | None | Enable control of this configured Windows BGP peer |
-| `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional domain; requires `BgpPeerName` |
 
 `LogFilePath` defaults to the literal path shown when absent. The MSI provisions
 its value from the machine's ProgramData location; `Initialize-Logging.ps1`
 resets it to the literal `C:\ProgramData` path. Logging values reload at startup.
 File output rotates at 64 MiB with one `.1` backup; see
 [log destinations and limits](logging.md#log-destinations).
+
+### BGP target
+
+These values select the Windows BGP peer:
+
+| Value | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `BgpPeerName` | `REG_SZ` | None | Enable control of this configured Windows BGP peer |
+| `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional domain; requires `BgpPeerName` |
 
 Both BGP names must contain a non-whitespace character. Console execution
 rejects BGP control. Restart both installed services when changing either BGP

@@ -5,6 +5,13 @@ against the source, tests, installer, and build configuration on 2026-10-15.
 These are documentation receipts; the older runtime test results keep their
 original dates and validation limits.
 
+The [source, correctness, and diagram review](#source-correctness-and-diagram-review--2026-10-15)
+records the earlier corrections. The
+[structure and navigation review](#structure-and-navigation-review--2026-10-15)
+records the subsequent organization pass, including its separate validation scope.
+
+## Source, correctness, and diagram review — 2026-10-15
+
 **Score:** 9/10 — ships as is. **Shippable:** yes.
 
 **Diagnostic:** 9/10 — failed rows: 2 (the current validation guide also retains
@@ -22,7 +29,7 @@ their exact meanings.
 documentation review, not a fresh claim of router interoperability or installed
 service validation.
 
-## Findings
+### Findings
 
 The following findings are corrected in the linked sections:
 
@@ -43,7 +50,7 @@ The following findings are corrected in the linked sections:
 | 13 | [BGP configuration](bgp.md#configure-the-peer) | P1 complete procedures | Omitted a runnable routing-domain example and separate provider verification. | Add target configuration, coordinated restart, and BGP verification steps. | High |
 | 14 | [Service diagrams](service-communication.md) | S10 accessible diagrams | Visuals omitted optional-authentication defaults and important shutdown/freshness details. | Update all three editable pages and embedded-XML PNG exports, with matching prose and alt text. | Blocking |
 
-## Coverage
+### Coverage
 
 The review covers all 20 existing project Markdown files and the three diagram
 pages. Bundled `.codex/skills` documentation is tooling guidance, not service
@@ -63,9 +70,9 @@ The file-level outcomes are:
 | [Editable diagram](service-communication.drawio) and its three PNGs | Update runtime boundaries, service lifecycle, and RPC authentication; inspect rendered output. |
 | Rust source documentation | Correct stale BGP shutdown comments in `src/bgp.rs`, `src/runtime.rs`, and `src/service.rs`, and publication guarantees in `src/runtime/status.rs`; executable code is unchanged. |
 
-## Validation and limits
+### Validation and limits
 
-The following checks pass for this documentation update:
+The following checks were recorded for the source, correctness, and diagram review:
 
 - Build Rust API documentation with `RUSTDOCFLAGS='-D warnings -D missing-docs'`
   and `cargo doc --locked --no-deps`.
@@ -91,7 +98,7 @@ current validation guide into linked historical records while preserving their
 anchors and evidence. That editorial split is separate from the correctness
 fixes recorded here.
 
-## Change log
+### Change log
 
 The changes follow these audit rules:
 
@@ -101,3 +108,97 @@ The changes follow these audit rules:
 | Add configuration and verification steps | P1 complete procedures; R5 verification | Operators can finish setup and confirm the intended outcome. |
 | Align diagrams, alt text, and prose | S10 accessible diagrams | The same boundaries and lifecycle are available visually and in text. |
 | Label historical results | V7 timeless documentation | Prior successful checks do not validate a later revision. |
+
+## Structure and navigation review — 2026-10-15
+
+For administrators finding an operational task and maintainers finding an
+implementation reference, this pass reviews the complete project Markdown set
+for structure, clarity, and organization. Existing Gen-Z and surfer slang stays
+in place. Technical contracts, examples, dated evidence, and diagrams retain
+their meanings and content.
+
+**Score:** 9/10 → 9/10 — ships as is. **Shippable:** yes for this editorial scope.
+
+**Diagnostic:** 9/10 — failed rows: 2 (the validation guide retains current
+reference material and dated validation records in one document, now separated
+and ordered explicitly).
+
+**Doc type / reader:** documentation-set audit for Windows administrators and
+Rust maintainers. **Language:** en.
+
+**Local style guide:** repository contributor instructions and existing Markdown
+conventions. The explicit request to preserve slang takes precedence over voice
+rules that would remove idioms or conversational phrasing. Historical titles and
+evidence remain recognizable.
+
+**Blocking:** none found in the requested structure and organization scope.
+This pass does not repeat the earlier behavioral audit, external-reference
+verification, or runtime validation.
+
+### Organization findings
+
+The following findings are corrected in the linked sections:
+
+| # | Location | Rule (ID + name) | Before | After | Severity |
+| --- | --- | --- | --- | --- | --- |
+| 1 | [Documentation index (line 1)](README.md), [project documentation links (line 119)](../README.md#documentation) | R6 key points first | Operator tasks, implementation references, and review evidence shared one long README table. | Add a complete index grouped by operational tasks, architecture, development, and evidence; keep common starting points in the project README. | Medium |
+| 2 | [Setup routes (line 1)](setup.md), [BGP configuration (line 30)](bgp.md#configure-the-peer) | R6 key points first | Resource/security detail preceded installation or configuration; related tasks were spread across broad sections. | Put the operational route first and separate configuration, verification, shutdown, and supporting internals. | Medium |
+| 3 | [Configuration (line 1)](configuration.md), [logs (line 1)](logging.md), [monitoring (line 1)](monitoring.md) | S2 descriptive task and concept headings | Validation, reload, queue behavior, permissions, and diagnosis were harder to locate within broad sections. | Give those topics explicit headings and keep prerequisites with their procedures. | Medium |
+| 4 | [Security topics (line 23)](security.md#find-a-security-topic), [RPC topics (line 20)](rpc-authentication.md#find-an-rpc-topic) | R6 key points first | Long security references required scrolling to locate one boundary or API responsibility. | Add section navigation and a boundary-to-section map while retaining all function-call diagrams and slang. | Medium |
+| 5 | [RPC startup sequence (line 105)](rpc-authentication.md#startup-and-query-sequence) | A7 descriptive reference text | A description of service startup mixed descriptive steps with commands to the reader. | Name the broker, BFD, client, or monitor as the actor throughout the sequence. | Low |
+| 6 | [Protocol (line 1)](protocol.md), [S-BFD (line 1)](seamless.md), [RPC status contract (line 1)](rpc-session-status-design.md) | S2 descriptive task and concept headings | Transport, timing, live updates, status freshness, retries, and cleanup shared long sections. | Add focused subsections, role entry points, and links to operator procedures. | Medium |
+| 7 | [RFC validation (line 124)](rfc-conformance.md#run-and-interpret-validation) | R3 prerequisites before steps (convention) | The ASan runtime prerequisite appeared after the commands. | Put prerequisites before execution and separate coverage from deployment limits. | High |
+| 8 | [RFC 5880 requirement mapping (line 28)](rfc5880-conformance.md#requirement-mapping) | S8 explicit cross-references | A requirement row referred to limits "below." | Link directly to the named deployment-limits section and categorize limits and evidence. | Medium |
+| 9 | [Contributor tasks (line 11)](../CONTRIBUTING.md#choose-a-development-task), [current validation (line 53)](../RUST_SKILLS_VALIDATION.md#current-api-and-validation) | R6 key points first | Development tasks lacked a short route map; current commands followed hundreds of lines of review history. | Add task navigation and move current commands, API guidance, and ownership boundaries before the grouped historical records. | Medium |
+| 10 | [Review topics (line 10)](../CODE_REVIEW.md#find-a-review), [archived audit navigation (line 7)](archive/RUST_SKILLS_VALIDATION_2026-10-01.md#navigate-this-snapshot) | R6 key points first | Readers had to scan dated entries or a long rule matrix to locate evidence. | Add topic links while preserving historical bodies, counts, dates, and existing anchors. | Medium |
+
+### Organization coverage
+
+The review covers the 21 existing project Markdown files and the new
+[documentation index](README.md), for 22 repository documents. The ignored local
+`bird-anycast-lab/README.md` was also read and left unchanged. Bundled skill
+documentation remains tooling guidance outside this project-documentation scope.
+
+All operator, protocol, security, RPC, contributor, validation, and historical
+pages were read. [Service communication](service-communication.md) already has a
+clear overview-to-detail flow and accessible diagram descriptions; it needs no
+editorial change. [AGENTS](../AGENTS.md) and [CLAUDE](../CLAUDE.md) retain their
+applicable repository instructions. The earlier audit remains a separate record
+with its original validation claims.
+
+### Organization validation and limits
+
+The following editorial checks pass across all 22 repository documents:
+
+- Resolve 813 local references, including 252 heading/HTML-anchor references.
+- Check heading hierarchy and retain every original heading/HTML anchor.
+- Check all 85 closed fenced examples against the pre-edit snapshot; their
+  contents are unchanged.
+- Preserve all 40 original slang-bearing prose paragraphs, apart from whitespace.
+- Confirm that changes affect Markdown only; the ASCII diagrams, editable draw.io
+  source, PNG exports, and executable source are unchanged.
+- Check changed-file whitespace with `git diff --check`.
+
+Historical source-line fragments remain archival references; this check confirms
+that the target files exist without asserting the old line locations.
+
+This pass changes Markdown only. It does not execute setup commands, install
+services, change registry settings or BGP state, or rerun runtime tests. Earlier
+test counts and diagram-export results belong to the preceding review.
+
+**Rewrite plan:** the requested navigation, section-order, and clarity changes
+are complete. A separate split of dated validation entries into historical
+documents would address the remaining document-type issue; retain the evidence
+and provide compatibility links if that split is made.
+
+### Organization change log
+
+The changes follow these audit rules:
+
+| Change | Rule ID + name | Why |
+| --- | --- | --- |
+| Group the documentation map by reader task | R2 document type matches the task (inferred taxonomy) | Operators and maintainers can choose a guide without scanning unrelated material. |
+| Put procedures and current references before supporting detail/history | R6 key points first | Readers reach the action or contract they need sooner. |
+| Add focused section headings and prerequisite placement | S2 descriptive headings; R3 prerequisites before steps (convention) | Readers can scan long pages and prepare before executing examples. |
+| Preserve old anchors and add descriptive links | S9 descriptive navigation links | Existing references remain valid while related topics become easier to find. |
+| Preserve slang, examples, diagrams, and historical evidence | P11 verified behavior | An editorial pass must preserve technical meaning and the requested voice. |

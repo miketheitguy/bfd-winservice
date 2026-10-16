@@ -20,6 +20,18 @@ recorded rejection tests. Each private service boundary checks the identity and
 authority it needs before work proceeds. That is a clean security lineup; a
 service name or an open endpoint alone doesn't prove who is calling.
 
+## Find a security topic
+
+Use these sections to inspect a boundary or protection layer:
+
+- [Security receipts and best practices](#security-receipts-and-best-practices)
+- [Identities and privileges](#identities-and-privileges)
+- [Communication boundaries](#communication-boundaries)
+- [Authentication and authorization](#authentication-and-authorization)
+- [Private local RPC authentication and function-call diagrams](#f-private-local-rpc-authentication)
+- [Rust compiler and linker hardening](#rust-compiler-and-linker-hardening)
+- [Source map](#source-map)
+
 ## Security receipts and best practices
 
 The design follows least privilege, explicit authorization, defense in depth,
@@ -55,8 +67,9 @@ documentation update.
 
 ## Identities and privileges
 
-Least privilege is the main character in this lineup. Windows account and
-service-SID checks keep each process on the permissions its role needs.
+Least privilege is the main character in this lineup, brah. Windows account and
+service-SID checks keep each process on the permissions its role needs. BFD's
+short privilege list is a W.
 
 A security identifier (SID) identifies a Windows account or group. The installer
 sets BFD to `SERVICE_SID_TYPE_RESTRICTED` (`3`) and keeps the broker at
@@ -149,8 +162,9 @@ security settings and their alignment with Microsoft guidance.
 
 ### Configuration, lifecycle, and logs
 
-Operational visibility is a W: you can inspect lifecycle and events while
-Windows keeps service-control and configuration permissions scoped separately.
+Operational visibility is a W for the crew: you can inspect lifecycle and events
+while Windows keeps service-control and configuration permissions scoped
+separately.
 
 Elevated Administrators and SYSTEM install, configure, start, and stop the
 services. Windows checks registry, SCM, and filesystem permissions independently.
@@ -172,6 +186,17 @@ the pipe sequence number nor UDP source/TTL checks replace an identity check.
 
 Both checks belong in the lineup: establish the caller, then check what that
 caller can do. The implementation follows that pattern at each private boundary.
+
+The following sections trace each boundary:
+
+| Boundary | Section |
+| --- | --- |
+| Remote UDP peer to BFD | [A: Remote BFD and S-BFD packets](#a-remote-bfd-and-s-bfd-packets) |
+| BFD verifies the BGP pipe server | [B: BFD authenticates the broker](#b-bfd-authenticates-the-broker) |
+| Broker verifies and scopes BFD control requests | [C: Broker authenticates and authorizes BFD requests](#c-broker-authenticates-and-authorizes-bfd-requests) |
+| Broker invokes the Windows BGP provider | [D: Broker accesses the local Windows provider](#d-broker-accesses-the-local-windows-provider) |
+| Local callers inspect or administer services | [E: Service control, configuration, and diagnostic access](#e-service-control-configuration-and-diagnostic-access) |
+| Broker queries BFD telemetry over local RPC | [F: Private local RPC authentication](#f-private-local-rpc-authentication) |
 
 ### A: Remote BFD and S-BFD packets
 
@@ -368,8 +393,8 @@ BFD hosts `BfdWinService.Local.v1` on `ncalrpc`, interface version `1.1`.
 `Probe` checks connectivity; `GetSessionStatusV1` returns a fixed session-status
 record. Both require the same service-specific authentication and authorization.
 
-This RPC boundary understood the assignment: local transport, explicit service
-identities, read-only telemetry, and bounded work. The security checks stay
+This RPC boundary understood the assignment, dude: local transport, explicit
+service identities, read-only telemetry, and bounded work. The security checks stay
 separate from the packet engine and the broker's BGP action policy.
 
 The broker uses a dedicated RPC worker and supervisor inside its existing
@@ -384,9 +409,9 @@ or callback scheduling.
 
 #### Binding and server setup
 
-The setup lineup checks both directions. The broker specifies its expected
-server identity; BFD separately registers the endpoint, application interface,
-and management policy:
+Identity checks before "send it": the setup lineup checks both directions.
+The broker specifies its expected server identity; BFD separately registers the
+endpoint, application interface, and management policy:
 
 ```text
 BROKER CLIENT: one fixed BFD identity policy
@@ -545,8 +570,8 @@ success and rejection, rather than `AuthzFreeContext`. See Microsoft's
 [RPC context release](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcfreeauthorizationcontext).
 
 The ownership story is dialed in too: each acquired context has a release path,
-including rejected calls. Native parsing still carries its documented bounds
-and layout obligations.
+including rejected calls. That's a clean ride through cleanup, brah. Native
+parsing still carries its documented bounds and layout obligations.
 
 #### Authz responsibilities
 
@@ -581,8 +606,8 @@ The status and availability boundaries apply these additional checks:
 | Native boundary | MIDL, the C exception bridge, Windows APIs, and unsafe Rust wrappers must uphold their layout, bounds, and lifetime contracts. Safe Rust validation cannot repair prior native memory corruption. |
 | Authorized malicious source | A compromised authorized BFD process can return structurally valid false telemetry or withhold replies. Authentication establishes source identity, not session truth. |
 
-The recovery path keeps its balance when telemetry gets choppy. Native bind and
-call deadlines are two seconds each. An eight-second supervisor
+The recovery path keeps its balance when telemetry gets choppy, dude. Native
+bind and call deadlines are two seconds each. An eight-second supervisor
 budget quarantines a stuck worker. Its owned native storage remains live;
 shutdown does not kill that thread, free pending buffers, or wait indefinitely
 for it. At most one monitored RPC operation can remain unfinished.
@@ -692,9 +717,10 @@ those files have a separate compiler configuration.
 
 ### Native RPC compiler options
 
-The C boundary gets its own protection lineup. Its stack-buffer, control-flow,
-and additional compiler checks complement the Rust settings; their exact scope
-is documented here so the stoke stays grounded.
+The C boundary gets its own protection lineup: extra gear for the gnarly native
+bits. Its stack-buffer, control-flow, and additional compiler checks complement
+the Rust settings; their exact scope is documented here so the stoke stays
+grounded.
 
 [rpc/build.rs](../rpc/build.rs) runs the Windows SDK MIDL compiler with
 `/env x64 /robust /Oicf /app_config`. It generates separate client and server

@@ -7,6 +7,14 @@ process lifecycle and the Operational event log for transitions over time.
 `Running` isn't an Up-session flex: check the transition events and their
 timestamps before drawing conclusions about peer health.
 
+## Before you begin
+
+Use a PowerShell session on the installed host. Authenticated local users can
+query service lifecycle without elevation. Event queries also require permission
+to read the Operational channel under the host's Windows Event Log policy.
+
+For access rights by operation, see [Access permissions](#access-permissions).
+
 ## Available monitoring interfaces
 
 The BFD service exposes private read-only session telemetry to the broker over
@@ -19,9 +27,10 @@ fresh snapshot or an Up session.
 
 ## Monitor lifecycle and state transitions
 
-Use a PowerShell session on the installed host. Authenticated local users can
-query service lifecycle without elevation. Event queries also require permission
-to read the Operational channel under the host's Windows Event Log policy.
+Use separate queries for Windows lifecycle and recorded BFD transitions.
+
+### Query service lifecycle
+
 Query the service's lifecycle status with:
 
 ```powershell
@@ -30,6 +39,9 @@ Get-Service BfdWinService, BfdBgpBroker
 
 For BFD, `Running` means engine initialization completed; it does not mean the
 BFD session reached `Up`.
+
+### Read recent BFD transitions
+
 Read recent local state-transition events with:
 
 ```powershell
@@ -45,24 +57,12 @@ contain records from an earlier service run, and can suppress repeated transitio
 under load. A latest event is not a guaranteed current-state snapshot. See
 [Logs and events](logging.md) for event payloads and logging limits.
 
-The MSI applies protected Windows Service Control Manager (SCM) permissions to
-both services:
-
-| Operation | Allowed principals |
-| --- | --- |
-| Query service configuration/status, enumerate dependents, interrogate status, or read its ACL | Authenticated users, SYSTEM, and Administrators |
-| Start/Stop, pause, change configuration, delete, change the ACL, or send custom service controls | SYSTEM and elevated Administrators |
-| Read event/file logs | Non-administrators under the existing Event Log and filesystem permissions |
-| Change BFD registry settings | SYSTEM and elevated Administrators; the BFD service SID has read access |
-
-A service-status query returns Windows lifecycle state, such as `Running` or
-`Stopped`. It does not return BFD protocol state, such as `Up` or `Down`.
-Log-reading permissions are unchanged. The default installed log folder grants
-Users read access and the BFD service SID Modify access; a custom log path uses
-its administrator-provisioned filesystem permissions. The Operational channel
-uses Windows Event Log permissions without a custom channel ACL.
-
 ## Verify broker-to-BFD authentication
+
+Use event messages to distinguish authenticated replies from connection,
+validation, and worker failures.
+
+### Query authentication events
 
 On the installed host, query the broker's informational events:
 
@@ -82,6 +82,8 @@ Get-WinEvent -FilterHashtable @{
 fetch returned a record that passed conversion. Event 300 also carries BGP
 readiness/results, so the event ID alone is insufficient evidence. Success is
 logged on first connection or recovery, not after every one-second query.
+
+### Investigate RPC status failures
 
 `BFD session status unavailable` reports a connection or RPC failure; the cache
 is cleared and the monitor retries. `BFD session telemetry stale` means the
@@ -123,6 +125,25 @@ installed accounts, service SIDs, and privilege policy remain required.
 
 For packet communication and session readiness, use events 100–112 separately.
 The private RPC endpoint needs no firewall rule or public client configuration.
+
+## Access permissions
+
+The MSI applies protected Windows Service Control Manager (SCM) permissions to
+both services:
+
+| Operation | Allowed principals |
+| --- | --- |
+| Query service configuration/status, enumerate dependents, interrogate status, or read its ACL | Authenticated users, SYSTEM, and Administrators |
+| Start/Stop, pause, change configuration, delete, change the ACL, or send custom service controls | SYSTEM and elevated Administrators |
+| Read event/file logs | Non-administrators under the existing Event Log and filesystem permissions |
+| Change BFD registry settings | SYSTEM and elevated Administrators; the BFD service SID has read access |
+
+A service-status query returns Windows lifecycle state, such as `Running` or
+`Stopped`. It does not return BFD protocol state, such as `Up` or `Down`.
+Log-reading permissions are unchanged. The default installed log folder grants
+Users read access and the BFD service SID Modify access; a custom log path uses
+its administrator-provisioned filesystem permissions. The Operational channel
+uses Windows Event Log permissions without a custom channel ACL.
 
 ## Broker communication
 

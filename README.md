@@ -118,24 +118,19 @@ registry values.
 
 ## Documentation
 
-Use these guides for the next task:
+Use the [documentation index](docs/README.md) to find operator guides,
+architecture references, development instructions, and dated review records.
+These are common starting points:
 
 | Task | Guide |
 | --- | --- |
 | Install, configure, verify, or stop a session | [Set up a BFD session](docs/setup.md) |
 | Look up registry values, defaults, and authentication | [Registry configuration reference](docs/configuration.md) |
 | Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](docs/seamless.md) |
-| Enable file output or interpret Operational events | [Logs and events](docs/logging.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
 | Query service status and read BFD state events | [Monitor service status and BFD events](docs/monitoring.md) |
-| Check ports, firewall requirements, and protocol limits | [Network and protocol behavior](docs/protocol.md) |
 | Understand authentication, privilege boundaries, and compiler/linker protections | [Security, authentication, and build hardening](docs/security.md) |
-| Trace service inputs, outputs, and BGP actions | [Service communication](docs/service-communication.md) |
-| Review the RPC identity checks, privileges, and security guidance | [Local RPC authentication and authorization](docs/rpc-authentication.md) |
-| Use the broker's status call and understand validation, freshness, and quarantine | [RPC session-status query](docs/rpc-session-status-design.md) |
-| Review RFC 5880, RFC 7419, and RFC 7880 requirements, test coverage, and limits | [RFC conformance tests](docs/rfc-conformance.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |
-| Review documentation corrections and validation scope | [Documentation audit](docs/documentation-audit.md) |
 
 For recorded checks and their limits, see the
 [validation guide](RUST_SKILLS_VALIDATION.md) and

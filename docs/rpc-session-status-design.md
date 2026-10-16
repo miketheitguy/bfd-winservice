@@ -10,6 +10,12 @@ For Windows identity checks, see [RPC authentication](rpc-authentication.md).
 A valid reply still needs freshness receipts: check `BrokerStatus::is_fresh()`
 before treating a cached observation as current.
 
+For operator commands, see [Monitor service status and BFD events](monitoring.md).
+To look up this contract, start with [Session fields](#session-fields) and
+[Native and Rust bounds](#native-and-rust-bounds). To assess an observation, see
+[Broker cache and freshness](#broker-cache-and-freshness) and
+[Secure response to invalid data](#secure-response-to-invalid-data).
+
 ## Function call and ownership
 
 Inside a broker worker function returning `Result`, fetch one observation with:
@@ -23,6 +29,8 @@ the broker's own SYSTEM account and service SID, uses one fixed BFD server
 identity policy, and converts a successful reply into Rust domain types before
 returning it. Only one production client call can be in flight. Concurrent
 attempts return busy rather than queueing work.
+
+### Native interface contract
 
 The native contract in [bfd_local.idl](../rpc/bfd_local.idl) is:
 
@@ -131,11 +139,15 @@ The broker starts its supervisor and single RPC worker after reporting SCM
 Running, avoiding a dependency cycle with BFD. Successful queries repeat once
 per second, independently of the provider worker and packet publication interval.
 
+### Cache states
+
 `cached_bfd_session_status()` returns the current `Arc<BrokerStatus>`, or `None`
 before the monitor starts. `BrokerStatus` distinguishes `Unavailable`,
 `Available`, and `Quarantined`. An `Available` value contains only converted
 `SessionStatus`, its broker receipt time, and total fetch duration. Call
 `is_fresh()` before treating it as current.
+
+### Freshness calculation
 
 The conservative age adds the server's snapshot age, the entire fetch duration,
 and monotonic time since receipt. Above two seconds, `is_fresh()` returns false;
@@ -155,6 +167,8 @@ The broker applies these failure policies:
 | Invalid record or safely reported native unmarshaling/range error | Discard the complete record; clear prior cache to `Unavailable`; retry with backoff; Error 301 at most once per minute | Keep broker Running; no automatic BGP action or restart |
 | Native worker exceeds eight-second supervision budget | Quarantine telemetry and retain that single owned worker; no replacement worker loop | Provider and shutdown remain responsive |
 | Fatal native exception or detected process memory corruption | Do not convert to a recoverable query error; let the process terminate | Continuing in possibly corrupted process memory is unsafe |
+
+### Retry and reporting policy
 
 Consecutive failed queries wait 1, 2, 4, 8, 16, then 30 seconds, remaining at
 30 seconds until a valid reply resets the delay. A valid reply, including stale
@@ -209,6 +223,8 @@ starts no replacement. Broker shutdown joins the supervisor but never waits
 indefinitely for or forcibly terminates that worker. Ordinary query failures do
 not abort the provider process.
 
+### BFD server shutdown
+
 BFD closes its observer when packet processing ends, before announcements and
 BGP cleanup. It then unregisters and drains its RPC interface before releasing
 the descriptor. A previously loaded snapshot remains
@@ -224,6 +240,8 @@ cargo test-release --lib local_rpc::
 cargo test-release --lib native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection -- --ignored
 ```
 
+### Test coverage and limits
+
 Tests cover C/Rust layout, native range rejection, Rust schema/type conversion,
 historical peer state, saturation, reflector absence, stale caching, invalid-data
 recovery on the same worker, capped backoff and reset, cancellation, and
@@ -233,9 +251,12 @@ server rejection, and recovery in the same process. It performs no BGP mutation.
 Fixture processes isolate test identities and RPC registration, not production
 calls. Installed SCM tokens still require the separate MSI first-start/repair test.
 
-The implementation lives in
-[status conversion](../src/local_rpc/status.rs),
-[RPC registration/client](../src/local_rpc.rs),
-[broker supervision/cache](../src/local_rpc/monitor.rs),
-[snapshot publication](../src/runtime/status.rs), and
-[native completion](../rpc/client.c).
+### Implementation files
+
+The implementation lives in these files:
+
+- [Status conversion](../src/local_rpc/status.rs)
+- [RPC registration/client](../src/local_rpc.rs)
+- [Broker supervision/cache](../src/local_rpc/monitor.rs)
+- [Snapshot publication](../src/runtime/status.rs)
+- [Native completion](../rpc/client.c)

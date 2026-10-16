@@ -17,6 +17,21 @@ provider Component Object Model (COM) and Management Infrastructure (MI) API
 keep their separate contracts. See [RPC session-status query](rpc-session-status-design.md)
 for fields, accepted ranges, freshness, and telemetry quarantine.
 
+## Find an RPC topic
+
+Use these sections for a specific check or lifecycle question:
+
+- [Interface and process boundaries](#interface-and-process-boundaries)
+- [Accounts, service SIDs, and privileges](#accounts-service-sids-and-privileges)
+- [Startup and query sequence](#startup-and-query-sequence)
+- [Server identity checks](#server-identity-checks)
+- [Caller identity and authorization](#caller-identity-and-authorization)
+- [Runtime management operations](#runtime-management-operations)
+- [Deadlines, cancellation, and resource ownership](#deadlines-cancellation-and-resource-ownership)
+- [Wire validation and extension limits](#wire-validation-and-extension-limits)
+- [Security best practices](#alignment-with-security-best-practices),
+  [verification](#verify-the-implementation), and the [source map](#source-map)
+
 ## Interface and process boundaries
 
 The RPC contract has these properties:
@@ -93,11 +108,11 @@ Startup and status fetching follow this order:
 
 1. SCM starts the broker dependency. The broker verifies SYSTEM and its service
    SID, initializes the existing COM/MI host, and reports Running.
-2. Start the supervisor and one RPC worker inside that broker process. Startup
+2. The broker starts the supervisor and one RPC worker inside its process. Startup
    does not wait for BFD, avoiding an SCM dependency cycle.
 3. BFD verifies its restricted identity, removes unused privileges, creates its
-   configured engine, and gives RPC a read-only snapshot observer. Deny runtime
-   management and register the interface before reporting Running.
+   configured engine, and gives RPC a read-only snapshot observer. It denies runtime
+   management and registers the interface before reporting Running.
 4. The broker worker verifies its account/service SID and uses the fixed BFD
    identity descriptor for an asynchronous native fast binding. It initializes
    no additional COM security and creates no helper process or reply pipe.
@@ -107,8 +122,9 @@ Startup and status fetching follow this order:
    copies the fixed record, and releases it. Packet processing receives no query.
 7. Generated stubs check native bounds. Rust converts the record once into
    checked domain types before the supervisor publishes its cache.
-8. Complete and release native client resources. Report connection/recovery,
-   discard failed or invalid replies, and retry with backoff without a BGP action.
+8. The client completes and releases its native resources. The monitor reports
+   connection/recovery, discards failed or invalid replies, and retries with
+   backoff without a BGP action.
 
 Successful queries repeat after one second. Consecutive failures back off through
 1, 2, 4, 8, 16, then 30 seconds. A valid reply resets the delay. Ordinary failure

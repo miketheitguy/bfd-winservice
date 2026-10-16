@@ -5,7 +5,23 @@ It also explains how to prepare the files that systems administrators install.
 Run the commands from the repository root.
 
 For service installation and configuration, see
-[Set up a BFD session](docs/setup.md).
+[Set up a BFD session](docs/setup.md). For the full guide map, see the
+[documentation index](docs/README.md).
+
+## Choose a development task
+
+Use these entry points to find the relevant procedure or reference:
+
+| Task | Start here |
+| --- | --- |
+| Build and inspect an executable | [Before you begin](#before-you-begin), then [Build the executable](#build-the-executable) |
+| Run checks before submitting Rust changes | [Run development checks](#run-development-checks); see [ASan checks](#run-addresssanitizer-checks) for memory-error testing |
+| Inspect build protections and production artifacts | [Build security](#build-security) |
+| Change library APIs or broker boundaries | [Configuration and error APIs](#use-the-rust-configuration-and-error-apis), [broker management security](#initialize-broker-management-security), and [local RPC maintenance](#maintain-the-private-local-rpc-interface) |
+| Update the communication diagrams | [Update the security diagrams](#update-the-security-diagrams) |
+| Prepare loose files or an MSI | [Prepare installation files](#prepare-installation-files) or [Build an MSI](#build-an-msi) |
+| Build or publish a tagged release | [GitHub Actions](#build-with-github-actions) and [Publish a GitHub release](#publish-a-github-release) |
+| Submit a tested change | [Submit a change](#submit-a-change) |
 
 ## Before you begin
 

@@ -4,6 +4,16 @@
 
 Initial audit: 2026-09-30. Miri revalidation: 2026-10-01. Scope: the entire service crate, its tests, Cargo manifest/lockfile, and README. The revalidation adds three ancillary-parser unit tests and Miri instructions; production behavior is unchanged.
 
+## Navigate this snapshot
+
+Use these links to inspect the original assessment and its evidence:
+
+- [Result and assessment counts](#result).
+- [Confirmed defects](#confirmed-defects) and [guideline gaps](#guideline-gaps-and-recommendations).
+- [Checks and evidence](#checks-and-evidence), including [Miri revalidation](#miri-revalidation-details--2026-10-01).
+- [Source snapshot](#source-snapshot) and [category coverage](#category-coverage).
+- [Complete rule matrix](#complete-rule-matrix).
+
 ## Result
 
 All 265 rules referenced by the local [rust-skills catalog](../../.codex/skills/rust-skills/SKILL.md) were assessed across all 26 categories. No `SKILLS.md` exists in this workspace; the active `SKILL.md` is the actual catalog. All referenced rule files exist. The vendored skill's illustrative code and its separate checks crate are reference material, not service targets.
