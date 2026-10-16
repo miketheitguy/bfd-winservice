@@ -1,23 +1,62 @@
 # Security, authentication, and build hardening
 
-For Windows administrators and developers, this page explains which identities
-can access the installed services, how each communication boundary checks them,
-and how the compiler and linker reduce exploit opportunities. It describes the
-MSI installation. For socket endpoints and BGP actions, see
+Windows administrators and developers: this is your map of the security lineup,
+from incoming packets to privileged BGP management. The MSI-installed services
+keep identity checks, permissions, and native resource lifetimes explicit. The
+least-privilege setup is dialed in, and the details have receipts. For socket
+endpoints and BGP actions, see
 [Service communication](service-communication.md).
 
 The network-facing BFD process runs as LocalService and hosts a private local
 RPC interface for the LocalSystem BGP broker. The interface authenticates both
-services and exposes a connection probe and read-only session telemetry. The broker performs privileged
-BGP management for one configured target through its existing COM/MI provider
-integration. Windows access-control lists (ACLs) govern service control,
+services and exposes a connection probe and read-only session telemetry. The
+broker performs privileged BGP management for one configured target through its
+COM/MI provider integration. Windows access-control lists (ACLs) govern service control,
 configuration, logs, and the existing BGP control pipe; optional BFD wire
 authentication checks remote packets. These checks protect different boundaries.
 
-The security receipts are the actual token checks, ACLs, and packet validation.
-A service name or an open endpoint doesn't prove who is calling.
+No cap: the confidence comes from token checks, ACLs, packet validation, and
+recorded rejection tests. Each private service boundary checks the identity and
+authority it needs before work proceeds. That is a clean security lineup; a
+service name or an open endpoint alone doesn't prove who is calling.
+
+## Security receipts and best practices
+
+The design follows least privilege, explicit authorization, defense in depth,
+and careful ownership of native resources. Microsoft's
+[RPC client-authentication guidance](https://learn.microsoft.com/en-us/windows/win32/rpc/controlling-client-authentication)
+supports the callback, call-attribute, and Authz approach. Its
+[service access-rights guidance](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights)
+supports restricting service reconfiguration to administrators. Stoked on the
+receipts: the implementation and recorded checks make those choices inspectable.
+
+These controls and validation records support the stated security boundaries:
+
+| Practice | What the boundary enforces | Evidence you can inspect |
+| --- | --- | --- |
+| Least privilege and distinct service identities | LocalService BFD retains two privileges; exact account and enabled service SID checks distinguish services sharing an account. | [Token fixtures](../src/service_identity/tests.rs), [privilege removal](../src/runtime/privileges.rs), and the [recorded reliability/security review](../CODE_REVIEW.md#reliability-and-security-review--2026-10-09). |
+| Authenticate, then authorize the specific service | The RPC client pins BFD's account and service SID; BFD checks the interface ACL, call attributes, SYSTEM account, and enabled broker SID. Management operations are denied. | [Native RPC rejection tests](../src/local_rpc/tests.rs), [replacement-server fixture](../src/local_rpc/tests/restricted.rs), and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
+| Keep privileged actions narrow | The BGP broker authenticates BFD before decoding requests and accepts fixed operations for its protected configured target. | [Broker authorization tests](../src/bgp_broker.rs), [frame and identity checks](../src/bgp/ipc.rs), and the [session-status implementation record](../CODE_REVIEW.md#rpc-session-status-implementation--2026-10-15). |
+| Validate remote input before changing session state | Protocol, path, and configured authentication checks reject invalid packets without refreshing accepted peer state. Wire authentication remains optional. | [RFC boundary tests](../tests/rfc5880.rs), [native UDP tests](../tests/windows_udp.rs), and the [recorded RFC validation](../CODE_REVIEW.md#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09). |
+| Validate native data and preserve ownership through cancellation | Robust MIDL stubs and checked Rust conversion bound status data; pending calls retain their buffers and handles until completion. | [Layout and conversion tests](../src/local_rpc/status/tests.rs), [RPC rejection and cancellation tests](../src/local_rpc/tests.rs), [native completion code](../rpc/client.c), and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
+| Keep telemetry failure separate from control | Invalid replies clear the cache and retry; a stuck worker quarantines telemetry without issuing BGP actions or accumulating replacement workers. | [Supervisor regressions](../src/local_rpc/monitor/tests.rs) and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
+| Check hardening and deployment policy | Executable tests inspect emitted mitigation metadata; the MSI harness checks installed accounts, privileges, ACLs, authentication, and logging. | [Executable checks](../tests/windows_hardening.rs), [MSI harness](../scripts/Test-MsiInstall.ps1), and the configured [tagged-release workflow](../.github/workflows/build-msi.yml). The [recorded local RPC review](../CODE_REVIEW.md#local-rpc-security-review--2026-10-15) includes hardening results. |
+
+The latest RPC recovery record reports 29 targeted tests passing in optimized
+and AddressSanitizer profiles, including rejection, recovery, cancellation,
+and stalled-worker lifetime checks. Those are dated implementation receipts;
+they attest to the recorded checks and exercised paths, rather than certify
+every deployment. The MSI harness supplies a separate check of actual SCM-issued
+identities and was not run locally for that review. Workflow configuration
+describes the release gates; it does not by itself establish a successful run.
+Use the [validation guide](../RUST_SKILLS_VALIDATION.md#read-the-validation-receipts)
+to keep each result tied to its revision. No runtime tests are rerun by this
+documentation update.
 
 ## Identities and privileges
+
+Least privilege is the main character in this lineup. Windows account and
+service-SID checks keep each process on the permissions its role needs.
 
 A security identifier (SID) identifies a Windows account or group. The installer
 sets BFD to `SERVICE_SID_TYPE_RESTRICTED` (`3`) and keeps the broker at
@@ -76,7 +115,8 @@ diagnostic and leaves a recovery snapshot that blocks a later repair until an
 administrator removes it. The installer does not reset an unknown prior policy
 to an assumed Windows default.
 
-Foreground `--console` execution uses the launching account and removes unused
+That service-mode boundary is locked in before traffic starts. Foreground
+`--console` execution uses the launching account and removes unused
 privileges. It provides no BGP control. Removing token privileges does not remove
 account or group memberships: an elevated console process still has the
 launching administrator's identity. The LocalService boundary applies to the
@@ -84,7 +124,10 @@ MSI-installed service.
 
 ## Communication boundaries
 
-The installed services use two private service channels and a provider path:
+Each channel has its own authorization lineup. This separation keeps the
+network-facing packet engine and privileged provider work on clear, reviewable
+paths. The installed services use two private service channels and a provider
+path:
 
 | Direction | Channel | Purpose |
 | --- | --- | --- |
@@ -106,6 +149,9 @@ security settings and their alignment with Microsoft guidance.
 
 ### Configuration, lifecycle, and logs
 
+Operational visibility is a W: you can inspect lifecycle and events while
+Windows keeps service-control and configuration permissions scoped separately.
+
 Elevated Administrators and SYSTEM install, configure, start, and stop the
 services. Windows checks registry, SCM, and filesystem permissions independently.
 BFD validates its reduced service token before registering its local RPC
@@ -124,7 +170,14 @@ which actions that identity can perform. Windows uses account/service tokens for
 local access; BFD wire authentication uses an optional shared secret. Neither
 the pipe sequence number nor UDP source/TTL checks replace an identity check.
 
+Both checks belong in the lineup: establish the caller, then check what that
+caller can do. The implementation follows that pattern at each private boundary.
+
 ### A: Remote BFD and S-BFD packets
+
+Incoming traffic has to earn its spot in the lineup. The firewall and packet
+validators check the configured path before a packet can influence peer state;
+configured wire authentication adds the shared-key check.
 
 `[AUTH A-fw]` represents Windows kernel UDP firewall filtering through the four
 installed program-specific allow rules. `[AUTH A]` represents the application's
@@ -172,6 +225,9 @@ and an example.
 
 ### B: BFD authenticates the broker
 
+The broker identity check brings receipts from Windows itself. Matching the pipe
+server PID to SCM keeps the client from trusting a process on name alone.
+
 Before exchanging messages on `\\.\pipe\BfdWinService.Bgp.v1`, the BFD client calls
 `GetNamedPipeServerProcessId`. It queries the Service Control Manager (SCM) for
 the running `BfdBgpBroker` service and requires the Windows-reported pipe server
@@ -184,6 +240,10 @@ rights that also permit pipe-instance creation. It opens the pipe with
 See Microsoft's [named-pipe access rights](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights).
 
 ### C: Broker authenticates and authorizes BFD requests
+
+The privileged action boundary is dialed in: a caller needs the BFD account,
+enabled service SID, and the applicable restricting-SID checks. That is the
+service identity understood by the broker's authorization policy.
 
 The broker checks its own process token at startup for LocalSystem in `TokenUser`
 and an enabled, non-deny-only `NT SERVICE\BfdBgpBroker` entry in `TokenGroups`.
@@ -221,13 +281,18 @@ version, operation allowlist (`Get`, `Start`, `Stop`), and next connection seque
 number. Replies carry status/error information. This sequence check orders the
 local protocol; the Windows token and ACL establish caller identity.
 
-The broker independently reads only the BGP peer name and routing domain from
+The fixed target keeps the action scope tight, no cap. The broker independently
+reads only the BGP peer name and routing domain from
 protected Parameters at startup. Requests cannot specify a peer, routing domain,
 command, path, or registry key. The broker uses its own LocalSystem authority
 only for that fixed target. This is the service's BGP action policy, not an
 interactive administrator credential passed through the BFD process.
 
 ### D: Broker accesses the local Windows provider
+
+Provider access stays in its own lane, dude: the broker ends pipe identification
+before native MI runs under its management identity. That explicit transition
+keeps caller inspection separate from privileged provider work.
 
 Native Management Infrastructure (MI) calls target the local
 `root/Microsoft/Windows/RemoteAccess` namespace and `PS_BgpPeer` class. The
@@ -258,6 +323,10 @@ authentication. Provider permissions and RRAS process identity depend on the
 host's Windows configuration.
 
 ### E: Service control, configuration, and diagnostic access
+
+The administrator boundary has a clean break between observation and control.
+Authenticated readers can inspect the granted service information; elevated
+administrators and SYSTEM hold the configuration and control rights.
 
 Windows checks the caller's access token against each object's ACL. There is no
 application login or shared password for `Start-Service`, `Stop-Service`, registry
@@ -299,23 +368,221 @@ BFD hosts `BfdWinService.Local.v1` on `ncalrpc`, interface version `1.1`.
 `Probe` checks connectivity; `GetSessionStatusV1` returns a fixed session-status
 record. Both require the same service-specific authentication and authorization.
 
+This RPC boundary understood the assignment: local transport, explicit service
+identities, read-only telemetry, and bounded work. The security checks stay
+separate from the packet engine and the broker's BGP action policy.
+
 The broker uses a dedicated RPC worker and supervisor inside its existing
 process. It creates no helper process or reply pipe and does not change its
 provider token or COM/MI initialization. One BFD identity policy remains fixed
 for the process lifetime; separate bindings are not treated as cache flushing.
 
-The security boundaries apply these checks:
+The API receipts are in [local RPC setup](../src/local_rpc.rs) and
+[per-call identity validation](../src/local_rpc/identity.rs). The ASCII diagrams
+show the logical security gates, rather than the RPC runtime's exact handshake
+or callback scheduling.
 
-| Direction or surface | Enforced policy |
+#### Binding and server setup
+
+The setup lineup checks both directions. The broker specifies its expected
+server identity; BFD separately registers the endpoint, application interface,
+and management policy:
+
+```text
+BROKER CLIENT: one fixed BFD identity policy
+  RpcBindingCreateW
+    RPC_PROTSEQ_LRPC -> BfdWinService.Local.v1
+    RPC_C_AUTHN_WINNT + RPC_C_AUTHN_LEVEL_PKT_PRIVACY
+    RPC_SECURITY_QOS_V5_W:
+      MUTUAL_AUTH, STATIC, IDENTIFY, EffectiveOnly=1
+      Sid=LocalService
+      ServerSecurityDescriptor=LocalService AND BFD service SID
+          |
+          v
+  RpcBindingSetOption(RPC_C_OPT_UNIQUE_BINDING, 1)
+          |
+          v
+  Native RpcBindingBind, then GetSessionStatusV1 (Probe in tests)
+    server identity mismatch or API failure -> query fails; no status
+
+BFD SERVER: verify its own restricted service token first
+  RpcMgmtSetAuthorizationFn(deny_management)
+    management request -> ERROR_ACCESS_DENIED
+          |
+          v
+  RpcServerUseProtseqEpW("ncalrpc", endpoint, broker-SID ACL)
+          |
+          v
+  RpcServerRegisterAuthInfoW(RPC_C_AUTHN_WINNT)
+          |
+          v
+  RpcServerRegisterIf3(interface, flags, authorize, broker-SID ACL)
+    setup failure -> fail startup; no fallback policy
+          |
+          v
+  Windows interface ACL check -> security callback -> manager
+    ACL denial -> reject before callback or manager
+```
+
+`RpcBindingCreateW` builds a fast binding; success alone establishes neither
+connectivity nor server identity. The native wrapper subsequently calls
+`RpcBindingBind`. The binding uses Windows credentials through a null
+`AuthIdentity`; it supplies no application password. See Microsoft's
+[RpcBindingCreateW reference](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcbindingcreatew).
+
+The client sets `RPC_C_QOS_CAPABILITIES_MUTUAL_AUTH`,
+`RPC_C_QOS_IDENTITY_STATIC`, and `RPC_C_IMP_LEVEL_IDENTIFY` in
+`RPC_SECURITY_QOS_V5_W`. Static tracking captures credentials for that binding;
+Identify permits identity and ACL checks without allowing BFD to access
+resources as the privileged broker. `EffectiveOnly=1` exposes enabled privileges
+only; it is not the service-group authorization check. See Microsoft's
+[QOS V5 contract](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/ns-rpcdce-rpc_security_qos_v5_w).
+
+`QOS.Sid` identifies LocalService, while `ServerSecurityDescriptor` contains one
+conditional allow ACE requiring both LocalService and the BFD service SID.
+`Member_of` tests all listed enabled SIDs for an allow ACE; two independent allow
+ACEs would instead permit either identity. The descriptor adds the
+service-specific server check: the mutual-authentication capability flag alone
+is insufficient because a provider can report that capability without
+establishing the server's identity. See Microsoft's
+[conditional ACE semantics](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-definition-language-for-conditional-aces-)
+and [QOS provider caveat](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/ns-rpcdce-rpc_security_qos_v5_w).
+
+On BFD, `RpcMgmtSetAuthorizationFn` denies every runtime management operation
+before the endpoint opens. This is separate from the application interface's
+ACL and callback. `RpcServerUseProtseqEpW` registers only `ncalrpc` with an
+explicit broker-SID endpoint ACL; `RpcServerRegisterAuthInfoW` registers WINNT
+without a custom key callback. See Microsoft's
+[management authorization](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcmgmtsetauthorizationfn),
+[endpoint registration](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcserveruseprotseqepw),
+and [authentication registration](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcserverregisterauthinfow).
+
+`RpcServerRegisterIf3` also receives an explicit broker-SID interface ACL and
+the authorization callback. Windows checks that ACL before invoking the
+callback, including the access restrictions of the caller's token. The endpoint
+ACL alone is insufficient. The interface uses these flags:
+
+| Flag | Purpose and limit |
 | --- | --- |
-| Broker authenticates BFD | WINNT packet privacy and QOS V5 server descriptor requiring LocalService and the enabled BFD service SID |
-| BFD authorizes broker | Explicit endpoint/interface ACL, local `ncalrpc`, WINNT privacy, non-null session, exact SYSTEM account, and enabled non-deny-only broker group |
-| Runtime management | Independent process-wide callback denies every management operation in BFD only |
-| Credential handling | Static Identify credentials and Authz queries without thread token attachment; no added impersonation/debug privilege |
-| Status record | Robust fixed-size MIDL stubs and one Rust conversion using enums, `TryFrom`, `NonZero`, checked time arithmetic, and canonical optional fields |
-| Invalid status | Discard the whole record, clear prior cached telemetry, retry with capped backoff, and rate-limit Error 301 to once per minute; provider work continues |
+| `RPC_IF_ALLOW_LOCAL_ONLY` | Reject remote clients; the callback additionally requires LRPC and confirmed local origin. |
+| `RPC_IF_ALLOW_SECURE_ONLY` | Reject unauthenticated calls; this flag alone does not require privacy, exclude null sessions, or prove a privileged caller. |
+| `RPC_IF_SEC_NO_CACHE` | Run the security callback for each call; this does not disable every Windows identity or association cache. |
+| `RPC_IF_AUTOLISTEN` | Give this interface an automatic listening lifetime without calling process-wide `RpcServerListen` or `RpcMgmtStopServerListening`. |
 
-Native bind and call deadlines are two seconds each. An eight-second supervisor
+See Microsoft's [RpcServerRegisterIf3 ordering](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcserverregisterif3)
+and [interface flag definitions](https://learn.microsoft.com/en-us/windows/win32/rpc/interface-registration-flags).
+
+#### Per-call authorization and cleanup
+
+The interface callback and the application manager both call the same identity
+guard. The manager repeats the guard before loading a status snapshot. That
+second check is a solid W for explicit authorization at the point of use:
+
+```text
+Windows interface ACL passes
+          |
+          v
+  RpcServerInqCallAttributesW(RPC_CALL_ATTRIBUTES_V2_W)
+    require LRPC + rcclLocal + NullSession=0 + WINNT + privacy
+    API failure or mismatch -------------------------> DENY
+          |
+          v
+  RpcGetAuthorizationContextForClient(ImpersonateOnReturn=FALSE)
+    API failure or null context ---------------------> DENY
+          |
+          v
+  AuthzGetInformationFromContext
+    AuthzContextInfoUserSid    -> TOKEN_USER
+    AuthzContextInfoGroupsSids -> TOKEN_GROUPS
+          |
+          v
+  Validate native buffer lengths, group entries, and SID bounds
+          |
+          v
+  EqualSid: user == SYSTEM
+  EqualSid: group == broker service SID
+    group enabled; not SE_GROUP_USE_FOR_DENY_ONLY
+          |
+          +-- query / bounds / identity failure --+
+          |                                     |
+          v                                     v
+  RpcFreeAuthorizationContext        RpcFreeAuthorizationContext
+          |                                     |
+          v                                     v
+        ALLOW                                  DENY
+
+Callback allows -> manager repeats guard -> bounded snapshot copy
+```
+
+`RpcServerInqCallAttributesW` receives a version-2 structure with
+`RPC_QUERY_IS_CLIENT_LOCAL`. The code requires `RPC_PROTSEQ_LRPC`, `rcclLocal`,
+`NullSession == 0`, `RPC_C_AUTHN_WINNT`, and an authentication level at least
+`RPC_C_AUTHN_LEVEL_PKT_PRIVACY`. Unavailable or unexpected attributes deny the
+call. See Microsoft's [call-attribute query](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcserverinqcallattributesw)
+and [version-2 fields](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/ns-rpcasync-rpc_call_attributes_v2_w).
+
+`RpcGetAuthorizationContextForClient` uses `ImpersonateOnReturn=FALSE` and zero
+or null reserved parameters. The Authz queries read the authenticated caller's
+identity without leaving its token attached to the BFD thread. This path does
+not call `RpcImpersonateClient` or require added `SeImpersonatePrivilege`.
+See Microsoft's [authorization-context contract](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcgetauthorizationcontextforclient).
+
+`AuthzGetInformationFromContext` retrieves `AuthzContextInfoUserSid` and
+`AuthzContextInfoGroupsSids`. `EqualSid` compares the account with SYSTEM and
+the service group with `NT SERVICE\BfdBgpBroker`; the group must have
+`SE_GROUP_ENABLED` and lack `SE_GROUP_USE_FOR_DENY_ONLY`. A same-account process
+without that group fails. These explicit identity comparisons supplement the
+runtime ACL check; they do not reimplement restricted-token access checking.
+See Microsoft's [Authz query](https://learn.microsoft.com/en-us/windows/win32/api/authz/nf-authz-authzgetinformationfromcontext),
+[information classes](https://learn.microsoft.com/en-us/windows/win32/api/authz/ne-authz-authz_context_information_class),
+and [EqualSid preconditions](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-equalsid).
+
+The Rust wrapper bounds each identity result to 1 MiB, uses initialized aligned
+storage, and checks structure lengths, group-count arithmetic, SID alignment,
+revision, and SID body bounds before native comparison. An acquired context is
+owned by a drop guard and released with `RpcFreeAuthorizationContext` on both
+success and rejection, rather than `AuthzFreeContext`. See Microsoft's
+[RPC context release](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcfreeauthorizationcontext).
+
+The ownership story is dialed in too: each acquired context has a release path,
+including rejected calls. Native parsing still carries its documented bounds
+and layout obligations.
+
+#### Authz responsibilities
+
+The implemented Authz path fits the requirement to compare the exact account
+SID and enabled service SID directly. The W is the exact authorization policy
+and its rejection coverage. The Authz wrapper owns native buffer parsing,
+context lifetime, and cleanup. The authorization policy,
+transport/authentication checks, correct API use, and
+reviewed FFI boundary determine whether the implementation enforces its intended
+trust boundary.
+
+#### Soundness and operational limits
+
+The layered design is sound for the stated local-service identity boundary, and
+the regression receipts back that assessment. Windows checks the expected
+server, the interface ACL gates callers, the callback and manager require the
+exact broker identity, and BFD never adopts the broker's token for resource
+access. Stoked on that separation: the network-facing process keeps its reduced
+identity throughout the exchange. This is a design assessment, not a proof of
+Rust memory soundness or the absence of vulnerabilities. It assumes trustworthy
+Windows authentication, SCM service-token construction, protected configuration
+and binaries, and the native RPC/Authz implementation. Administrators and SYSTEM
+that can replace code or change service policy remain trusted; a matching SID
+does not attest which executable is running.
+
+The status and availability boundaries apply these additional checks:
+
+| Surface | Enforced policy and limit |
+| --- | --- |
+| Status record | Robust fixed-size MIDL stubs and one Rust conversion use enums, `TryFrom`, `NonZero`, checked time arithmetic, and canonical optional fields. Valid shape does not prove a report is truthful. |
+| Invalid status | Discard the whole record, clear prior cached telemetry, retry with capped backoff, and rate-limit Error 301 to once per minute; provider work continues. |
+| Native boundary | MIDL, the C exception bridge, Windows APIs, and unsafe Rust wrappers must uphold their layout, bounds, and lifetime contracts. Safe Rust validation cannot repair prior native memory corruption. |
+| Authorized malicious source | A compromised authorized BFD process can return structurally valid false telemetry or withhold replies. Authentication establishes source identity, not session truth. |
+
+The recovery path keeps its balance when telemetry gets choppy. Native bind and
+call deadlines are two seconds each. An eight-second supervisor
 budget quarantines a stuck worker. Its owned native storage remains live;
 shutdown does not kill that thread, free pending buffers, or wait indefinitely
 for it. At most one monitored RPC operation can remain unfinished.
@@ -328,10 +595,14 @@ processes from injecting replies; checked conversion handles incorrect values
 from an authenticated source. See
 [injection and Rust's safety boundary](rpc-session-status-design.md#injection-and-rusts-safety-boundary).
 
-`RPC_IF_ALLOW_LOCAL_ONLY | RPC_IF_ALLOW_SECURE_ONLY | RPC_IF_SEC_NO_CACHE |
-RPC_IF_AUTOLISTEN` remain enabled. `MaxRpcSize` does not constrain LRPC, and
+`MaxRpcSize` does not constrain LRPC, and
 `MaxCalls` is best effort; a separate nonblocking permit caps status managers at
 four. RPC workers read snapshots without taking a lock on the packet engine.
+These bounds reduce contention but do not guarantee availability under host
+resource exhaustion or an authorized client's repeated requests. Status fetches,
+invalid replies, timeouts, and quarantine never fabricate a BFD Down state or
+issue BGP actions. The existing BGP control pipe and COM/MI provider policy remain
+separate.
 
 Native tests cover malformed replies, identity rejection, cancellation, and
 same-process coexistence with real read-only MI provider traffic. Installed
@@ -341,6 +612,10 @@ For API settings and primary references, see
 policy, see [RPC session-status query](rpc-session-status-design.md).
 
 ## Rust compiler and linker hardening
+
+Hardening brings another set of checks to the lineup: guarded indirect calls,
+stack protection, relocation metadata, and explicit failure behavior. These
+layers add protection around the identity and input-validation boundaries.
 
 The settings in [Cargo.toml](../Cargo.toml) and
 [.cargo/config.toml](../.cargo/config.toml) apply to both executables. The build
@@ -374,7 +649,8 @@ keeps host build scripts and procedural macros on default host settings.
 
 ### MSVC linker options
 
-Rust passes these options through `-C link-arg=...` to the MSVC linker:
+The executable brings its mitigation receipts to the break. Rust passes these
+options through `-C link-arg=...` to the MSVC linker:
 
 | Option | Security benefit and scope |
 | --- | --- |
@@ -395,8 +671,10 @@ for the deployment setting.
 
 ### Diagnostics, lint policy, and security limits
 
-AddressSanitizer (ASan) adds runtime memory-error detection to test builds. The
-following settings control diagnostics and code checks:
+The review tooling keeps the engineering lineup honest. AddressSanitizer (ASan)
+adds runtime memory-error detection to test builds, and strict lints make their
+configured violations fail the relevant checks. These settings control
+diagnostics and code checks:
 
 | Setting | Benefit and limitation |
 | --- | --- |
@@ -413,6 +691,10 @@ reviewed unsafe boundaries. The build also compiles native C for local RPC;
 those files have a separate compiler configuration.
 
 ### Native RPC compiler options
+
+The C boundary gets its own protection lineup. Its stack-buffer, control-flow,
+and additional compiler checks complement the Rust settings; their exact scope
+is documented here so the stoke stays grounded.
 
 [rpc/build.rs](../rpc/build.rs) runs the Windows SDK MIDL compiler with
 `/env x64 /robust /Oicf /app_config`. It generates separate client and server
@@ -445,6 +727,10 @@ alongside the shared target flags, preserving development and ASan debug output.
 
 ### Verification
 
+This is where the hardening claims show their receipts. The recorded reviews
+link successful checks to their revisions, and the executable tests inspect
+what the build actually emitted. That is a solid verification habit, dude.
+
 [tests/windows_hardening.rs](../tests/windows_hardening.rs) checks both executable
 images for architecture, relocations, ASLR/NX/CFG flags, CFG tables, security-cookie
 metadata, EH continuation data, CET compatibility, and profile-specific debug
@@ -459,7 +745,8 @@ overrides.
 
 ## Source map
 
-These files define the authentication and privilege boundaries:
+These files bring receipts for the whole lineup: they define the authentication
+and privilege boundaries, with the implementation details behind the claims:
 
 | Path | Relevant implementation |
 | --- | --- |

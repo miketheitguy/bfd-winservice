@@ -36,7 +36,10 @@ The [editable draw.io source](service-communication.drawio) contains runtime,
 lifecycle, and authentication pages. The authentication page shows the checks
 performed by the client, Windows RPC, and server:
 
-![RPC authentication: the in-process broker worker pins BFD identity; Windows and BFD check the endpoint, call attributes, and native caller identity. The manager loads one snapshot; native bounds and Rust conversions guard the reply; malformed data is discarded and retried with backoff.](images/service-communication-authentication.png)
+![RPC authentication call flow: RpcBindingCreateW uses Identify credentials and a BFD server descriptor. RpcServerRegisterIf3 applies the interface ACL before RpcServerInqCallAttributesW and RpcGetAuthorizationContextForClient(FALSE). AuthzGetInformationFromContext and EqualSid check SYSTEM plus the enabled broker SID; RpcFreeAuthorizationContext releases each acquired context.](images/service-communication-authentication.png)
+
+For the matching ASCII diagrams, API responsibilities, and security assessment, see
+[private local RPC authentication](security.md#f-private-local-rpc-authentication).
 
 The Windows RPC column represents runtime and kernel checks, not an additional
 service process. Windows obtains identities from native tokens. The protocol

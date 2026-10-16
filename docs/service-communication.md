@@ -16,6 +16,11 @@ The [editable draw.io source](service-communication.drawio) has three pages:
 runtime boundaries, service lifecycle, and RPC authentication. Each exported
 image embeds its editable page.
 
+The [authentication diagram](images/service-communication-authentication.png)
+names the client binding, server registration, call-attribute, Authz, SID, and
+cleanup functions. For ASCII call flows and the security assessment, see
+[private local RPC authentication](security.md#f-private-local-rpc-authentication).
+
 ## Runtime flow
 
 ![Runtime: the LocalService BFD engine publishes immutable snapshots; the SYSTEM broker's in-process RPC worker reads session status over authenticated local RPC, validates it, and caches it. The separate BGP control pipe and Windows COM/MI provider path remain.](images/service-communication-runtime.png)
