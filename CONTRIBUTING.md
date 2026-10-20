@@ -635,23 +635,26 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 ### Build with GitHub Actions
 
 The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
-of version tags matching `v*` and supports manual dispatch. The build job runs
-only when the selected ref is a version tag. It audits `Cargo.lock` against the
+of version tags matching `v*` and supports manual dispatch from a tag or branch.
+It audits `Cargo.lock` against the
 RustSec advisory database with `cargo audit`, then checks version stamping, Rust
 formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
 `rust-toolchain.toml`. The auditor is built with stable Rust outside the
 repository, so the repository's build-std configuration doesn't apply to it.
 
-Only builds of version tags package an MSI. Before compilation, the workflow
+Both tag builds and manual branch builds package and test an MSI. For a tag, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
 package entries in `Cargo.toml` and `Cargo.lock` in the runner's checkout.
 The executable, MSI, artifact filenames, and installation checks use that
-stamped version. The workflow validates production executable hardening before
+stamped version. A manual branch build uses the version already in `Cargo.toml`.
+The workflow validates production executable hardening before
 testing installation. Pushes to `main` or other branches and pull requests do
-not trigger this workflow. For a manual MSI build, select a version tag as the
-workflow ref; a manual run from a branch skips the build job.
+not trigger this workflow. To validate changes before tagging a release, manually
+dispatch the workflow from the branch. A branch run uploads validated artifacts
+and installer logs but does not publish a release. Release publication requires
+a version tag.
 
-The workflow explicitly passes `-AcceptWixEula` for tagged MSI builds, accepting
+The workflow explicitly passes `-AcceptWixEula` for MSI builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.
 
 Linting, tests, and production builds all use the release profile. Linting and
@@ -681,7 +684,11 @@ executable versions, delayed start and recovery settings, SCM recovery after a
 broker crash, and log writes through the BFD service SID.
 `Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
 copy to exercise fresh-install and existing LocalSystem-account rollback, including
-the delayed-start and non-crash recovery flags. It
+the delayed-start and non-crash recovery flags. Separate fixtures cover an absent
+privilege policy, an empty request through SCM, a pre-existing empty registry
+value, an explicit privilege list, and a restricted service SID. The empty registry
+value is seeded only on a stopped test service on the disposable runner; the test
+never starts that fixture. It
 runs only on a disposable GitHub-hosted runner.
 
 To inspect the package without installing it, run:

@@ -8,6 +8,10 @@ Set-StrictMode -Version Latest
 
 $cases = @(
     @{ Label = 'default'; Present = $false; Values = [string[]]@(); Valid = $true },
+    @{ Label = 'scm-empty'; Present = $false; Kind = 'Unknown'; Values = [string[]]@(); Valid = $true },
+    @{ Label = 'scm-empty'; Present = $true; Values = [string[]]@(); Valid = $false },
+    @{ Label = 'scm-empty'; Present = $true; Values = [string[]]@(''); Valid = $false },
+    @{ Label = 'scm-empty'; Present = $true; Values = [string[]]@('SeChangeNotifyPrivilege'); Valid = $false },
     @{ Label = 'restricted'; Present = $false; Values = [string[]]@(); Valid = $true },
     @{ Label = 'empty'; Present = $true; Values = [string[]]@(); Valid = $true },
     @{ Label = 'empty'; Present = $true; Values = [string[]]@(''); Valid = $true },
@@ -39,4 +43,4 @@ foreach ($case in $cases) {
         throw 'Fixture validation changed the raw privilege list needed for rollback comparison.'
     }
 }
-Write-Output "Validated $($cases.Count) rollback privilege fixtures, including both empty MULTI_SZ representations and rejection of absent/nonempty policies."
+Write-Output "Validated $($cases.Count) rollback privilege fixtures, including absent SCM-empty-request versus explicit-empty policies and both empty MULTI_SZ representations."

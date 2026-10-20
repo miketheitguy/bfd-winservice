@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-msi:
-    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: windows-2025
     timeout-minutes: 45
     outputs:
@@ -31,17 +31,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Apply release tag version
-        if: github.ref_type == 'tag'
+      - name: Resolve build version
         id: version
         env:
+          BFD_REF_TYPE: ${{ github.ref_type }}
           BFD_RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $version = ./scripts/Set-ReleaseVersion.ps1 -Tag $env:BFD_RELEASE_TAG
+          if ($env:BFD_REF_TYPE -eq 'tag') {
+            $version = ./scripts/Set-ReleaseVersion.ps1 -Tag $env:BFD_RELEASE_TAG
+          } else {
+            $metadata = cargo metadata --locked --no-deps --format-version 1
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read the validation build version.' }
+            $packages = @(($metadata | ConvertFrom-Json).packages | Where-Object name -EQ 'bfd-winservice')
+            if ($packages.Count -ne 1) { throw 'Expected one BFD package.' }
+            $version = $packages[0].version
+          }
           "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-          Write-Output "Release version $version from tag $env:BFD_RELEASE_TAG"
+          Write-Output "Build version $version from $env:BFD_REF_TYPE $env:BFD_RELEASE_TAG"
       - name: Install .NET SDK for WiX
-        if: github.ref_type == 'tag'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '8.0.x'
@@ -99,16 +106,13 @@ jobs:
           cargo test-release --lib bgp::ipc::tests::native_bgp_rpc_and_provider_security_coexist -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { throw 'BGP RPC/MI security coexistence failed.' }
       - name: Build hardened release executable and MSI
-        if: github.ref_type == 'tag'
         run: ./scripts/Build-Msi.ps1 -AcceptWixEula
       - name: Verify production executable hardening
-        if: github.ref_type == 'tag'
         run: |
           $env:BFD_HARDENING_EXE = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/bfd-winservice.exe').Path
           & $env:BFD_HARDENING_TEST_EXE
           if ($LASTEXITCODE -ne 0) { throw 'Release executable hardening validation failed.' }
       - name: Test MSI rollback, installation, and removal
-        if: github.ref_type == 'tag'
         env:
           BFD_RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -117,7 +121,6 @@ jobs:
           ./scripts/Test-MsiRollback.ps1 -Path $msi[0].FullName
           ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
       - name: Upload MSI and checksum
-        if: github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BfdWinService-x64-${{ github.sha }}
@@ -127,7 +130,7 @@ jobs:
             target/installer/*.msi
             target/installer/*.msi.sha256
       - name: Upload installer test logs
-        if: always() && github.ref_type == 'tag'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MSI-test-logs-${{ github.sha }}

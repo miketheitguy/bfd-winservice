@@ -3,7 +3,7 @@
 function Assert-RollbackPrivilegeFixture {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateSet('default','empty','explicit','restricted')][string]$Label,
+        [Parameter(Mandatory)][ValidateSet('default','scm-empty','empty','explicit','restricted')][string]$Label,
         [Parameter(Mandatory)][bool]$Present,
         [Microsoft.Win32.RegistryValueKind]$Kind = [Microsoft.Win32.RegistryValueKind]::Unknown,
         [AllowEmptyCollection()][AllowEmptyString()][string[]]$Values = @()
@@ -18,6 +18,7 @@ function Assert-RollbackPrivilegeFixture {
     $empty = $Values.Count -eq 0 -or ($Values.Count -eq 1 -and $Values[0] -ceq '')
     $valid = switch ($Label) {
         'default' { -not $Present }
+        'scm-empty' { -not $Present }
         'empty' { $Present -and $empty }
         'explicit' {
             $Present -and $Values.Count -eq 2 -and

@@ -11,7 +11,8 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
 . (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
 . (Join-Path $PSScriptRoot 'Assert-RollbackPrivileges.ps1')
 # This fixed-target helper runs only behind the disposable-runner guard above.
-# An explicit empty MULTI_SZ must be passed through SCM, not a direct registry write.
+# Explicit lists go through SCM. An empty SCM request leaves no registry value
+# on the hosted runner, so a pre-existing empty registry value is a separate case.
 Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -69,7 +70,7 @@ $testMsi = Join-Path $env:RUNNER_TEMP ('BfdRollback-' + [Guid]::NewGuid().ToStri
 & (Join-Path $PSScriptRoot 'New-MsiRollbackFixture.ps1') -Path $resolvedMsi -Destination $testMsi
 
 try {
-    foreach ($label in @('fresh','default','empty','explicit','restricted')) {
+    foreach ($label in @('fresh','default','scm-empty','empty','explicit','restricted')) {
         $migration = $label -ne 'fresh'
         if ($migration) {
             # Emulate a stopped, pre-existing LocalSystem service with the fixture's
@@ -80,7 +81,19 @@ try {
             $fixtureSidType = if ($label -eq 'restricted') { 'restricted' } else { 'none' }
             & sc.exe sidtype BfdWinService $fixtureSidType | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Could not create the migration SID fixture.' }
-            if ($label -eq 'empty') { [BfdRollbackPrivileges]::Set([string[]]@()) }
+            if ($label -eq 'scm-empty') {
+                [BfdRollbackPrivileges]::Set([string[]]@())
+            }
+            if ($label -eq 'empty') {
+                # Model a pre-existing REG_MULTI_SZ on this stopped fixture only.
+                # The fixture never starts; installed service policy still uses SCM.
+                $fixtureKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+                    'SYSTEM\CurrentControlSet\Services\BfdWinService', $true)
+                if ($null -eq $fixtureKey) { throw 'The empty privilege fixture service key is missing.' }
+                try {
+                    $fixtureKey.SetValue('RequiredPrivileges', [string[]]@(), [Microsoft.Win32.RegistryValueKind]::MultiString)
+                } finally { $fixtureKey.Dispose() }
+            }
             if ($label -eq 'explicit') {
                 [BfdRollbackPrivileges]::Set([string[]]@('SeChangeNotifyPrivilege','SeImpersonatePrivilege'))
             }
@@ -142,7 +155,7 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'Could not remove the migration fixture.' }
         } elseif ($null -ne $service) { throw 'Rollback left the newly installed BFD service.' }
     }
-    Write-Output 'Fresh-install, default/explicit-empty/explicit-list privileges, and restricted-SID rollback checks passed, including registry/firewall cleanup.'
+    Write-Output 'Fresh-install, default/SCM-empty-request/explicit-empty/explicit-list privileges, and restricted-SID rollback checks passed, including registry/firewall cleanup.'
 }
 finally {
     # Only fixed fixture services on the disposable runner are removed.
