@@ -40,7 +40,7 @@ image embeds its editable page.
 The [authentication diagram](images/service-communication-authentication.png)
 names the client binding, server registration, call-attribute, Authz, SID, and
 cleanup functions. For ASCII call flows and the security assessment, see
-[private local RPC authentication](security.md#f-private-local-rpc-authentication).
+[private local RPC authentication](security/local-rpc.md#broker-authenticates-bfd-telemetry).
 
 ## Runtime flow
 

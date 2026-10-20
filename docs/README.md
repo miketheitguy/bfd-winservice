@@ -30,12 +30,13 @@ Use these references to trace a boundary or implementation contract:
 | Question | Reference |
 | --- | --- |
 | How do packet processing, telemetry, BGP actions, and shutdown connect? | [Service communication](service-communication.md), with runtime, lifecycle, and authentication diagrams |
-| Which identities, permissions, authentication checks, and build protections apply? | [Security, authentication, and build hardening](security.md), with ASCII RPC call flows |
+| Which identities, permissions, authentication checks, and build protections apply? | [Security overview](security.md), with focused references for service isolation, packets, local RPC call flows, and build hardening |
 | Which Windows RPC settings and per-call checks authenticate the two services? | [Local RPC authentication and authorization](rpc-authentication.md) |
 | What are the status fields, accepted ranges, freshness rules, and failure policies? | [RPC session-status query](rpc-session-status-design.md) |
 
-The service communication page provides the overview. The security guide covers
-all boundaries; the two RPC references provide the API and status-contract detail.
+The service communication page provides the process overview. The security guide
+maps each trust boundary to a focused reference; the RPC API and status-contract
+references provide additional implementation detail.
 
 ## Build and validate changes
 

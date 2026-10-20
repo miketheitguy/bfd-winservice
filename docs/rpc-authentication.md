@@ -104,7 +104,7 @@ performed by the client, Windows RPC, and server:
 ![RPC authentication call flow: RpcBindingCreateW uses Identify credentials and a BFD server descriptor. RpcServerRegisterIf3 applies the interface ACL before RpcServerInqCallAttributesW and RpcGetAuthorizationContextForClient(FALSE). AuthzGetInformationFromContext and EqualSid check SYSTEM plus the enabled broker SID; RpcFreeAuthorizationContext releases each acquired context.](images/service-communication-authentication.png)
 
 For the matching ASCII diagrams, API responsibilities, and security assessment, see
-[private local RPC authentication](security.md#f-private-local-rpc-authentication).
+[private local RPC authentication](security/local-rpc.md#broker-authenticates-bfd-telemetry).
 
 The Windows RPC column represents runtime and kernel checks, not an additional
 service process. Windows obtains identities from native tokens. The protocol
@@ -143,7 +143,7 @@ enabled non-deny-only service group, and the BFD SID plus write-restricted marke
 `S-1-5-33` in `TokenRestrictedSids`. Windows applies the installed write
 restriction to object access. The identity check does not replace those ACL
 checks or treat the restricted token as a complete sandbox. See
-[service identities and write restrictions](security.md#identities-and-privileges)
+[service identities and write restrictions](security/service-isolation.md#identities-and-privileges)
 and Microsoft's [service SID types](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_sid_info).
 
 An unrelated LocalService process lacks BFD's service SID. An unrelated SYSTEM

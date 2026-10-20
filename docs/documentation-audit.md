@@ -35,7 +35,7 @@ The following findings are corrected in the linked sections:
 
 | # | Location | Rule (ID + name) | Before | After | Severity |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [Build security](../CONTRIBUTING.md#build-security), [native RPC compiler options](security.md#native-rpc-compiler-options) | P11 verified behavior | Described a Rust-only build with no C compilation. | Describe generated MIDL stubs, the three C bridge files, actual MSVC flags, and the Rust-only scope of ASan instrumentation. | Blocking |
+| 1 | [Build security](../CONTRIBUTING.md#build-security), [native RPC compiler options](security/build-hardening.md#native-rpc-compiler-options) | P11 verified behavior | Described a Rust-only build with no C compilation. | Describe generated MIDL stubs, the three C bridge files, actual MSVC flags, and the Rust-only scope of ASan instrumentation. | Blocking |
 | 2 | [Development checks](../CONTRIBUTING.md#run-development-checks) | P11 verified behavior | Used floating `+nightly` and an unfiltered Miri library run that includes native-only modules. | Use the pinned toolchain and explicit portable filters and integration targets. | Blocking |
 | 3 | [Verify the session](../README.md#verify-the-session) | P11 verified behavior | Applied per-peer Up verification to every role. | Distinguish classical/initiator Up events from stateless reflector response checks. | Blocking |
 | 4 | [Session configuration](setup.md#2-configure-the-session), [Operational log](setup.md#3-verify-the-operational-log) | P11 verified behavior | Repeated MSI-provisioned setup and reset existing file-log settings. | Verify MSI registration; reserve logging initialization for loose files or a deliberate reset. | Blocking |
