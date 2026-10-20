@@ -1,4 +1,4 @@
-//! Removes process privileges that the BFD service never uses.
+//! Permanently reduces each service's process privileges before accepting work.
 // Token queries and privilege removal require the Windows FFI boundary.
 #![allow(unsafe_code)]
 
@@ -31,6 +31,12 @@ const RETAINED: [&str; 2] = ["SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege
 /// Returns token query, privilege lookup, or adjustment errors.
 pub fn drop_privileges() -> io::Result<Vec<String>> {
     drop_except(&RETAINED)
+}
+
+/// The SYSTEM broker needs directory traversal only. Provider operations run
+/// under its own account; no client token or impersonation privilege is needed.
+pub(crate) fn drop_broker_privileges() -> io::Result<Vec<String>> {
+    drop_except(&["SeChangeNotifyPrivilege"])
 }
 
 /// Native test clients remove privileges independently of their parent process.
@@ -188,6 +194,79 @@ fn privilege_name(luid: &LUID) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the installed broker on a disposable MSI test runner"]
+    fn installed_broker_token_retains_only_change_notify() {
+        use windows_service::{
+            service::{ServiceAccess, ServiceState},
+            service_manager::{ServiceManager, ServiceManagerAccess},
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+        assert_eq!(
+            std::env::var("RUNNER_ENVIRONMENT").as_deref(),
+            Ok("github-hosted")
+        );
+        let manager =
+            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).unwrap();
+        let service = manager
+            .open_service(crate::bgp::ipc::BROKER_NAME, ServiceAccess::QUERY_STATUS)
+            .unwrap();
+        let status = service.query_status().unwrap();
+        assert_eq!(status.current_state, ServiceState::Running);
+        let service_pid = status.process_id.unwrap();
+        // SAFETY: the SCM-reported process ID is used only to open a read-only handle.
+        let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, service_pid) };
+        assert!(!raw.is_null(), "{}", io::Error::last_os_error());
+        // SAFETY: OpenProcess returned a uniquely owned live process handle.
+        let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let mut raw_token = ptr::null_mut();
+        // SAFETY: the process remains live and the token output is writable.
+        let opened =
+            unsafe { OpenProcessToken(process.as_raw_handle(), TOKEN_QUERY, &mut raw_token) };
+        assert_ne!(opened, 0);
+        // SAFETY: the successful open transfers a uniquely owned token handle.
+        let token = unsafe { OwnedHandle::from_raw_handle(raw_token) };
+        let names: Vec<_> = privileges(&token)
+            .unwrap()
+            .iter()
+            .map(|entry| privilege_name(&entry.Luid).unwrap())
+            .collect();
+        assert_eq!(names, ["SeChangeNotifyPrivilege"]);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn broker_retains_only_change_notify_and_can_read_provider_schema() {
+        const CHILD: &str = "BFD_TEST_BROKER_PRIVILEGES_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            drop_broker_privileges().unwrap();
+            let mut raw = ptr::null_mut();
+            // SAFETY: valid process pseudo-handle and writable output.
+            let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) };
+            assert_ne!(opened, 0);
+            // SAFETY: the successful open transfers a uniquely owned handle.
+            let token = unsafe { OwnedHandle::from_raw_handle(raw) };
+            let names: Vec<_> = privileges(&token)
+                .unwrap()
+                .iter()
+                .map(|entry| privilege_name(&entry.Luid).unwrap())
+                .collect();
+            assert_eq!(names, ["SeChangeNotifyPrivilege"]);
+            assert!(drop_broker_privileges().unwrap().is_empty());
+            crate::bgp_broker::test_rpc_with_provider(|schema| schema())
+                .unwrap()
+                .unwrap();
+            return;
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::privileges::tests::broker_retains_only_change_notify_and_can_read_provider_schema", "--nocapture"])
+            .env(CHILD, "1").status().unwrap();
+        assert!(status.success(), "{status}");
+    }
 
     #[cfg(not(miri))]
     #[test]

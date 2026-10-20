@@ -460,29 +460,35 @@ authenticated status fetch after installed first start and repair.
 
 ## Update the security diagrams
 
-The [draw.io source](docs/service-communication.drawio) has three editable pages:
-runtime boundaries, service lifecycle, and RPC authentication. Keep its exports
-and [communication guide](docs/service-communication.md) synchronized with the
-implementation. The [RPC reference](docs/rpc-authentication.md) supplies the
-detailed authentication mechanisms and Microsoft references.
+The [communication guide](docs/service-communication.md) embeds the runtime and
+lifecycle diagrams as fenced `mermaid` blocks. The
+[RPC reference](docs/rpc-authentication.md#rpc-authentication-flow) embeds the
+authentication diagram. Edit those blocks to update the rendered Markdown
+diagrams; each includes an accessible title and description.
+
+The [draw.io source](docs/service-communication.drawio) contains the same three
+views as editable pages. Keep the Mermaid blocks, draw.io pages, exported PNGs,
+and nearby prose synchronized with the implementation. Check the rendered
+diagrams in a Mermaid-enabled Markdown preview, including service identities,
+RPC arrow directions, endpoint versions, and native resource ownership.
 
 With draw.io Desktop installed in its default Windows location, export from the
 repository root:
 
 ```powershell
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 1 -b 20 `
-    -o docs/images/service-communication-runtime-v2.png `
+    -o docs/images/service-communication-runtime-v2-hardened.png `
     docs/service-communication.drawio
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 2 -b 20 `
-    -o docs/images/service-communication-lifecycle-v2.png `
+    -o docs/images/service-communication-lifecycle-v2-hardened.png `
     docs/service-communication.drawio
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 3 -b 20 `
-    -o docs/images/service-communication-authentication-v2.png `
+    -o docs/images/service-communication-authentication-v2-hardened.png `
     docs/service-communication.drawio
 ```
 
 The page numbers are one-based. `-e` embeds editable XML in each PNG; retain the
-canonical `.drawio` source as well. The `-v2.png` filenames identify the
+`.drawio` source as well. The `-v2-hardened.png` filenames identify the
 telemetry interface generation; keep all consuming links on these names.
 Add `--disable-gpu` if export fails during GPU initialization. If you installed draw.io elsewhere, substitute its actual path.
 
@@ -635,25 +641,27 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 
 ### Build with GitHub Actions
 
-The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pushes
-of version tags matching `v*` and supports manual dispatch from a tag or branch.
+The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pull
+requests, pushes to `main`, and version tags matching `v*`. It also supports
+manual dispatch from a tag or branch.
 It audits `Cargo.lock` against the
 RustSec advisory database with `cargo audit`, then checks version stamping, Rust
 formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
 `rust-toolchain.toml`. The auditor is built with stable Rust outside the
 repository, so the repository's build-std configuration doesn't apply to it.
 
-Both tag builds and manual branch builds package and test an MSI. For a tag, the workflow
+Every run packages and tests an MSI. For a tag, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
 package entries in `Cargo.toml` and `Cargo.lock` in the runner's checkout.
 The executable, MSI, artifact filenames, and installation checks use that
-stamped version. A manual branch build uses the version already in `Cargo.toml`.
+stamped version. Branch and pull-request builds use the version in `Cargo.toml`.
 The workflow validates production executable hardening before
-testing installation. Pushes to `main` or other branches and pull requests do
-not trigger this workflow. To validate changes before tagging a release, manually
-dispatch the workflow from the branch. A branch run uploads validated artifacts
-and installer logs but does not publish a release. Release publication requires
-a version tag.
+testing installation. Pull-request and branch runs upload validated artifacts
+and installer logs with a read-only repository token. Release publication
+requires a version tag and runs in a separate job with `contents: write`.
+No signing or release credentials are available to pull-request validation.
+To enforce validation before merging, configure branch protection to require
+the `build-msi` check. Pushes to other branches can be checked by manual dispatch.
 
 The workflow explicitly passes `-AcceptWixEula` for MSI builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.

@@ -7,7 +7,7 @@ This concrete profile records bfd-winservice's security decisions. Reusing the s
 | Role | Required process identity and restrictions |
 | --- | --- |
 | `BfdWinService` | LocalService (`S-1-5-19`), enabled/non-deny-only `NT SERVICE\BfdWinService` group, SCM restricted service SID type `3`. Restricting SIDs include its service SID and WRITE_RESTRICTED marker `S-1-5-33`. |
-| `BfdBgpBroker` | LocalSystem (`S-1-5-18`), enabled/non-deny-only `NT SERVICE\BfdBgpBroker` group, unrestricted service SID type `1`. Preserve the management provider's required token. |
+| `BfdBgpBroker` | LocalSystem (`S-1-5-18`), enabled/non-deny-only `NT SERVICE\BfdBgpBroker` group, unrestricted service SID type `1`. Startup permanently retains only `SeChangeNotifyPrivilege` before COM/MI, target loading, or RPC registration; provider calls use its own SYSTEM account. |
 
 BFD's SCM `RequiredPrivileges` allowlist is `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`. Its startup permanently removes unused privileges, including `SeImpersonatePrivilege` and `SeAssignPrimaryTokenPrivilege`, before loading configuration, opening sockets, or registering RPC. Removal is not just disabling, and it does not remove account/group memberships. Query process tokens without attaching client tokens to threads.
 
@@ -30,7 +30,7 @@ Read/status visibility is distinct from private-control access. Deny secret disc
 
 Keep kernel program-specific UDP firewall rules and application validation as separate gates. Validate configured source/destination, ports, interface, TTL/hop limit, packet structure, and session discriminators before accepting peer state. Path checks do not authenticate a peer.
 
-BFD wire authentication is optional and defaults to `none`; never describe an unauthenticated deployment as shared-key authenticated. An enabled mode requires matching type, key ID, and secret on both peers. Reject failed authentication without refreshing detection or changing accepted session state. Compare passwords/keyed digests in constant time and keep key material out of diagnostics.
+BFD wire authentication defaults to `none`, but classical multihop with `BgpPeerName` requires `meticulous-md5` or `meticulous-sha1` and a valid key, even with `MinTtl`. Single-hop BGP without authentication warns that it relies on a trusted link. Never describe an unauthenticated deployment as shared-key authenticated. An enabled mode requires matching type, key ID, and secret on both peers. Reject failed authentication without refreshing detection or changing accepted session state. Compare passwords/keyed digests in constant time and keep key material out of diagnostics.
 
 The compatibility modes have distinct limits: simple-password sends its secret in cleartext and has no sequence protection; keyed MD5/SHA-1 are the protocol-defined keyed digests, not HMAC or encryption. Classical keyed modes enforce a receive window; meticulous modes additionally reject repeated sequences. Do not silently substitute an incompatible algorithm while claiming wire compatibility. S-BFD initiators match replies to unconsumed, unexpired outstanding probes; reflectors verify and echo keyed request sequences without claiming a classical per-peer receive window.
 

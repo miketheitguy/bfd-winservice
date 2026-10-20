@@ -35,6 +35,7 @@ Use these sections for a specific check or lifecycle question:
 
 - [BGP control over local RPC](#bgp-control-over-local-rpc)
 - [Interface and process boundaries](#interface-and-process-boundaries)
+- [RPC authentication flow](#rpc-authentication-flow)
 - [Accounts, service SIDs, and privileges](#accounts-service-sids-and-privileges)
 - [Startup and query sequence](#startup-and-query-sequence)
 - [Server identity checks](#server-identity-checks)
@@ -98,16 +99,85 @@ The RPC contract has these properties:
 | Success | Native status `0`, after both identities pass their checks |
 | Meaning | Authentication and the requested operation succeeded; status freshness and session state require separate interpretation |
 
-The [editable draw.io source](service-communication.drawio) contains runtime,
-lifecycle, and authentication pages. The authentication page shows the checks
-performed by the client, Windows RPC, and server:
+### RPC authentication flow
 
-![RPC authentication call flow: RpcBindingCreateW uses Identify credentials and a BFD server descriptor. RpcServerRegisterIf3 applies the interface ACL before RpcServerInqCallAttributesW and RpcGetAuthorizationContextForClient(FALSE). AuthzGetInformationFromContext and EqualSid check SYSTEM plus the enabled broker SID; RpcFreeAuthorizationContext releases each acquired context.](images/service-communication-authentication-v2.png)
+This embedded Mermaid diagram mirrors the authentication page in the
+[draw.io source](service-communication.drawio). It groups checks by the broker
+client, Windows RPC, and BFD server. Blue represents BFD, purple represents the
+broker, amber marks security gates, green marks checked replies, and gray
+represents Windows.
+
+```mermaid
+---
+config:
+  flowchart:
+    wrappingWidth: 500
+---
+flowchart TB
+    accTitle: RPC authentication: GetSessionStatusV1 on BfdWinService.Local.v2
+    accDescr: The broker pins the actual BFD server account and service SID. Windows checks the interface ACL before the per-call callback. BFD checks call attributes and authenticated SYSTEM account plus enabled broker service SID without impersonation. Native storage remains owned until completion.
+    %% Mirrors service-communication.drawio, page 3.
+
+    subgraph auth_client["Broker RPC worker | SYSTEM + broker SID"]
+        direction TB
+        auth_token["<b>Verify the broker process token</b><br/>OpenProcessToken / GetTokenInformation / EqualSid<br/>Require exact SYSTEM user + enabled broker service SID<br/>Retain only SeChangeNotifyPrivilege before COM / MI"]:::broker
+        auth_qos["<b>[F] Create each binding with the fixed BFD policy</b><br/>ConvertStringSecurityDescriptorToSecurityDescriptorW<br/>ServerSecurityDescriptor: LocalService AND BFD SID<br/>RpcBindingCreateW(..., SecurityQos, ...)<br/>ncalrpc / WINNT / RPC_C_AUTHN_LEVEL_PKT_PRIVACY<br/>RPC_SECURITY_QOS_V5_W:<br/>ImpersonationType = RPC_C_IMP_LEVEL_IDENTIFY<br/>IdentityTracking = RPC_C_QOS_IDENTITY_STATIC<br/>EffectiveOnly = TRUE; MUTUAL_AUTH requested<br/>RpcBindingSetOption(RPC_C_OPT_UNIQUE_BINDING, 1)<br/>RpcBindingBind; then GetSessionStatusV1<br/>Binding creation alone establishes no connection"]:::gate
+        auth_result["<b>Accept the complete reply through checked conversion</b><br/>MIDL /robust ranges -> WireStatus::try_into()<br/>Enums / NonZero / canonical fields / checked times<br/>Invalid reply: discard, clear cache, retry with backoff<br/>Check freshness separately; status never drives BGP"]:::cache
+        auth_release["<b>Complete calls before releasing native storage</b><br/>RpcAsyncCancelCall on timeout; wait for completion<br/>RpcAsyncCompleteCall for the status call<br/>RpcBindingUnbind -> RpcBindingFree -> release SID / SD<br/>Uncertain ownership retains the single worker<br/>8 s stall: quarantine telemetry; provider continues"]:::broker
+    end
+
+    subgraph auth_windows["Windows RPC + kernel | logical security gates"]
+        direction TB
+        auth_pin["<b>[F] Authenticate the actual BFD server</b><br/>Runtime evaluates QOS V5 ServerSecurityDescriptor<br/>One conditional ACE requires BOTH enabled SIDs:<br/>LocalService + BFD service SID<br/>Endpoint name and mutual-auth flag alone are insufficient<br/>Credentials stay static for this binding<br/>UNIQUE_BINDING is not an identity-cache reset"]:::gate
+        auth_reject["<b>Any security gate failure rejects the request</b><br/>Interface ACL denial prevents callback and manager<br/>Call-attribute / Authz / SID failure returns access denied<br/>RpcFreeAuthorizationContext if a context was acquired<br/>No fallback policy, unverified status, or BGP action"]:::note
+        auth_ownership["<b>Why these checks fit this boundary</b><br/>Account + service SID distinguish services sharing accounts<br/>Windows enforces the interface ACL and token access rules<br/>Identify + Authz(FALSE) keep BFD at LocalService<br/>Read-only fixed status record; checked Rust conversion<br/>SEC_NO_CACHE reruns the callback, not every OS cache"]:::external
+    end
+
+    subgraph auth_server["BFD server | LocalService + restricted BFD SID"]
+        direction TB
+        auth_start["<b>Verify BFD token; deny management before endpoint</b><br/>OpenProcessToken / GetTokenInformation / EqualSid<br/>LocalService + enabled BFD group + restricting SIDs<br/>RpcMgmtSetAuthorizationFn(deny_management)<br/>Every runtime management request is denied"]:::bfd
+        auth_acl["<b>[F] Register endpoint, authentication, and interface</b><br/>RpcServerUseProtseqEpW(ncalrpc, endpoint, broker-SID SD)<br/>RpcServerRegisterAuthInfoW(RPC_C_AUTHN_WINNT)<br/>RpcServerRegisterIf3(..., authorize, broker-SID SD)<br/>Windows checks the interface ACL BEFORE the callback<br/>RPC_IF_AUTOLISTEN | RPC_IF_ALLOW_LOCAL_ONLY<br/>RPC_IF_ALLOW_SECURE_ONLY | RPC_IF_SEC_NO_CACHE"]:::gate
+        auth_attributes["<b>[F] Per-call callback: validate the actual call</b><br/>RpcServerInqCallAttributesW(RPC_CALL_ATTRIBUTES_V2_W)<br/>RPC_QUERY_IS_CLIENT_LOCAL requests locality evidence<br/>Require LRPC + rcclLocal + WINNT + packet privacy<br/>NullSession = FALSE; any mismatch or API failure denies"]:::gate
+        auth_authz["<b>[F] Read authenticated account and group SIDs</b><br/>RpcGetAuthorizationContextForClient<br/>ImpersonateOnReturn = FALSE; reserved fields zero/null<br/>AuthzGetInformationFromContext:<br/>AuthzContextInfoUserSid + AuthzContextInfoGroupsSids<br/>Bound and validate native buffers before EqualSid<br/>Exact SYSTEM user + enabled, non-deny-only broker SID<br/>RpcFreeAuthorizationContext on success or rejection<br/>No caller token attached to BFD thread"]:::gate
+        auth_manager["<b>Manager repeats the full authorization guard</b><br/>authorize_call -> identity::authorize_call<br/>Repeat call attributes + Authz SID checks before capture<br/>At most four nonblocking status-manager permits<br/>Copy one immutable snapshot; release Arc before NDR"]:::bfd
+        auth_management["<b>Separate runtime management surface</b><br/>RpcMgmtSetAuthorizationFn always denies in BFD<br/>Enumeration / principal / statistics / listener queries<br/>and listener control never reach the status manager<br/>Broker COM / MI process security remains independent"]:::note
+    end
+
+    auth_scope["<b>Scope, ownership, and limits</b><br/>Arrows show logical gates, not exact ALPC messages or callback timing. BfdLocal 2.0 exposes GetSessionStatusV1 only; no configuration commands or keys.<br/>Broker initiates ncalrpc calls; BFD returns replies. No server-initiated RPC callbacks.<br/>Windows authentication, service-token construction, protected binaries, and correct native FFI remain trusted. Authorized code can still report false status or withhold replies.<br/>RpcExceptionFilter reports recoverable RPC exceptions; fatal native faults remain unhandled. Native memory corruption is outside safe Rust validation.<br/>See docs/security.md for ASCII call flows, API responsibilities, and the security assessment; docs/rpc-session-status-design.md for freshness and quarantine."]:::note
+
+    auth_token -->|"broker credentials"| auth_qos
+    auth_start -->|"register"| auth_acl
+    auth_qos -->|"bind / status"| auth_pin
+    auth_pin -->|"server accepted"| auth_acl
+    auth_pin -->|"reject"| auth_reject
+    auth_acl -->|"ACL passed"| auth_attributes
+    auth_attributes -->|"attributes passed"| auth_authz
+    auth_authz -->|"caller authorized"| auth_manager
+    auth_manager -->|"packet-private status reply"| auth_result
+    auth_result -->|"cleanup"| auth_release
+
+    %% Invisible links align independent sections; they do not represent calls.
+    auth_reject ~~~ auth_ownership
+    auth_manager ~~~ auth_management
+    auth_release ~~~ auth_scope
+    auth_management ~~~ auth_scope
+    auth_ownership ~~~ auth_scope
+
+    classDef bfd fill:#EAF2FF,stroke:#3A69A6,color:#1C2B43
+    classDef broker fill:#F0EAF8,stroke:#7957A2,color:#1C2B43
+    classDef gate fill:#FFF4D9,stroke:#B98521,color:#1C2B43
+    classDef cache fill:#EAF5EC,stroke:#558563,color:#1C2B43
+    classDef external fill:#F1F3F6,stroke:#778397,color:#1C2B43
+    classDef note fill:#FFFFFF,stroke:#B8C2D0,color:#1C2B43
+    style auth_client fill:#F0EAF8,stroke:#7957A2,color:#1C2B43
+    style auth_windows fill:#F1F3F6,stroke:#778397,color:#1C2B43
+    style auth_server fill:#EAF2FF,stroke:#3A69A6,color:#1C2B43
+```
 
 For the matching ASCII diagrams, API responsibilities, and security assessment, see
 [private local RPC authentication](security/local-rpc.md#broker-authenticates-bfd-telemetry).
 
-The Windows RPC column represents runtime and kernel checks, not an additional
+The Windows RPC group represents runtime and kernel checks, not an additional
 service process. Windows obtains identities from native tokens. The protocol
 does not accept caller-supplied SIDs, process IDs, roles, passwords, or identity
 metadata as authentication evidence.
@@ -123,10 +193,10 @@ are required here:
 | Process | Account in `TokenUser` | Enabled service group | Privilege policy |
 | --- | --- | --- | --- |
 | BFD service | LocalService, `S-1-5-19` | `NT SERVICE\BfdWinService` | SCM allowlist and startup removal retain `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege` |
-| Broker provider host | LocalSystem, `S-1-5-18` | `NT SERVICE\BfdBgpBroker` | Existing BGP provider privileges and COM/MI security remain in place |
+| Broker provider host | LocalSystem, `S-1-5-18` | `NT SERVICE\BfdBgpBroker` | Startup permanently retains only `SeChangeNotifyPrivilege`; provider calls use its own SYSTEM account and the configured COM/MI security |
 
-The RPC identity checks require no added token privilege. The broker retains
-its existing provider token rather than removing privileges process-wide.
+The RPC identity checks require no added token privilege. Broker startup removes
+all token privileges except `SeChangeNotifyPrivilege` before COM/MI initialization.
 Static Identify credentials restrict what BFD can do with the caller identity;
 neither side enables debugging or impersonation privileges for this channel.
 BFD separately retains its existing two-entry service privilege policy.
@@ -430,7 +500,7 @@ The implementation is divided across these files:
 | [src/local_rpc/identity.rs](../src/local_rpc/identity.rs) | Call attributes, Authz context ownership, and account/group checks |
 | [src/local_rpc/monitor.rs](../src/local_rpc/monitor.rs) | In-process worker supervision, typed status cache, quarantine, and bounded shutdown |
 | [src/service_identity.rs](../src/service_identity.rs) | Self-identity and restricted BFD token checks |
-| [src/runtime/privileges.rs](../src/runtime/privileges.rs) | Permanent BFD privilege removal; the broker retains its provider token |
+| [src/runtime/privileges.rs](../src/runtime/privileges.rs) | Permanent BFD and broker privilege removal before accepting work |
 | [rpc/bfd_local.idl](../rpc/bfd_local.idl) and [client ACF](../rpc/bfd_local_client.acf) | Status-only contract, fixed field ranges, and asynchronous client generation |
 | [rpc/client.c](../rpc/client.c), [server bridge](../rpc/server.c), and [RPC build](../rpc/build.rs) | Native completion, cancellation, exceptions, manager bridge, and MIDL compilation |
 | [RPC tests](../src/local_rpc/tests.rs) and [replacement-token tests](../src/local_rpc/tests/restricted.rs) | Native positive and negative fixtures |

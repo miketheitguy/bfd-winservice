@@ -9,8 +9,9 @@ The network-facing BFD process runs as LocalService. A separate LocalSystem BGP
 broker performs privileged management for one configured target through COM/MI.
 Two private local RPC interfaces authenticate both services and authorize their
 fixed operations. Windows access-control lists (ACLs) protect service control,
-configuration, logs, and RPC access. Optional BFD wire authentication checks remote
-packets. Each control protects a different boundary.
+configuration, logs, and RPC access. Configured BFD wire authentication checks
+remote packets and is required for classical multihop BGP control. Each control
+protects a different boundary.
 
 ## Find a security topic
 
@@ -29,7 +30,8 @@ Choose the reference for the boundary you need to inspect:
 ## Identities and privileges
 
 The MSI installs BFD with a restricted service SID and a two-privilege allowlist.
-The broker retains its separate LocalSystem management identity. Both services
+The broker retains its separate LocalSystem management identity and removes
+all token privileges except `SeChangeNotifyPrivilege` at startup. Both services
 check their own account and enabled service SID before opening their private
 interfaces. Account membership or an endpoint name alone does not authenticate
 a service.
@@ -74,7 +76,7 @@ security settings and their alignment with Microsoft guidance.
 
 Authentication establishes who sent a packet or request. Authorization determines
 which actions that identity can perform. Windows uses account and service tokens
-for local access; optional BFD wire authentication uses a shared secret. UDP
+for local access; configured BFD wire authentication uses a shared secret. UDP
 source and TTL checks do not replace an identity check.
 
 The boundary labels match the [service communication diagrams](service-communication.md):
@@ -115,10 +117,10 @@ These controls and validation records support the stated security boundaries:
 | Least privilege and distinct service identities | LocalService BFD retains two privileges; exact account and enabled service SID checks distinguish services sharing an account. | [Token fixtures](../src/service_identity/tests.rs), [privilege removal](../src/runtime/privileges.rs), and the [recorded reliability/security review](../CODE_REVIEW.md#reliability-and-security-review--2026-10-09). |
 | Authenticate, then authorize the specific service | The RPC client pins BFD's account and service SID; BFD checks the interface ACL, call attributes, SYSTEM account, and enabled broker SID. Management operations are denied. | [Native RPC rejection tests](../src/local_rpc/tests.rs), [replacement-server fixture](../src/local_rpc/tests/restricted.rs), and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
 | Keep privileged actions narrow | The BGP broker authenticates BFD before decoding requests and accepts fixed operations for its protected configured target. | [Broker authorization tests](../src/bgp/ipc/tests.rs), [RPC dispatch and identity checks](../src/bgp/ipc.rs), and the [session-status implementation record](../CODE_REVIEW.md#rpc-session-status-implementation--2026-10-15). |
-| Validate remote input before changing session state | Protocol, path, and configured authentication checks reject invalid packets without refreshing accepted peer state. Wire authentication remains optional. | [RFC boundary tests](../tests/rfc5880.rs), [native UDP tests](../tests/windows_udp.rs), and the [recorded RFC validation](../CODE_REVIEW.md#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09). |
+| Validate remote input before changing session state | Protocol, path, and configured authentication checks reject invalid packets without refreshing accepted peer state. Classical multihop BGP requires meticulous keyed authentication. | [RFC boundary tests](../tests/rfc5880.rs), [native UDP tests](../tests/windows_udp.rs), and the [recorded RFC validation](../CODE_REVIEW.md#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09). |
 | Validate native data and preserve ownership through cancellation | Robust MIDL stubs and checked Rust conversion bound status data; pending calls retain their buffers and handles until completion. | [Layout and conversion tests](../src/local_rpc/status/tests.rs), [RPC rejection and cancellation tests](../src/local_rpc/tests.rs), [native completion code](../rpc/client.c), and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
 | Keep telemetry failure separate from control | Invalid replies clear the cache and retry; a stuck worker quarantines telemetry without issuing BGP actions or accumulating replacement workers. | [Supervisor regressions](../src/local_rpc/monitor/tests.rs) and the [RPC recovery validation record](../CODE_REVIEW.md#rpc-status-rejection-recovery--2026-10-15). |
-| Check hardening and deployment policy | Executable tests inspect emitted mitigation metadata; the MSI harness checks installed accounts, privileges, ACLs, authentication, and logging. | [Executable checks](../tests/windows_hardening.rs), [MSI harness](../scripts/Test-MsiInstall.ps1), and the configured [tagged-release workflow](../.github/workflows/build-msi.yml). The [recorded local RPC review](../CODE_REVIEW.md#local-rpc-security-review--2026-10-15) includes hardening results. |
+| Check hardening and deployment policy | Executable tests inspect emitted mitigation metadata; the MSI harness checks installed accounts, privileges, ACLs, authentication, and logging. | [Executable checks](../tests/windows_hardening.rs), [MSI harness](../scripts/Test-MsiInstall.ps1), and the configured [validation and release workflow](../.github/workflows/build-msi.yml). The [recorded local RPC review](../CODE_REVIEW.md#local-rpc-security-review--2026-10-15) includes hardening results. |
 
 The 2026-10-15 RPC recovery record reports 29 targeted tests passing in optimized
 and AddressSanitizer profiles, including rejection, recovery, cancellation,
@@ -139,7 +141,7 @@ boundaries described in this guide:
 | --- | --- |
 | [installer/Package.wxs](../installer/Package.wxs) | Service accounts, dependencies, SCM control/query ACLs, Parameters ACL, and firewall rules |
 | [src/service.rs](../src/service.rs) and [src/bgp_broker/service.rs](../src/bgp_broker/service.rs) | SCM lifecycle, startup checks, local RPC lifetime, private broker COM initialization, and conditional BGP broker connection check |
-| [src/runtime/privileges.rs](../src/runtime/privileges.rs) | BFD privilege allowlist; the in-process broker client retains the existing provider token |
+| [src/runtime/privileges.rs](../src/runtime/privileges.rs) | BFD and broker process privilege allowlists |
 | [src/transport.rs](../src/transport.rs) | `Datagram::validate`, transport construction, `send`, and `send_reply` |
 | [src/session.rs](../src/session.rs), [src/packet.rs](../src/packet.rs), and [src/seamless.rs](../src/seamless.rs) | `receive_checked`, `receive_seamless`, `AuthConfig::verify_decoded`, and `respond_checked` |
 | [src/local_rpc.rs](../src/local_rpc.rs) and [src/local_rpc/monitor.rs](../src/local_rpc/monitor.rs) | Private local RPC listener, in-process client, authentication, authorization, supervised worker, and telemetry cache |

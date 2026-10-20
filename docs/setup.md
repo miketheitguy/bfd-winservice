@@ -65,8 +65,9 @@ Download `BfdWinService-VERSION-x64.msi` and its `.sha256` file from the version
 [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
 `VERSION` is the release tag without its leading `v`. Tagged builds also provide
 the `BfdWinService-x64-COMMIT_SHA` Actions artifact; `COMMIT_SHA` identifies the
-source commit. The build workflow runs only for version tags; branch pushes
-and pull requests do not trigger it. In **PowerShell as Administrator**, install
+source commit. Pull requests, pushes to `main`, and manual branch runs also
+produce validated Actions artifacts; release publication requires a version tag.
+In **PowerShell as Administrator**, install
 the MSI after checking the downloaded checksum:
 
 ```powershell
@@ -136,7 +137,8 @@ The MSI installs the following resources for all users:
   records the list after the MSI transaction succeeds; services remain stopped
   until you start them. SCM applies the list when it creates the LocalService
   process. BFD also permanently removes unused
-  privileges at startup. The broker's privilege list is unchanged.
+  privileges at startup. The broker separately removes all token privileges
+  except `SeChangeNotifyPrivilege` before initializing COM/MI or RPC.
 - Protected service ACLs for both services: SYSTEM and Administrators have full
   control. Authenticated users can query configuration/status, enumerate
   dependents, interrogate status, and read the service ACL. They cannot Start/Stop,

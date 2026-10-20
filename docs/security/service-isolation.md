@@ -55,7 +55,7 @@ The installed services and local callers have these permissions:
 | Identity | Permissions and limits |
 | --- | --- |
 | `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the broker control RPC interface. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`; startup removes unused privileges before accepting traffic. |
-| `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the BGP control RPC interface, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group. |
+| `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the BGP control RPC interface, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group, then permanently removes all privileges except `SeChangeNotifyPrivilege` before initializing COM/MI, loading its target, or registering RPC. |
 | Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, modify installed files and Parameters, and manage permissions. Account or Administrator membership alone does not satisfy the private channels' service-specific identity checks. |
 | Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot use the private RPC interface, start, stop, reconfigure, or send custom controls to either installed service. |
 | Other LocalService processes | Share BFD's account but not its service SID. Cannot authenticate as BFD to the broker or satisfy the broker identity required by BFD's local RPC interface. |
@@ -76,8 +76,20 @@ Local RPC authentication keeps that reduced service identity and does not attach
 a caller token to a thread. Access to the broker comes from its RPC interface
 ACL and service identity checks.
 
-The privilege allowlist applies to the installed BFD service. The LocalSystem
-BGP broker keeps its separate management identity and privilege requirements.
+### Broker privilege allowlist
+
+The LocalSystem broker permanently removes every token privilege except
+`SeChangeNotifyPrivilege` after verifying its service identity and before
+initializing COM/MI, loading its target, or registering RPC. Failure to reduce
+the token fails startup. Provider calls use the broker's own account without
+`SeImpersonatePrivilege`. Its SYSTEM account and group memberships still confer
+administrative access; privilege removal does not sandbox the broker.
+
+The MSI preserves the broker's SCM `RequiredPrivileges` configuration. Applying
+the broker's allowlist in process avoids adding a second irreversible SCM policy
+change to the installer commit, preserving rollback of absent and empty policies.
+The MSI test inspects the running broker token after startup and repair; a
+separate isolated test reads the local provider schema with the reduced token.
 
 ### Installation and rollback
 

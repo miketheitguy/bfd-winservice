@@ -1,7 +1,9 @@
 name: Build Windows MSI
 
 on:
+  pull_request:
   push:
+    branches: ['main']
     tags: ['v*']
   workflow_dispatch:
 
@@ -14,7 +16,6 @@ concurrency:
 
 jobs:
   build-msi:
-    if: github.event_name == 'workflow_dispatch' || (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: windows-2025
     timeout-minutes: 45
     outputs:

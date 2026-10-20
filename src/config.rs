@@ -419,6 +419,15 @@ impl Options {
         if self.sbfd_admin_down && self.session_type != SessionType::SbfdReflector {
             return Err(ConfigError::ReflectorOnlyAdminDown);
         }
+        if self.mode == Mode::Multihop
+            && self.bgp_peer_name.is_some()
+            && !matches!(
+                self.auth,
+                AuthType::MeticulousMd5 | AuthType::MeticulousSha1
+            )
+        {
+            return Err(ConfigError::MultihopBgpAuthentication);
+        }
         for ip in &self.allowed_peers {
             if !is_seamless_source(self.local, *ip) {
                 return Err(ConfigError::InvalidAllowedPeers);
@@ -528,13 +537,19 @@ impl Options {
         let mut warnings = Vec::new();
         match self.session_type {
             SessionType::Classical => {
-                if self.mode == Mode::Multihop
+                if self.mode == Mode::SingleHop
+                    && self.bgp_peer_name.is_some()
                     && self.auth == AuthType::None
-                    && self.min_ttl.is_none()
                 {
                     warnings.push(
-                        "multihop BFD without authentication or MinTtl accepts packets spoofed \
-                         from any network path; configure meticulous keyed authentication or MinTtl",
+                        "single-hop BGP control without authentication relies on a trusted link; \
+                         TTL 255 does not authenticate on-link senders; configure meticulous keyed authentication",
+                    );
+                }
+                if self.mode == Mode::Multihop && self.auth == AuthType::None {
+                    warnings.push(
+                        "multihop BFD without authentication accepts spoofed packets; MinTtl \
+                         limits network paths but does not authenticate peers; configure meticulous keyed authentication",
                     );
                 }
                 if matches!(
@@ -766,7 +781,7 @@ mod tests {
         classical.validate().unwrap();
         assert_eq!(classical.security_warnings().len(), 1);
         classical.min_ttl = Some(250);
-        assert!(classical.security_warnings().is_empty());
+        assert_eq!(classical.security_warnings().len(), 1);
         for (kind, warnings) in [
             (AuthType::SimplePassword, 1),
             (AuthType::KeyedMd5, 1),
@@ -843,6 +858,8 @@ mod tests {
     #[test]
     fn validates_bgp_target_and_routing_domain() {
         let mut options = multihop();
+        options.auth = AuthType::MeticulousSha1;
+        options.auth_key = Some("test-key".into());
         options.bgp_routing_domain = Some("Rd001".into());
         assert!(options.validate().is_err());
         options.bgp_peer_name = Some("Site17".into());
@@ -854,6 +871,55 @@ mod tests {
         options.bgp_peer_name = Some("Site17".into());
         options.bgp_routing_domain = Some(String::new());
         assert!(options.validate().is_err());
+    }
+
+    #[test]
+    fn multihop_bgp_requires_meticulous_authentication_even_with_ttl_filtering() {
+        for shortcut in [false, true] {
+            for min_ttl in [None, Some(255)] {
+                for auth in [
+                    AuthType::None,
+                    AuthType::SimplePassword,
+                    AuthType::KeyedMd5,
+                    AuthType::KeyedSha1,
+                    AuthType::MeticulousMd5,
+                    AuthType::MeticulousSha1,
+                ] {
+                    let mut options = options();
+                    options.multihop = shortcut;
+                    options.mode = if shortcut {
+                        Mode::SingleHop
+                    } else {
+                        Mode::Multihop
+                    };
+                    options.min_ttl = min_ttl;
+                    options.bgp_peer_name = Some("Site17".into());
+                    options.auth = auth;
+                    options.auth_key = (auth != AuthType::None).then(|| "test-key".into());
+                    let result = options.into_validated();
+                    if matches!(auth, AuthType::MeticulousMd5 | AuthType::MeticulousSha1) {
+                        assert!(result.is_ok(), "{shortcut} {min_ttl:?} {auth:?}");
+                    } else {
+                        assert_eq!(result.err(), Some(ConfigError::MultihopBgpAuthentication));
+                    }
+                }
+            }
+        }
+        // Unauthenticated multihop without BGP and single-hop BGP remain supported.
+        let mut options = multihop();
+        assert!(options.validate().is_ok());
+        options.multihop = false;
+        options.mode = Mode::SingleHop;
+        options.interface_index = Some(2);
+        options.bgp_peer_name = Some("Site17".into());
+        assert!(options.validate().is_ok());
+        assert_eq!(options.security_warnings().len(), 1);
+        options.mode = Mode::Multihop;
+        options.auth = AuthType::MeticulousSha1;
+        assert!(matches!(
+            options.validate(),
+            Err(ConfigError::InvalidKeyLength { .. })
+        ));
     }
 
     #[test]

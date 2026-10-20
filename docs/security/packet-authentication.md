@@ -38,11 +38,17 @@ equality. Authentication failures do not refresh detection or update accepted
 session state. The sender adds the configured authentication to outgoing
 packets.
 
+Classical multihop sessions that control BGP require `meticulous-md5` or
+`meticulous-sha1` and a valid key. Startup rejects other modes even when a minimum
+TTL is configured. TTL filtering does not authenticate an on-path sender.
+Single-hop BGP without authentication logs a trusted-link warning; unauthenticated
+multihop without BGP also warns, including when `MinTtl` is configured.
+
 The supported modes provide these checks:
 
 | `Auth` setting | Check and limitations |
 | --- | --- |
-| `none` | Protocol/path validation only. Traffic that passes those checks can influence the session and its configured BGP actions without a shared-key check. |
+| `none` | Protocol/path validation only. Traffic that passes those checks can influence the session and, where supported, its BGP actions without a shared-key check. Rejected for classical multihop BGP control. |
 | `simple-password` | Verifies the key ID and matching password. The password travels in cleartext; this mode has no authentication sequence protection. |
 | `keyed-md5`, `keyed-sha1` | Verifies the key ID and the RFC-defined digest of the packet with the configured key. Classical BFD enforces a receive sequence window but permits repeated sequences within the protocol rules. |
 | `meticulous-md5`, `meticulous-sha1` | Uses the corresponding keyed digest and classical receive window, and rejects repeated sequences. |

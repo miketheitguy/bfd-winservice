@@ -163,6 +163,12 @@ function Assert-BrokerAuthenticatesBfd {
             $processes = @(Get-CimInstance Win32_Process -Filter "Name='bfd-bgp-broker.exe'")
             Assert-Installed ($processes.Count -eq 1 -and $processes[0].ProcessId -eq $broker.ProcessId) `
                 'Status RPC must run inside the broker service process without a helper.'
+            Push-Location (Split-Path $PSScriptRoot -Parent)
+            try {
+                cargo test-release --lib runtime::privileges::tests::installed_broker_token_retains_only_change_notify -- --ignored --exact
+                Assert-Installed ($LASTEXITCODE -eq 0) 'The installed broker retained privileges beyond SeChangeNotifyPrivilege.'
+            }
+            finally { Pop-Location }
             return
         }
         Start-Sleep -Milliseconds 200

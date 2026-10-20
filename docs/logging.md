@@ -36,13 +36,18 @@ an Operational event.
 
 ### File rotation and buffering
 
-File output rotates by size. When the file reaches 64 MiB, the writer renames
-it to `LogFilePath` with `.1` appended, replacing any earlier backup, and
-continues in a new file. Successful rotation retains about 128 MiB plus record
-size overhead. If another
-process holds the file without delete sharing, the rename fails; writing
-continues and the rename is retried after another 4 MiB. Repeated rotation
-failures can grow the active file beyond 64 MiB; this isn't a disk quota.
+File output rotates before a complete line would exceed 64 MiB. The writer
+renames the active file to `LogFilePath` with `.1` appended, replacing the earlier
+backup, and creates a new file. Each file stays within 64 MiB, including buffered
+bytes and timestamps. Existing oversized files are rotated without extending
+them; the logger does not shrink their existing contents.
+
+If a reader denies delete sharing, rotation can fail. Lines that need rotation
+are dropped from file output until rotation succeeds, with retries at most once
+every 30 seconds as new lines arrive. If the rename succeeds but creating the
+new file fails, file output stays paused and retries only creation; it never
+appends to the backup. Operational ETW events and console output continue
+independently. Rotation failures produce a diagnostic at each retry.
 
 File output uses an 8 KiB buffer to group writes. While output is responsive,
 the writer flushes pending bytes within 100 milliseconds, when the buffer
@@ -319,7 +324,8 @@ leave the preceding settings active.
 Warning event 4 carries a text message. The service writes it in these cases:
 
 - At startup, for valid settings that let spoofed or replayed packets change
-  BFD state, and through it BGP: multihop without authentication or `MinTtl`;
+  BFD state, and where supported BGP: multihop without authentication, including
+  with `MinTtl`; single-hop BGP without authentication;
   `simple-password`, `keyed-md5`, or `keyed-sha1` on a classical session; an
   S-BFD initiator without keyed authentication; or a reflector without
   `AllowedPeers`.

@@ -5,7 +5,7 @@ use super::{
     watchdog::{ProviderWatch, PROVIDER_BUDGET},
     Target,
 };
-use crate::runtime::{Logger, StopSignal};
+use crate::runtime::{drop_broker_privileges, Logger, StopSignal};
 use std::{
     ffi::OsString,
     io, process,
@@ -126,6 +126,13 @@ fn start() -> io::Result<()> {
     }
     let result = (|| -> io::Result<()> {
         ipc::require_broker_identity()?;
+        let removed = drop_broker_privileges()?;
+        if !removed.is_empty() {
+            log.broker_message(
+                format_args!("removed unused process privileges: {}", removed.join(", ")),
+                false,
+            );
+        }
         // Initialize process security before MI can marshal anything. This process
         // registers no COM factory, so interactive users get no COM access.
         let com = ComHost::initialize()?;

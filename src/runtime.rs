@@ -32,6 +32,7 @@ pub mod status;
 pub use crate::service_identity::verify_bfd_service_identity;
 pub use crate::transport::StopSignal;
 pub use logging::Logger;
+pub(crate) use privileges::drop_broker_privileges;
 pub use privileges::drop_privileges;
 #[cfg(test)]
 pub(crate) use privileges::drop_rpc_privileges;

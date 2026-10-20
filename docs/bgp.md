@@ -21,6 +21,12 @@ answers a read-only startup connection check when BGP control is configured.
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
 
+For classical multihop BFD, configure `Auth=meticulous-md5` or `meticulous-sha1`
+and a valid matching key on both peers before enabling BGP control. Startup
+rejects other authentication modes even with `MinTtl` configured. See
+[Configure authentication](configuration.md#authentication). Single-hop BGP
+without authentication warns that it relies on a trusted link.
+
 The broker-to-BFD local RPC status query is a separate channel and runs
 even without a BGP target. It authenticates the two services and reads published
 session telemetry without performing a provider operation. See

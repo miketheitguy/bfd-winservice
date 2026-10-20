@@ -12,7 +12,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -28,6 +28,7 @@ const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 const FILE_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// A full file is renamed to `<name>.1`, so file output uses at most twice this.
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const ROTATION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 enum Command {
     Text(String),
@@ -42,54 +43,71 @@ struct OutputFile {
     path: PathBuf,
     /// File length, including buffered output, since opening or rotation.
     length: u64,
-    rotate_at: u64,
     limit: u64,
+    retry_rotation_at: Option<Instant>,
+    /// A successful rename followed by a failed reopen leaves the writer on .1.
+    renamed: bool,
 }
 
 impl OutputFile {
     fn new(file: File, path: PathBuf, limit: u64) -> Self {
-        let length = file.metadata().map_or(0, |metadata| metadata.len());
+        // An unknown length must force rotation instead of granting write space.
+        let length = file.metadata().map_or(limit, |metadata| metadata.len());
         Self {
             writer: BufWriter::new(file),
             path,
             length,
-            rotate_at: limit,
             limit,
+            retry_rotation_at: None,
+            renamed: false,
         }
     }
 
-    /// Renames a full file to `<name>.1`, replacing an older backup, then continues
-    /// in a new file. If another process prevents the rename, output continues and
-    /// rotation is retried after another sixteenth of the limit.
-    fn rotate_if_full(&mut self) {
-        if self.length < self.rotate_at {
-            return;
+    /// Reserve room for a complete line before writing it. Failed rotation never
+    /// permits growth beyond the ceiling, nor appending to a renamed backup.
+    fn prepare_line(&mut self, bytes: u64) -> bool {
+        if bytes > self.limit {
+            return false;
         }
-        match self.rotate() {
-            Ok(()) => {
-                self.length = 0;
-                self.rotate_at = self.limit;
+        if !self.renamed && self.length <= self.limit - bytes {
+            return true;
+        }
+        let now = Instant::now();
+        if self.retry_rotation_at.is_some_and(|retry| now < retry) {
+            return false;
+        }
+        self.rotate_with(|path| OpenOptions::new().create_new(true).append(true).open(path))
+            .is_ok()
+            && self.length <= self.limit - bytes
+    }
+
+    fn rotate_with(&mut self, open: impl FnOnce(&Path) -> io::Result<File>) -> io::Result<()> {
+        let result = (|| {
+            self.writer.flush()?;
+            if !self.renamed {
+                let mut backup = self.path.clone().into_os_string();
+                backup.push(".1");
+                // The writer permits renaming; another reader may deny it.
+                fs::rename(&self.path, &backup)?;
+                self.renamed = true;
             }
+            let file = open(&self.path)?;
+            // Replacing the flushed writer closes the renamed file.
+            self.length = file.metadata()?.len();
+            self.writer = BufWriter::new(file);
+            self.renamed = false;
+            Ok(())
+        })();
+        match &result {
+            Ok(()) => self.retry_rotation_at = None,
             Err(error) => {
-                diagnostic(format_args!("unable to rotate BFD file log: {error}"));
-                self.rotate_at = self.length.saturating_add((self.limit / 16).max(1));
+                diagnostic(format_args!(
+                    "unable to rotate BFD file log; file output paused: {error}"
+                ));
+                self.retry_rotation_at = Some(Instant::now() + ROTATION_RETRY_INTERVAL);
             }
         }
-    }
-
-    fn rotate(&mut self) -> io::Result<()> {
-        self.writer.flush()?;
-        let mut backup = self.path.clone().into_os_string();
-        backup.push(".1");
-        // The writer's handle permits renaming; std opens files with delete sharing.
-        fs::rename(&self.path, &backup)?;
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        // Replacing the flushed writer closes the renamed file.
-        self.writer = BufWriter::new(file);
-        Ok(())
+        result
     }
 }
 
@@ -379,17 +397,22 @@ fn text_output(
     if let Some(output) = file {
         utc_timestamp(timestamp);
         for line in message.split('\n') {
+            // Timestamp, separator, text, and newline. Check before buffering so
+            // even a reader blocking rename cannot make the file grow unbounded.
+            let written = timestamp.len().saturating_add(line.len()).saturating_add(2);
+            let written = u64::try_from(written).unwrap_or(u64::MAX);
+            if !output.prepare_line(written) {
+                continue;
+            }
             if let Err(error) = writeln!(output.writer, "{timestamp} {line}") {
                 diagnostic(format_args!("unable to write BFD file log: {error}"));
+                // A partial write has an uncertain length. Require rotation
+                // before any further append instead of undercounting its bytes.
+                output.length = output.limit;
                 break;
             }
-            // Timestamp, separator, text, and newline.
-            let written = timestamp.len() + line.len() + 2;
-            output.length = output
-                .length
-                .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
+            output.length = output.length.saturating_add(written);
         }
-        output.rotate_if_full();
         // Keep file output visible before a console pipe can block the worker.
         if console {
             flush_file(&mut output.writer);
@@ -750,7 +773,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut log = captured_logger_with_limit(false, events, false, 256);
         log.open_file(&options).unwrap();
-        // Each 77-byte line counts toward the limit, so every fourth record rotates.
+        // Each 77-byte line counts toward the limit; rotate before a fourth line.
         for index in 0..42 {
             log.log(format_args!("record {index:02} {}", "x".repeat(40)));
         }
@@ -760,14 +783,135 @@ mod tests {
         let current = fs::read_to_string(&options.log_file_path).unwrap();
         let previous = fs::read_to_string(&backup).unwrap();
         assert!(current.contains("record 41"), "{current}");
-        assert!(!current.contains("record 39"), "{current}");
-        assert!(previous.contains("record 39"), "{previous}");
-        // Each file stays within one record of the limit, and older backups are replaced.
+        assert!(current.contains("record 39"), "{current}");
+        assert!(previous.contains("record 38"), "{previous}");
+        // Both files stay strictly within the limit; older backups are replaced.
         for text in [&current, &previous] {
-            assert!(text.len() < 256 + 128, "{}", text.len());
+            assert!(text.len() <= 256, "{}", text.len());
         }
         assert!(!previous.contains("record 00"));
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn denied_rename_bounds_the_file_preserves_etw_and_recovers() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let mut options = Options::reflector("127.0.0.1".parse().unwrap(), 99);
+        options.log_to_file = true;
+        options.log_file_path = directory.path().join("trace.log");
+        let session = Session::from_config(options.clone().into_validated().unwrap());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut log = captured_logger_with_limit(false, Arc::clone(&events), false, 512);
+        log.open_file(&options).unwrap();
+        log.flush(Duration::from_secs(2)).unwrap();
+        // A permitted read-only user can share writes while denying rename/delete.
+        let blocker = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&options.log_file_path)
+            .unwrap();
+        for _ in 0..100 {
+            log.session_event(
+                SessionEvent::StateChanged,
+                &options,
+                &session,
+                State::Up,
+                42,
+            );
+        }
+        log.flush(Duration::from_secs(2)).unwrap();
+        assert_eq!(events.lock().unwrap().len(), 100);
+        assert!(fs::metadata(&options.log_file_path).unwrap().len() <= 512);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        drop(blocker);
+        drop(log);
+
+        // Exercise bounded retries without sleeping for the production interval.
+        let file = OpenOptions::new()
+            .append(true)
+            .open(&options.log_file_path)
+            .unwrap();
+        let mut output = OutputFile::new(file, options.log_file_path.clone(), 512);
+        let blocker = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&options.log_file_path)
+            .unwrap();
+        assert!(!output.prepare_line(512));
+        drop(blocker);
+        // Releasing the reader does not bypass the retry interval.
+        assert!(!output.prepare_line(512));
+        output.retry_rotation_at = Some(Instant::now());
+        assert!(output.prepare_line(512));
+        output.writer.write_all(&[b'x'; 512]).unwrap();
+        output.length = 512;
+        output.writer.flush().unwrap();
+        assert_eq!(fs::metadata(&options.log_file_path).unwrap().len(), 512);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn failed_reopen_never_appends_to_the_backup_and_retries_only_the_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.log");
+        fs::write(&path, [b'x'; 256]).unwrap();
+        let file = OpenOptions::new().append(true).open(&path).unwrap();
+        let mut output = OutputFile::new(file, path.clone(), 256);
+        // Inject the failure after the real rename, rather than mocking rotation.
+        assert!(output
+            .rotate_with(|_| Err(io::Error::other("reopen denied")))
+            .is_err());
+        let backup = directory.path().join("trace.log.1");
+        assert!(output.renamed);
+        for _ in 0..100 {
+            assert!(!output.prepare_line(64));
+        }
+        assert!(!path.exists());
+        assert_eq!(fs::read(&backup).unwrap(), [b'x'; 256]);
+        output.retry_rotation_at = Some(Instant::now());
+        assert!(output.prepare_line(64));
+        output.writer.write_all(&[b'y'; 64]).unwrap();
+        output.length += 64;
+        output.writer.flush().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), [b'y'; 64]);
+        assert_eq!(fs::read(&backup).unwrap(), [b'x'; 256]);
+        assert!(!output.renamed);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn oversized_lines_and_preexisting_full_files_cannot_exceed_the_ceiling() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.log");
+        fs::write(&path, [b'x'; 256]).unwrap();
+        let file = OpenOptions::new().append(true).open(&path).unwrap();
+        let mut output = Some(OutputFile::new(file, path.clone(), 256));
+        let mut timestamp = String::new();
+        text_output(
+            &"🦀".repeat(100),
+            false,
+            &mut false,
+            &mut output,
+            &mut timestamp,
+        );
+        assert_eq!(fs::metadata(&path).unwrap().len(), 256);
+        text_output(
+            "short line\nanother",
+            false,
+            &mut false,
+            &mut output,
+            &mut timestamp,
+        );
+        output.as_mut().unwrap().writer.flush().unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("short line") && text.contains("another"));
+        assert!(text.len() <= 256);
+        assert_eq!(
+            fs::read(directory.path().join("trace.log.1")).unwrap(),
+            [b'x'; 256]
+        );
     }
 
     #[test]

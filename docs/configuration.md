@@ -142,6 +142,12 @@ Configure the same authentication type, key ID, and key at both ends. Set exactl
 With `Auth=none`, omit both key values; a nonempty key fails validation. To change
 from `AuthKey` to `AuthKeyHex`, remove the earlier value before restarting.
 
+Classical multihop BFD with `BgpPeerName` requires `Auth=meticulous-md5` or
+`meticulous-sha1` and a valid matching key. Other modes fail startup validation,
+even when `MinTtl` is set. TTL filtering limits accepted network paths; it does
+not authenticate a peer. Single-hop BGP without authentication logs a warning
+because it depends on a trusted link.
+
 ### Configure an authenticated multihop session
 
 For example, after setting `Local` and `Peer`, configure an authenticated multihop session:
@@ -206,5 +212,7 @@ These values select the Windows BGP peer:
 Both BGP names must contain a non-whitespace character. Console execution
 rejects BGP control. Restart both installed services when changing either BGP
 value so the BFD worker and broker use the same target.
+For classical multihop sessions, configure [meticulous keyed
+authentication](#authentication) before enabling `BgpPeerName`.
 
 For provisioning and verification, see [Logs and events](logging.md) and [Control a Windows BGP peer](bgp.md).
