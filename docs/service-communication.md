@@ -37,14 +37,21 @@ The [editable draw.io source](service-communication.drawio) has three pages:
 runtime boundaries, service lifecycle, and RPC authentication. Each exported
 image embeds its editable page.
 
-The [authentication diagram](images/service-communication-authentication.png)
+The exports use `-v2.png` filenames for the telemetry interface at
+`BfdWinService.Local.v2`, `BfdLocal` version `2.0`. Each diagram names that
+endpoint in its heading. The BGP control endpoint remains
+`BfdWinService.Bgp.v1`, `BgpControl` version `1.0`.
+The `V1` suffix in `GetSessionStatusV1` identifies the status-record schema;
+the telemetry endpoint and RPC interface use version 2.
+
+The [authentication diagram](images/service-communication-authentication-v2.png)
 names the client binding, server registration, call-attribute, Authz, SID, and
 cleanup functions. For ASCII call flows and the security assessment, see
 [private local RPC authentication](security/local-rpc.md#broker-authenticates-bfd-telemetry).
 
 ## Runtime flow
 
-![Runtime: both service-call paths use authenticated ncalrpc. The broker initiates session-status calls to BFD; BFD initiates BGP control calls to the broker. Single-headed arrows show call initiation; replies return on the same calls. BFD publishes immutable snapshots, and the broker validates and caches status.](images/service-communication-runtime.png)
+![Runtime: BFD telemetry uses BfdWinService.Local.v2 and BfdLocal 2.0. Both service-call paths use authenticated ncalrpc. The broker initiates session-status calls to BFD; BFD initiates BGP control calls to the broker. Single-headed arrows show call initiation; replies return on the same calls. BFD publishes immutable snapshots, and the broker validates and caches status.](images/service-communication-runtime-v2.png)
 
 The two installed services use these paths:
 
@@ -72,7 +79,7 @@ continues under its existing token and COM/MI security.
 
 ## Service lifecycle
 
-![Lifecycle: SCM starts the broker first; its status monitor runs after Running. BFD validates its token and registers RPC before Running. Shutdown closes observation before announcements and final BGP cleanup, then drains RPC. Broker shutdown does not wait on an unfinished native RPC worker.](images/service-communication-lifecycle.png)
+![Lifecycle: SCM starts the broker first; its status monitor runs after Running. BFD validates its token and registers RPC before Running. Shutdown closes observation before announcements and final BGP cleanup, then drains RPC. Broker shutdown does not wait on an unfinished native RPC worker.](images/service-communication-lifecycle-v2.png)
 
 SCM starts `RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`.
 The broker secures its BGP control RPC interface before reporting Running,

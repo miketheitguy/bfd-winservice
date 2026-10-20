@@ -471,19 +471,20 @@ repository root:
 
 ```powershell
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 1 -b 20 `
-    -o docs/images/service-communication-runtime.png `
+    -o docs/images/service-communication-runtime-v2.png `
     docs/service-communication.drawio
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 2 -b 20 `
-    -o docs/images/service-communication-lifecycle.png `
+    -o docs/images/service-communication-lifecycle-v2.png `
     docs/service-communication.drawio
 & 'C:\Program Files\draw.io\draw.io.exe' -x -f png -e -p 3 -b 20 `
-    -o docs/images/service-communication-authentication.png `
+    -o docs/images/service-communication-authentication-v2.png `
     docs/service-communication.drawio
 ```
 
 The page numbers are one-based. `-e` embeds editable XML in each PNG; retain the
-canonical `.drawio` source as well. Add `--disable-gpu` if export fails during GPU
-initialization. If you installed draw.io elsewhere, substitute its actual path.
+canonical `.drawio` source as well. The `-v2.png` filenames identify the
+telemetry interface generation; keep all consuming links on these names.
+Add `--disable-gpu` if export fails during GPU initialization. If you installed draw.io elsewhere, substitute its actual path.
 
 Open all three images and check text, clipping, arrow direction, process
 boundaries, and identity labels. Keep the RPC worker inside the broker

@@ -102,7 +102,7 @@ The [editable draw.io source](service-communication.drawio) contains runtime,
 lifecycle, and authentication pages. The authentication page shows the checks
 performed by the client, Windows RPC, and server:
 
-![RPC authentication call flow: RpcBindingCreateW uses Identify credentials and a BFD server descriptor. RpcServerRegisterIf3 applies the interface ACL before RpcServerInqCallAttributesW and RpcGetAuthorizationContextForClient(FALSE). AuthzGetInformationFromContext and EqualSid check SYSTEM plus the enabled broker SID; RpcFreeAuthorizationContext releases each acquired context.](images/service-communication-authentication.png)
+![RPC authentication call flow: RpcBindingCreateW uses Identify credentials and a BFD server descriptor. RpcServerRegisterIf3 applies the interface ACL before RpcServerInqCallAttributesW and RpcGetAuthorizationContextForClient(FALSE). AuthzGetInformationFromContext and EqualSid check SYSTEM plus the enabled broker SID; RpcFreeAuthorizationContext releases each acquired context.](images/service-communication-authentication-v2.png)
 
 For the matching ASCII diagrams, API responsibilities, and security assessment, see
 [private local RPC authentication](security/local-rpc.md#broker-authenticates-bfd-telemetry).

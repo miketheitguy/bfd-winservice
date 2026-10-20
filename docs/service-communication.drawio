@@ -4,7 +4,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="title" value="&lt;b&gt;Service communication and trust boundaries&lt;/b&gt;&lt;br&gt;Packet engine drives BGP actions; authenticated telemetry is observational" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B8C2D0;strokeWidth=2;fontFamily=Segoe UI;fontSize=25;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
+        <mxCell id="title" value="&lt;b&gt;Service communication and trust boundaries&lt;/b&gt;&lt;br&gt;BFD telemetry: BfdWinService.Local.v2 / BfdLocal 2.0 / GetSessionStatusV1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B8C2D0;strokeWidth=2;fontFamily=Segoe UI;fontSize=25;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="40" y="25" width="1640" height="110" as="geometry" />
         </mxCell>
         <mxCell id="bfd" value="&lt;b&gt;BfdWinService | bfd-winservice.exe&lt;/b&gt;" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#3A69A6;strokeWidth=2;fontFamily=Segoe UI;fontSize=20;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;shape=swimlane;startSize=58;horizontal=1;collapsible=0;swimlaneLine=1;" vertex="1" parent="1">
@@ -22,7 +22,7 @@
         <mxCell id="publisher" value="&lt;b&gt;Immutable status publication&lt;/b&gt;&lt;br&gt;ArcSwap snapshot + coherent capture metadata&lt;br&gt;Changes: 100 ms minimum; refresh target: 1 s&lt;br&gt;Scheduling can delay either publication" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#3A69A6;strokeWidth=2;fontFamily=Segoe UI;fontSize=18;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="bfd">
           <mxGeometry x="30" y="520" width="500" height="160" as="geometry" />
         </mxCell>
-        <mxCell id="rpc" value="&lt;b&gt;[F] Authenticated local RPC server&lt;/b&gt;&lt;br&gt;ncalrpc: BfdWinService.Local.v2 / BfdLocal 2.0&lt;br&gt;GetSessionStatusV1 only&lt;br&gt;Broker SID ACL + exact SYSTEM caller / Authz&lt;br&gt;One snapshot per status query; four manager permits&lt;br&gt;Runtime management denied" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFF4D9;strokeColor=#B98521;strokeWidth=2;fontFamily=Segoe UI;fontSize=18;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="bfd">
+        <mxCell id="rpc" value="&lt;b&gt;[F] Authenticated local RPC server&lt;/b&gt;&lt;br&gt;Endpoint: BfdWinService.Local.v2&lt;br&gt;Interface: BfdLocal 2.0 / ncalrpc&lt;br&gt;Operation: GetSessionStatusV1&lt;br&gt;Broker SID ACL + exact SYSTEM caller / Authz&lt;br&gt;One snapshot per status query; four manager permits&lt;br&gt;Runtime management denied" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFF4D9;strokeColor=#B98521;strokeWidth=2;fontFamily=Segoe UI;fontSize=18;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="bfd">
           <mxGeometry x="30" y="760" width="500" height="195" as="geometry" />
         </mxCell>
         <mxCell id="bgp-client" value="&lt;b&gt;[B] Optional BGP RPC client worker&lt;/b&gt;&lt;br&gt;Initiates Get / Start / Stop from engine state&lt;br&gt;AdminDown releases BFD&#x27;s own Stop&lt;br&gt;Pin SYSTEM AND broker SID / QOS V5" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EAF2FF;strokeColor=#3A69A6;strokeWidth=2;fontFamily=Segoe UI;fontSize=18;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="bfd">
@@ -87,7 +87,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="title" value="&lt;b&gt;Startup, status fetching, and administrative shutdown&lt;/b&gt;&lt;br&gt;SCM Running is a lifecycle receipt; session Up and fresh telemetry require separate checks" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B8C2D0;strokeWidth=2;fontFamily=Segoe UI;fontSize=25;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
+        <mxCell id="title" value="&lt;b&gt;Startup, status fetching, and administrative shutdown&lt;/b&gt;&lt;br&gt;BFD telemetry: BfdWinService.Local.v2 / BfdLocal 2.0 / GetSessionStatusV1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B8C2D0;strokeWidth=2;fontFamily=Segoe UI;fontSize=25;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="40" y="25" width="1640" height="110" as="geometry" />
         </mxCell>
         <mxCell id="scm" value="&lt;b&gt;[E] Windows Service Control Manager&lt;/b&gt;&lt;br&gt;RpcSs → BfdBgpBroker → BfdWinService&lt;br&gt;Applies installed accounts, service SIDs, and privilege policy" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F3F6;strokeColor=#778397;strokeWidth=2;fontFamily=Segoe UI;fontSize=18;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
@@ -179,7 +179,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="title" value="&lt;b&gt;RPC authentication: the critical function calls&lt;/b&gt;&lt;br&gt;Identity receipts: exact account + enabled service SID / ncalrpc / Identify credentials" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B8C2D0;strokeWidth=2;fontFamily=Segoe UI;fontSize=25;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
+        <mxCell id="title" value="&lt;b&gt;RPC authentication: the critical function calls&lt;/b&gt;&lt;br&gt;BFD telemetry: BfdWinService.Local.v2 / BfdLocal 2.0 / GetSessionStatusV1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B8C2D0;strokeWidth=2;fontFamily=Segoe UI;fontSize=25;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="40" y="25" width="2020" height="120" as="geometry" />
         </mxCell>
         <mxCell id="client" value="&lt;b&gt;Broker RPC worker | SYSTEM + broker SID&lt;/b&gt;" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0EAF8;strokeColor=#7957A2;strokeWidth=2;fontFamily=Segoe UI;fontSize=19;fontColor=#1C2B43;spacing=14;align=left;verticalAlign=middle;shape=swimlane;startSize=58;horizontal=1;collapsible=0;swimlaneLine=1;" vertex="1" parent="1">
