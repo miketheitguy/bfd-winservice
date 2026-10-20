@@ -144,7 +144,7 @@ other than 7784; the installed firewall limits requests to 49152-65535.
 
 BGP control runs only when `BgpPeerName` is configured for classical BFD or an
 S-BFD initiator. Reflectors reject BGP control. Plain BFD still has the installed
-SCM dependency on the broker, but starts no BGP worker and makes no BGP RPC probe.
+SCM dependency on the broker, but starts no BGP worker and makes no BGP RPC connection check.
 
 Startup reads BGP status without changing the peer. Entering Up requests Start
 if needed; Down after the session has established requests Stop. Peer AdminDown

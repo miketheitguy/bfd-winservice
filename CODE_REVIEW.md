@@ -27,7 +27,7 @@ These later changes supersede descriptions in older entries:
 | Older description | Implemented behavior and reference |
 | --- | --- |
 | BGP control uses a named pipe, PID/SCM matching, or caller impersonation. | Both service channels use authenticated `ncalrpc`; BGP retains a separate interface and serialized provider worker. See [BGP RPC security](docs/rpc-authentication.md#bgp-control-over-local-rpc). |
-| An isolated broker child performs RPC probes, or invalid status stays quarantined until restart. | One worker inside the broker queries typed status. Rejected replies clear the cache and retry; only a stuck native worker quarantines telemetry. See [RPC session-status query](docs/rpc-session-status-design.md). |
+| An isolated broker child performs RPC connection checks, or invalid status stays quarantined until restart. | One worker inside the broker queries typed status. Rejected replies clear the cache and retry; only a stuck native worker quarantines telemetry. See [RPC session-status query](docs/rpc-session-status-design.md). |
 | Stop always stops BGP, or AdminDown never changes BGP. | Local or peer AdminDown releases a Stop issued by BFD by queuing Start; it leaves other peers untouched. See [BGP behavior](docs/bgp.md). |
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
@@ -69,7 +69,7 @@ only. No installed service or live RRAS operation was changed or exercised.
 ## BGP control RPC migration — 2026-10-16
 
 BGP control uses `BgpControl` 1.0 at `ncalrpc:BfdWinService.Bgp.v1` in place of
-the named pipe. Shared probe helpers supply WINNT packet privacy, static Identify
+the named pipe. Shared RPC security helpers supply WINNT packet privacy, static Identify
 credentials, V5 conditional server descriptors, protected service-SID interface
 ACLs, per-call local/private authentication checks, and Authz user/group checks.
 The broker additionally checks any restricting-SID list for BFD's service SID.
@@ -99,7 +99,7 @@ a provisioned Windows Server for those checks.
 The diagram/documentation follow-up verified both service channels share the
 `ncalrpc` registration, LRPC-only binding/call checks, packet privacy, and
 service-identity policy. Runtime and lifecycle arrows now show one-way call
-initiation: broker to BFD for Probe/status; BFD to broker for BGP control.
+initiation: broker to BFD for session status; BFD to broker for BGP control.
 Replies use the existing calls, with no RPC callback operations. The canonical
 draw.io source and all three PNGs were regenerated outside the sandbox and
 visually inspected; XML directions and local documentation links passed checks.
@@ -175,11 +175,11 @@ remains a separate MSI check and was not run locally.
 
 ## Local RPC security review — 2026-10-15
 
-This entry records the earlier probe-only implementation. The
+This entry records the earlier connection-only implementation. The
 [session-status implementation](#rpc-session-status-implementation--2026-10-15)
 supersedes its isolated-child design and cleanup policy.
 
-The private `ncalrpc` interface exposes a connection probe to an isolated broker
+The private `ncalrpc` interface exposes a connection check to an isolated broker
 child. The review checked Windows credentials, service-SID authorization,
 restricted BFD identity, Identify-level QOS, server identity descriptors,
 authorization-cache isolation, and asynchronous completion lifetimes against
@@ -188,7 +188,7 @@ Microsoft's guidance. The mechanisms and primary references are in
 
 Native testing reproduced the RPC runtime's separate management-query surface.
 BFD now denies every runtime management operation before opening its endpoint.
-The application interface still admits authenticated probes. Binding cleanup
+The application interface still admits authenticated connection checks. Binding cleanup
 also fails closed inside the isolated child if unbind/free cannot complete.
 The BGP provider COM/MI contract and its host privileges remain unchanged.
 
@@ -278,12 +278,12 @@ and `overflow-checks = true`. These findings were fixed:
 | Any receive or wait error other than WouldBlock or `WSAEMSGSIZE` ended the engine, stopping BGP, and BFD had no SCM recovery. | Network-condition Winsock errors pause socket use with a 10–250 ms backoff while timers continue. BFD restarts 10 seconds after a crash or unrequested failure exit; requested stops report exit code 0, so recovery never undoes a Stop. Both services use Automatic (Delayed Start). |
 | Shutdown could take minutes, and StopPending checkpoints advanced indefinitely, hiding hangs. | Closing cancels a superseded in-flight call; each call of the final BGP action has a 20-second budget. BFD ends its process 60 seconds plus its AdminDown announcement period after Stop; the broker after 60 seconds. BFD accepts preshutdown, so its final BGP action reaches the broker before the shutdown phase. |
 | Final events were written after SERVICE_STOPPED, when the process can end. | Both services flush logs before reporting Stopped; the broker creates its logger first. |
-| BFD required the broker even without BGP, and a squatted pipe name stopped the broker. | BFD probes the broker only with `BgpPeerName`; the broker stays Running and retries the name each second. |
+| BFD required the broker even without BGP, and a squatted pipe name stopped the broker. | BFD checks its broker connection only with `BgpPeerName`; the broker stays Running and retries the name each second. |
 | Congestion backoff grew to about 71 minutes. | Backoff stops at 30 seconds, or a slower negotiated base. |
 | Weak authentication settings were silent; peer events were unbounded; the file log never rotated; the reflector replied without limit. | Warning event 4 reports weak settings; session events are limited to 32 per second; the file rotates at 64 MiB to one backup; the reflector replies at most 1,000 times per second per source. |
 | MI function-table entries were transmuted from `isize` to non-null function pointers. | `entry` rejects zero entries before conversion, so a missing entry is an error rather than undefined behavior. |
 | The LocalService process kept SeImpersonatePrivilege. | Both run modes remove all but two privileges at startup. |
-| Startup checkpoints never advanced; a probe/worker pipe race logged a spurious failure; S-BFD settings were read every second. | Startup advances checkpoints; clients wait briefly for a busy pipe instance; a registry change notification triggers reloads, with polling as a fallback. |
+| Startup checkpoints never advanced; a connection-check/worker pipe race logged a spurious failure; S-BFD settings were read every second. | Startup advances checkpoints; clients wait briefly for a busy pipe instance; a registry change notification triggers reloads, with polling as a fallback. |
 | `AuthKeyHex` accepted `+` signs; key copies were never cleared; the nightly toolchain floated. | Hex digits are checked; key buffers are wiped with volatile writes; `rust-toolchain.toml` pins `nightly-2026-10-01`; CI runs `cargo audit`. |
 
 The `Restricted` service SID type was evaluated but not adopted: without a

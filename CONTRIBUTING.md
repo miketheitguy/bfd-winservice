@@ -422,7 +422,7 @@ observers remain available to library users and UDP integration tests.
 operation copies one published snapshot on an RPC worker. The broker queries it
 from one supervised worker inside its existing process; it launches no helper.
 Keep this path separate from the BGP control RPC interface and COM/MI provider worker. The
-BGP interface in `src/bgp/ipc.rs` shares the probe's binding, registration, and
+BGP interface in `src/bgp/ipc.rs` shares the telemetry interface's binding, registration, and
 Authz helpers, with server/caller identities reversed. Preserve its additional
 restricting-SID check for restricted BFD callers. Its bounded queue sends work
 to the serialized provider worker; RPC callbacks never execute MI operations.
@@ -489,8 +489,8 @@ Open all three images and check text, clipping, arrow direction, process
 boundaries, and identity labels. Keep the RPC worker inside the broker
 process. Show the snapshot and typed status path, and preserve the
 BGP control RPC interface and COM/MI provider path. Label both service RPC
-paths `ncalrpc` and use single-headed arrows for call initiation: broker to BFD for Probe/status,
-BFD to broker for BGP control. Replies return on the existing calls; neither
+paths `ncalrpc` and use single-headed arrows for call initiation: broker to BFD
+for session status, BFD to broker for BGP control. Replies return on the existing calls; neither
 binding permits server-initiated RPC callbacks. Ensure every diagram has a
 matching text explanation and useful alt text in the consuming Markdown page.
 

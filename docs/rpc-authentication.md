@@ -70,11 +70,11 @@ operations are denied in both host processes; AUTOLISTEN preserves the broker's
 COM listen lifecycle. The broker secures its control interface before reporting
 Running, then starts its telemetry monitor without waiting for BFD startup.
 
-The BGP contract has a probe and fixed Get/Start/Stop operations; callers cannot
+The BGP contract has a connection check and fixed Get/Start/Stop operations; callers cannot
 supply targets. Robust MIDL range checks and Rust validation check a fixed
 16-byte result record. One admission permit and a one-slot queue feed the existing serialized
 provider worker. The client uses a two-second bind limit within a 30-second call
-budget, or 20 seconds per final shutdown call. Probe calls use two seconds.
+budget, or 20 seconds per final shutdown call. Connection checks use two seconds.
 Cancellation drains native ownership; queued cancelled requests are discarded.
 A provider operation already running can complete after cancellation. BFD aborts
 if native ownership remains uncertain, while telemetry retains its existing

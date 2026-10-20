@@ -64,7 +64,7 @@ or opens peer process tokens.
 
 ### Fixed operations and bounded dispatch
 
-The robust MIDL contract admits only a liveness probe and `Get`, `Start`, or
+The robust MIDL contract admits only a connection check and `Get`, `Start`, or
 `Stop`, with a fixed 16-byte result containing a broker-instance nonce, provider
 status, and a Boolean value. The nonce detects restarts; it is not
 authentication evidence. There is no custom byte frame or application connection

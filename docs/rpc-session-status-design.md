@@ -54,11 +54,11 @@ Native layout tests check size, alignment, and field offsets against MIDL output
 
 ### Deploy matching binaries
 
-Deploy the BFD service and broker binaries together. Version `2.0` removes the
-standalone `Probe` operation from version `1.1` and moves `GetSessionStatusV1`
-from operation number `1` to `0`. The major interface version and endpoint change
+Deploy the BFD service and broker binaries together. Version `2.0` exposes only
+`GetSessionStatusV1`, moving it from operation number `1` in version `1.1` to `0`.
+The major interface version and endpoint change
 prevent mixed binaries from interpreting a call as the wrong operation. There
-is no legacy endpoint or probe fallback. The `BFD_SESSION_STATUS_V1` record
+is no legacy endpoint fallback. The `BFD_SESSION_STATUS_V1` record
 remains schema version `1`; the interface version is a separate contract.
 
 The BGP control interface stays at `BgpControl` version `1.0`. Its BFD-to-broker

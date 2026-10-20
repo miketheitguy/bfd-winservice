@@ -43,7 +43,7 @@ design:
   controller by queuing Start. Disconnects and broker shutdown do not issue
   Stop. See [BGP action rules](docs/bgp.md).
 - BGP control uses a separate authenticated `ncalrpc` interface. It shares the
-  telemetry probe's security helpers, reverses service identities, and retains
+  telemetry interface's security helpers, reverses service identities, and retains
   the restricted-caller SID check. The former named-pipe transport is historical.
   See [BGP control RPC](docs/rpc-authentication.md#bgp-control-over-local-rpc).
 - One RPC worker runs inside the broker. Rejected records clear telemetry and

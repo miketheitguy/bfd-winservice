@@ -16,7 +16,7 @@ The peer must already exist on a Windows Server with Remote Access/BGP configure
 Install the MSI: BGP control requires the installed service identities and is
 unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
 native MI query is started. The broker still starts as a service dependency and
-answers a read-only startup authorization probe when BGP control is configured.
+answers a read-only startup connection check when BGP control is configured.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
@@ -74,9 +74,9 @@ Start-Service BfdWinService
 Starting BFD starts its broker dependency. Do not stop the broker while BFD is
 running except during coordinated maintenance.
 
-The startup probe validates the broker connection and client authorization.
-A valid provider-error reply still passes that probe: a missing or unreadable
-BGP peer doesn't prevent BFD startup. Check the initial status-query log and
+The startup connection check validates the broker's identity and client
+authorization without querying the provider. A missing or unreadable BGP peer
+doesn't prevent BFD startup. Check the initial status-query log and
 later broker results to confirm the configured target is usable.
 
 ## Verify state changes and actions
@@ -148,8 +148,8 @@ runs once per second; idle RPC waits do not count as stalled provider work.
 If Stop was requested, the broker reports Stopped before exiting, preventing an
 automatic restart.
 
-The BFD worker probes the broker once per idle second and compares the returned
-instance nonce to detect a restart. Recovery reapplies the latest
+The BFD worker checks its broker connection once per idle second and compares
+the returned instance nonce to detect a restart. Recovery reapplies the latest
 requested action without inventing an action before the session establishes.
 
 BGP control uses authenticated `ncalrpc` with a two-second bind deadline and a
@@ -223,13 +223,13 @@ service status, while SYSTEM and elevated Administrators can Start/Stop or
 reconfigure services. SCM permissions do not authorize BGP RPC requests.
 Event/file log reads remain available under the existing log permissions.
 
-The MIDL contract accepts a liveness probe and only Get, Start, and Stop provider
+The MIDL contract accepts a connection check and only Get, Start, and Stop provider
 operations. Requests contain no peer name, routing domain, path, command, or
 registry key. The broker loads its allowed target from protected Parameters at
 startup. The client authenticates the server account and service SID through
 Windows RPC rather than a pipe PID/SCM comparison. A fixed endpoint collision
 fails broker startup; there is no fallback. Without `BgpPeerName`, BFD makes no
-BGP control probe. The independent broker-to-BFD telemetry monitor still runs.
+BGP control connection check. The independent broker-to-BFD telemetry monitor still runs.
 
 Native fixtures cover restricted-token authorization, server identity,
 cancellation, and serialized dispatch. The MSI harness tests rejection of an

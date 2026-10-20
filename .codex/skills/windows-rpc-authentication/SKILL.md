@@ -28,7 +28,7 @@ Treat every gate as necessary. An ACL check is not a substitute for the applicat
 
 ## Preserve direction and least privilege
 
-Model call initiation separately from response data. A broker-to-service probe is initiated only by the broker; a service-to-broker control channel is initiated only by the service. Each ordinary RPC request can return a response. Do not describe this as a data diode, change it into one-way IDL semantics, or remove results needed for authentication/liveness.
+Model call initiation separately from response data. A broker-to-service status query is initiated only by the broker; a service-to-broker control channel is initiated only by the service. Each ordinary RPC request can return a response. Do not describe this as a data diode, change it into one-way IDL semantics, or remove results needed for authentication/liveness.
 
 Use separate explicit client/server roles and no remote `[callback]` procedures. A local RPC runtime security callback is an authorization hook, not a reverse RPC call. Label diagrams `ncalrpc` and point each initiation arrow from its client to its server. Native `RPC_PROTSEQ_LRPC` means this same local RPC mechanism, not an alternate weaker transport.
 
