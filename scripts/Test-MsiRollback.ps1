@@ -9,6 +9,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     throw 'This rollback test runs only on a GitHub-hosted Actions runner.'
 }
 . (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
+. (Join-Path $PSScriptRoot 'Assert-RollbackPrivileges.ps1')
 # This fixed-target helper runs only behind the disposable-runner guard above.
 # An explicit empty MULTI_SZ must be passed through SCM, not a direct registry write.
 Add-Type -TypeDefinition @'
@@ -85,15 +86,13 @@ try {
             }
             $key = Get-Item -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService'
             $oldPrivilegePresent = 'RequiredPrivileges' -in $key.GetValueNames()
+            $oldPrivilegeKind = [Microsoft.Win32.RegistryValueKind]::Unknown
             $oldPrivileges = [string[]]@()
             if ($oldPrivilegePresent) {
                 $oldPrivilegeKind = $key.GetValueKind('RequiredPrivileges')
                 $oldPrivileges = [string[]]$key.GetValue('RequiredPrivileges')
-                if ($oldPrivilegeKind -ne 'MultiString') { throw 'SCM created a non-MULTI_SZ fixture privilege policy.' }
             }
-            if ($label -eq 'default' -and $oldPrivilegePresent) { throw 'The default privilege fixture is not absent/default.' }
-            if ($label -eq 'empty' -and (-not $oldPrivilegePresent -or $oldPrivileges.Count -ne 0)) { throw 'SCM did not retain an explicit-empty privilege fixture.' }
-            if ($label -eq 'explicit' -and (-not $oldPrivilegePresent -or $oldPrivileges.Count -ne 2)) { throw 'SCM did not retain the explicit-list privilege fixture.' }
+            Assert-RollbackPrivilegeFixture -Label $label -Present $oldPrivilegePresent -Kind $oldPrivilegeKind -Values $oldPrivileges
             $oldDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new([BfdServiceAccess]::ReadDescriptor('BfdWinService'), 0)
             $oldSecurity = $oldDescriptor.GetSddlForm([Security.AccessControl.AccessControlSections]::All)
         }

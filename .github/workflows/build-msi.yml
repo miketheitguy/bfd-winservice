@@ -63,6 +63,8 @@ jobs:
         run: ./scripts/Test-RestrictedAcl.ps1
       - name: Check installer hardening
         run: ./scripts/Test-InstallerHardening.ps1
+      - name: Check rollback privilege fixtures
+        run: ./scripts/Test-RollbackPrivileges.ps1
       - name: Check Rust formatting
         run: cargo fmt --check
       - name: Check Rust lints in release mode
