@@ -4,18 +4,12 @@
 #include <stddef.h>
 #include "bfd_local_server.h"
 
-extern unsigned long bfd_rpc_authorize_probe(void *binding);
 extern unsigned long bfd_rpc_get_session_status(void *binding,
     BFD_SESSION_STATUS_V1 *status);
 
-unsigned long BfdServer_Probe(handle_t binding)
-{
-    return bfd_rpc_authorize_probe(binding);
-}
-
 void *bfd_rpc_server_interface(void)
 {
-    return BfdServer_BfdLocal_v1_1_s_ifspec;
+    return BfdServer_BfdLocal_v2_0_s_ifspec;
 }
 
 unsigned long BfdServer_GetSessionStatusV1(handle_t binding,

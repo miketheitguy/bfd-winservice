@@ -232,15 +232,15 @@ fn fixed_policy_denies_same_account_replacement_with_its_group_disabled() {
     let user = current_user();
     let original = RpcFixture::start(&user);
     let endpoint = original.endpoint.clone();
-    probe_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
     original.stop();
     let replacement = RestrictedFixture::start(&endpoint, &user).unwrap();
     // Expected policy stays identical across every call. The server's actual
     // native token changes, and an old association must never produce success.
     // A stale association may first report CALL_FAILED_DNE before fresh binds
-    // report ACCESS_DENIED, so check failure of the entire Probe operation.
+    // report ACCESS_DENIED, so check failure of the entire status operation.
     for _ in 0..3 {
-        assert!(probe_with_policy(&endpoint, &user, AUTHENTICATED_USERS).is_err());
+        assert!(query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).is_err());
     }
     assert_eq!(
         isolated_client_result(&endpoint, &user, AUTHENTICATED_USERS),

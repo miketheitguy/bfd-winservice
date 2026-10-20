@@ -102,32 +102,12 @@ static RPC_STATUS bind_async(void *binding, unsigned long timeout_ms,
 
 unsigned long bfd_rpc_bind(void *binding, unsigned long timeout_ms)
 {
-    return bind_async(binding, timeout_ms, BfdClient_BfdLocal_v1_1_c_ifspec, FALSE);
-}
-
-unsigned long bfd_rpc_call_probe(void *binding, unsigned long timeout_ms)
-{
-    RPC_ASYNC_STATE state = {0};
-    unsigned long reply = RPC_S_CALL_FAILED;
-    RPC_STATUS status = initialize_async(&state);
-    if (status != RPC_S_OK) {
-        return status;
-    }
-    RpcTryExcept {
-        BfdClient_Probe(&state, binding);
-        status = wait_async(&state, timeout_ms, NULL, &reply, NULL, FALSE);
-    }
-    RpcExcept(bfd_rpc_exception_filter(RpcExceptionCode())) {
-        status = RpcExceptionCode();
-    }
-    RpcEndExcept
-    CloseHandle(state.u.hEvent);
-    return status == RPC_S_OK ? reply : status;
+    return bind_async(binding, timeout_ms, BfdClient_BfdLocal_v2_0_c_ifspec, FALSE);
 }
 
 void *bfd_rpc_client_interface(void)
 {
-    return BfdClient_BfdLocal_v1_1_c_ifspec;
+    return BfdClient_BfdLocal_v2_0_c_ifspec;
 }
 
 unsigned long bfd_rpc_call_status(void *binding, unsigned long timeout_ms,

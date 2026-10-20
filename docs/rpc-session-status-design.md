@@ -40,17 +40,30 @@ unsigned long GetSessionStatusV1(
     [out, ref] BFD_SESSION_STATUS_V1 *status);
 ```
 
-Interface `BfdLocal` version `1.1` defines this operation after
-`Probe`. It uses UUID `8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319` and endpoint
-`BfdWinService.Local.v1`. There
-is one configured session per BFD process, so the call accepts no session ID,
-filter, output length, or configuration. Application and native failures return
-errors; the client does not interpret a failed call's output record.
+Interface `BfdLocal` version `2.0` defines only this operation, at operation
+number `0`. It uses UUID `8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319` and endpoint
+`BfdWinService.Local.v2`. There is one configured session per BFD process, so
+the call accepts no session ID, filter, output length, or configuration.
+Application and native failures return errors; the client does not interpret a
+failed call's output record.
 
 The native record is fixed-size: its x64 C/Rust layout is **336 bytes**, with no
 strings, variable-length arrays, application pointers, packet contents, or keys.
 Generated stubs own NDR marshaling. Raw Rust memory is never an IPC format.
 Native layout tests check size, alignment, and field offsets against MIDL output.
+
+### Deploy matching binaries
+
+Deploy the BFD service and broker binaries together. Version `2.0` removes the
+standalone `Probe` operation from version `1.1` and moves `GetSessionStatusV1`
+from operation number `1` to `0`. The major interface version and endpoint change
+prevent mixed binaries from interpreting a call as the wrong operation. There
+is no legacy endpoint or probe fallback. The `BFD_SESSION_STATUS_V1` record
+remains schema version `1`; the interface version is a separate contract.
+
+The BGP control interface stays at `BgpControl` version `1.0`. Its BFD-to-broker
+liveness operation verifies control authorization and detects broker restarts;
+the broker-to-BFD telemetry query does not replace it.
 
 ## Session fields
 

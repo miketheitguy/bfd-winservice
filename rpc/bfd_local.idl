@@ -1,6 +1,6 @@
 [
     uuid(8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319),
-    version(1.1),
+    version(2.0),
     pointer_default(unique)
 ]
 interface BfdLocal
@@ -56,7 +56,6 @@ interface BfdLocal
         BFD_RPC_ADDRESS source_address;
     } BFD_SESSION_STATUS_V1;
 
-    unsigned long Probe([in] handle_t binding);
     unsigned long GetSessionStatusV1(
         [in] handle_t binding,
         [out, ref] BFD_SESSION_STATUS_V1 *status);

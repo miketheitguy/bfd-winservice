@@ -203,10 +203,10 @@ fn authenticated_native_lrpc_round_trip_and_shutdown() {
     let user = current_user();
     let fixture = RpcFixture::start(&user);
     let endpoint = fixture.endpoint.clone();
-    probe_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
-    probe_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
     fixture.stop();
-    assert!(probe_with_policy(&endpoint, &user, AUTHENTICATED_USERS).is_err());
+    assert!(query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).is_err());
 }
 
 #[test]
@@ -229,7 +229,12 @@ fn native_robust_stub_rejects_out_of_range_status_without_killing_the_client() {
     let fixture = RpcFixture::start_status(&user, 0, 1);
     let error = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
     assert!(error.invalid_data(), "{error}");
-    probe_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    // A second rejected response proves the server remains available.
+    assert!(
+        query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS)
+            .unwrap_err()
+            .invalid_data()
+    );
     fixture.stop();
 }
 
@@ -311,7 +316,7 @@ fn native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection(
 fn fresh_client_processes_authenticate_server_account_and_group() {
     let user = current_user();
     let fixture = RpcFixture::start(&user);
-    probe_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
     // RPC can cache an authorization decision for the same actual server token
     // across bindings. A fresh process is required when changing expected policy.
     assert_eq!(
@@ -326,7 +331,7 @@ fn fresh_client_processes_authenticate_server_account_and_group() {
         isolated_client_result(&fixture.endpoint, &user, unrelated_account(&user)),
         5
     );
-    probe_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
     fixture.stop();
 }
 
@@ -336,8 +341,12 @@ fn callback_rejects_wrong_account_even_when_interface_acl_admits_its_group() {
     // AU admits the real caller to the native interface. Only the per-call
     // exact-account check differs from the successful fixture.
     let fixture = RpcFixture::start(unrelated_account(&user));
-    let error = probe_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    let error = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
+    assert!(
+        matches!(error, SessionStatusQueryError::Rpc(ref e)
+        if e.kind() == io::ErrorKind::PermissionDenied),
+        "{error}"
+    );
     fixture.stop();
 }
 
@@ -346,9 +355,13 @@ fn delayed_native_call_is_cancelled_before_the_server_handler_finishes() {
     let user = current_user();
     let fixture = RpcFixture::start_with_delay(&user, 5_000);
     let started = Instant::now();
-    let error = probe_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
+    let error = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
     let elapsed = started.elapsed();
-    assert_eq!(error.raw_os_error(), Some(1818), "{error}"); // RPC_S_CALL_CANCELLED
+    assert!(
+        matches!(error, SessionStatusQueryError::Rpc(ref e)
+        if e.raw_os_error() == Some(1818)),
+        "{error}"
+    ); // RPC_S_CALL_CANCELLED
     assert!(
         elapsed < Duration::from_millis(4_500),
         "the client waited {elapsed:?} for a handler that sleeps five seconds"
@@ -402,9 +415,10 @@ fn anonymous_native_client_is_denied() {
         )
     })
     .unwrap();
+    let mut record = WireStatus::default();
     // SAFETY: the native wrapper retains asynchronous state until completion;
-    // the uniquely owned classic binding remains live throughout the call.
-    let status = unsafe { bfd_rpc_call_probe(binding.raw, CALL_TIMEOUT_MS) };
+    // the initialized output and unique classic binding remain live throughout.
+    let status = unsafe { bfd_rpc_call_status(binding.raw, CALL_TIMEOUT_MS, &mut record) };
     let error = check(status as i32).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     drop(binding);
@@ -412,7 +426,7 @@ fn anonymous_native_client_is_denied() {
 }
 
 #[test]
-fn runtime_management_queries_are_denied_without_disrupting_the_probe() {
+fn runtime_management_queries_are_denied_without_disrupting_session_status() {
     use windows_sys::Win32::System::Rpc::{
         RpcBindingFromStringBindingW, RpcMgmtInqStats, RpcMgmtIsServerListening,
         RpcMgmtStatsVectorFree,
@@ -441,7 +455,7 @@ fn runtime_management_queries_are_denied_without_disrupting_the_probe() {
     // management interface rather than the application interface's callback.
     let listening = unsafe { RpcMgmtIsServerListening(binding.raw) };
     assert_eq!(listening, ERROR_ACCESS_DENIED as i32);
-    probe_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
     fixture.stop();
 }
 
@@ -455,7 +469,7 @@ fn rpc_fixture_child() {
     let user = std::env::var(FIXTURE_USER).unwrap();
     let marker = PathBuf::from(std::env::var_os(FIXTURE_MARKER).unwrap());
     let delay_ms = std::env::var(FIXTURE_DELAY).unwrap().parse().unwrap();
-    TEST_PROBE_DELAY_MS.store(delay_ms, Ordering::Relaxed);
+    TEST_STATUS_DELAY_MS.store(delay_ms, Ordering::Relaxed);
     TEST_STATUS_CORRUPT.store(
         std::env::var(FIXTURE_CORRUPT)
             .ok()
@@ -463,7 +477,7 @@ fn rpc_fixture_child() {
             .unwrap_or(0),
         Ordering::Relaxed,
     );
-    // Only this disposable child loses privileges. Positive probes therefore
+    // Only this disposable child loses privileges. Positive status calls therefore
     // exercise RPC registration and Authz checks without SeImpersonatePrivilege,
     // SeDebugPrivilege, or any other privilege the service removes at startup.
     crate::runtime::drop_privileges().unwrap();
@@ -504,9 +518,12 @@ fn rpc_fixture_client_child() {
     let group = std::env::var(CLIENT_GROUP).unwrap();
     let result = PathBuf::from(std::env::var_os(CLIENT_RESULT).unwrap());
     crate::runtime::drop_rpc_privileges().unwrap();
-    let status = probe_with_policy(&endpoint, &user, &group)
+    let status = query_with_policy(&endpoint, &user, &group)
         .err()
-        .map_or(0, |error| error.raw_os_error().unwrap_or(-1));
+        .map_or(0, |error| match error {
+            SessionStatusQueryError::Rpc(error) => error.raw_os_error().unwrap_or(-1),
+            error => panic!("unexpected status failure: {error}"),
+        });
     fs::write(result, status.to_string()).unwrap();
 }
 

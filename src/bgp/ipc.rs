@@ -67,7 +67,7 @@ struct Policy {
     stop: StopSignal,
 }
 
-// Endpoint and identity policy stay fixed for the process lifetime, as for Probe.
+// Endpoint and identity policy stay fixed for the process lifetime, as for telemetry.
 static POLICY: OnceLock<Policy> = OnceLock::new();
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 

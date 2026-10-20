@@ -11,7 +11,7 @@ LRPC in native constants such as `RPC_PROTSEQ_LRPC`; the label does not identify
 a different security mode. Both bindings require WINNT packet privacy and the
 same service-specific authentication and authorization helpers.
 
-Call initiation is directional: the broker calls BFD for `Probe` and session
+Call initiation is directional: the broker calls BFD for session
 status; BFD calls the broker for BGP control. Replies return on the respective
 calls. Neither IDL declares RPC callbacks, and the fast bindings reject
 server-initiated callbacks. The local security callbacks authorize incoming
@@ -20,9 +20,10 @@ calls without contacting the caller. See [fast-binding restrictions](https://lea
 The endpoint name isn't the identity check. The receipts are the authenticated
 account and enabled service SID on each side.
 
-The implemented interface provides a connection probe and a bounded read-only
-session-status operation. Status data returns directly to a worker inside the
-broker process over packet-private RPC. It carries no configuration commands,
+The implemented interface provides one bounded read-only session-status
+operation. A successful status query also verifies authenticated connectivity.
+Status data returns directly to a worker inside the broker process over
+packet-private RPC. It carries no configuration commands,
 authentication keys, or JSON records. The separate BGP control RPC interface and Windows
 provider Component Object Model (COM) and Management Infrastructure (MI) API
 keep their separate contracts. See [RPC session-status query](rpc-session-status-design.md)
@@ -91,9 +92,9 @@ The RPC contract has these properties:
 | Server | `BfdWinService`, running `bfd-winservice.exe` |
 | Authorized client | A dedicated worker inside the existing `BfdBgpBroker` process |
 | Transport | Windows local RPC, `ncalrpc`; no TCP or RPC named-pipe transport |
-| Endpoint | `BfdWinService.Local.v1`, supplied explicitly without endpoint-mapper registration |
-| Interface | `BfdLocal`, UUID `8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319`, version `1.1` |
-| Operations | Parameterless `Probe` and `GetSessionStatusV1` with a fixed status output; binding is runtime context |
+| Endpoint | `BfdWinService.Local.v2`, supplied explicitly without endpoint-mapper registration |
+| Interface | `BfdLocal`, UUID `8d10db9d-8aa1-4bd2-bcb6-0bc2e5597319`, version `2.0` |
+| Operations | `GetSessionStatusV1` with a fixed status output; binding is runtime context |
 | Success | Native status `0`, after both identities pass their checks |
 | Meaning | Authentication and the requested operation succeeded; status freshness and session state require separate interpretation |
 
@@ -385,7 +386,7 @@ The implementation applies these principles:
 | Test rejection and recovery | Exercise anonymous clients, wrong account/group identities, replacement servers, management denial, cancellation, and successful calls afterward. |
 
 These are implementation controls and test results, not a claim that the service
-contains a compromised host administrator or that an authenticated probe proves
+contains a compromised host administrator or that an authenticated status response proves
 protocol health.
 
 ## Verify the implementation
@@ -430,7 +431,7 @@ The implementation is divided across these files:
 | [src/local_rpc/monitor.rs](../src/local_rpc/monitor.rs) | In-process worker supervision, typed status cache, quarantine, and bounded shutdown |
 | [src/service_identity.rs](../src/service_identity.rs) | Self-identity and restricted BFD token checks |
 | [src/runtime/privileges.rs](../src/runtime/privileges.rs) | Permanent BFD privilege removal; the broker retains its provider token |
-| [rpc/bfd_local.idl](../rpc/bfd_local.idl) and [client ACF](../rpc/bfd_local_client.acf) | Probe/status contract, fixed field ranges, and asynchronous client generation |
+| [rpc/bfd_local.idl](../rpc/bfd_local.idl) and [client ACF](../rpc/bfd_local_client.acf) | Status-only contract, fixed field ranges, and asynchronous client generation |
 | [rpc/client.c](../rpc/client.c), [server bridge](../rpc/server.c), and [RPC build](../rpc/build.rs) | Native completion, cancellation, exceptions, manager bridge, and MIDL compilation |
 | [RPC tests](../src/local_rpc/tests.rs) and [replacement-token tests](../src/local_rpc/tests/restricted.rs) | Native positive and negative fixtures |
 | [MSI installation tests](../scripts/Test-MsiInstall.ps1) | Actual installed-service handshake after start and repair |

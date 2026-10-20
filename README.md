@@ -95,8 +95,8 @@ See [Verify peer communication](docs/setup.md#6-verify-peer-communication)
 for the query and expected events.
 
 Use Windows lifecycle queries and event logs for monitoring. The private local
-RPC interface between BFD and the broker provides an authenticated connection
-probe and read-only session telemetry for the broker; it exposes no
+RPC interface between BFD and the broker provides authenticated
+read-only session telemetry for the broker; it exposes no
 administrative status client. See
 [Monitor service status and BFD events](docs/monitoring.md).
 

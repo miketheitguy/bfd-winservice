@@ -23,11 +23,11 @@ Each interface permits calls initiated in one direction:
 
 | Call initiator | RPC server | Endpoint (`ncalrpc`) | Operations |
 | --- | --- | --- | --- |
-| Broker's telemetry worker | BFD service | `BfdWinService.Local.v1` | `Probe`, `GetSessionStatusV1` |
+| Broker's telemetry worker | BFD service | `BfdWinService.Local.v2` | `GetSessionStatusV1` |
 | BFD's BGP worker | BGP broker | `BfdWinService.Bgp.v1` | Control liveness check, `Get`, `Start`, `Stop` |
 
 Diagram arrows show **call initiation**, from client to server. BFD returns
-probe/status replies to the broker; the broker returns control results to BFD
+status replies to the broker; the broker returns control results to BFD
 on their respective calls. These replies do not initiate reverse RPC calls.
 Neither interface defines RPC callback operations, and fast bindings reject
 server-initiated RPC callbacks. Local authorization callbacks only check access
@@ -44,7 +44,7 @@ cleanup functions. For ASCII call flows and the security assessment, see
 
 ## Runtime flow
 
-![Runtime: both service-call paths use authenticated ncalrpc. The broker initiates Probe and session-status calls to BFD; BFD initiates BGP control calls to the broker. Single-headed arrows show call initiation; replies return on the same calls. BFD publishes immutable snapshots, and the broker validates and caches status.](images/service-communication-runtime.png)
+![Runtime: both service-call paths use authenticated ncalrpc. The broker initiates session-status calls to BFD; BFD initiates BGP control calls to the broker. Single-headed arrows show call initiation; replies return on the same calls. BFD publishes immutable snapshots, and the broker validates and caches status.](images/service-communication-runtime.png)
 
 The two installed services use these paths:
 
@@ -52,8 +52,8 @@ The two installed services use these paths:
    timers as LocalService. Its mutable session has one engine owner.
 2. The engine coalesces telemetry into an immutable `ArcSwap` snapshot, normally
    at most every 100 milliseconds, with a one-second unchanged refresh.
-3. BFD's private `ncalrpc` interface, `BfdWinService.Local.v1`, exposes `Probe`
-   and `GetSessionStatusV1`. An RPC worker authorizes the broker, loads one
+3. BFD's private `ncalrpc` interface, `BfdWinService.Local.v2`, exposes only
+   `GetSessionStatusV1`. An RPC worker authorizes the broker, loads one
    snapshot, and copies a fixed record without requesting packet-loop work.
 4. The broker's RPC worker runs inside `bfd-bgp-broker.exe`. It authenticates BFD
    and converts the reply into checked Rust types before publishing its cache.

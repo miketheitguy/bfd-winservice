@@ -46,7 +46,7 @@ use windows_sys::Win32::{
     },
 };
 
-const ENDPOINT: &str = "BfdWinService.Local.v1";
+const ENDPOINT: &str = "BfdWinService.Local.v2";
 const LOCAL_SERVICE: &str = "S-1-5-19";
 const SYSTEM: &str = "S-1-5-18";
 const MAX_CALLS: u32 = 8;
@@ -55,8 +55,6 @@ const CALL_TIMEOUT_MS: u32 = 2_000;
 extern "C" {
     fn bfd_rpc_server_interface() -> *mut c_void;
     fn bfd_rpc_bind(binding: *mut c_void, timeout_ms: u32) -> u32;
-    #[cfg(test)]
-    fn bfd_rpc_call_probe(binding: *mut c_void, timeout_ms: u32) -> u32;
     fn bfd_rpc_call_status(binding: *mut c_void, timeout_ms: u32, output: *mut WireStatus) -> u32;
 }
 
@@ -73,7 +71,7 @@ static STATUS_CALLS: AtomicUsize = AtomicUsize::new(0);
 static CLIENT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
-static TEST_PROBE_DELAY_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static TEST_STATUS_DELAY_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 #[cfg(test)]
 static TEST_STATUS_CORRUPT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -196,7 +194,7 @@ unsafe extern "C" fn bfd_rpc_get_session_status(
     unsafe {
         output.write(WireStatus::default());
     }
-    let authorized = authorize_probe(binding);
+    let authorized = authorize_call(binding);
     if authorized != RPC_S_OK {
         return authorized as u32;
     }
@@ -212,7 +210,7 @@ unsafe extern "C" fn bfd_rpc_get_session_status(
     };
     #[cfg(test)]
     std::thread::sleep(std::time::Duration::from_millis(u64::from(
-        TEST_PROBE_DELAY_MS.load(Ordering::Relaxed),
+        TEST_STATUS_DELAY_MS.load(Ordering::Relaxed),
     )));
     let Ok(record) = WireStatus::capture(&snapshot, Instant::now()) else {
         return ERROR_INVALID_DATA;
@@ -248,7 +246,7 @@ impl Drop for LocalRpcServer {
 /// # Safety
 /// RPC supplies the live current-call binding while this callback runs.
 unsafe extern "system" fn authorize(_: *const c_void, binding: *const c_void) -> i32 {
-    authorize_probe(binding)
+    authorize_call(binding)
 }
 
 /// # Safety
@@ -263,21 +261,9 @@ unsafe extern "system" fn deny_management(_: *const c_void, _: u32, status: *mut
     0
 }
 
-// Called by the generated server manager as well as the security callback. No
-// untrusted parameters are dereferenced here and no panic crosses the C boundary.
-#[no_mangle]
-extern "C" fn bfd_rpc_authorize_probe(binding: *const c_void) -> u32 {
-    let status = authorize_probe(binding);
-    #[cfg(test)]
-    if status == RPC_S_OK {
-        std::thread::sleep(std::time::Duration::from_millis(u64::from(
-            TEST_PROBE_DELAY_MS.load(std::sync::atomic::Ordering::Relaxed),
-        )));
-    }
-    status as u32
-}
-
-fn authorize_probe(binding: *const c_void) -> i32 {
+// Shared by the status manager and security callback. No untrusted parameters
+// are dereferenced here and no panic crosses the native boundary.
+fn authorize_call(binding: *const c_void) -> i32 {
     let Some(policy) = POLICY.get() else {
         return ERROR_ACCESS_DENIED as i32;
     };
@@ -328,14 +314,6 @@ fn query_with_policy(
         check(unsafe { bfd_rpc_call_status(binding, CALL_TIMEOUT_MS, &mut record) } as i32)
     })?;
     record.try_into()
-}
-
-#[cfg(test)]
-fn probe_with_policy(endpoint: &str, server_user: &str, server_group: &str) -> io::Result<()> {
-    with_binding(endpoint, server_user, server_group, |binding| {
-        // SAFETY: a live bound handle is retained through native completion.
-        check(unsafe { bfd_rpc_call_probe(binding, CALL_TIMEOUT_MS) } as i32)
-    })
 }
 
 // The BFD-specific expected identity never changes in the broker process.

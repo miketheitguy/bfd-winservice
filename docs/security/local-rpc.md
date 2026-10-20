@@ -20,7 +20,7 @@ page:
 
 BFD calls the broker's `BgpControl` version `1.0` interface at the fixed
 `ncalrpc` endpoint `BfdWinService.Bgp.v1`. It uses the same binding helper as
-the telemetry probe, with the server identities reversed: LocalSystem and the
+the telemetry query, with the server identities reversed: LocalSystem and the
 `NT SERVICE\BfdBgpBroker` SID must both satisfy the V5 server security
 descriptor. `QOS.Sid` also pins LocalSystem. An endpoint name alone never
 establishes identity.
@@ -58,9 +58,9 @@ For a restricted caller, `AuthzContextInfoRestrictedSids` must also contain the
 BFD service SID, including for write-restricted tokens. Unrelated LocalService
 processes, ordinary administrator clients, and tokens missing either required
 service-SID entry are rejected. Native information uses the same bounded,
-aligned, pointer-validated storage as the probe. The context is released on both
-success and failure. Neither RPC server impersonates callers or opens peer
-process tokens.
+aligned, pointer-validated storage as the telemetry query. The context is
+released on both success and failure. Neither RPC server impersonates callers
+or opens peer process tokens.
 
 ### Fixed operations and bounded dispatch
 
@@ -88,9 +88,9 @@ interactive administrator credential passed through the BFD process.
 
 ## Broker authenticates BFD telemetry
 
-BFD hosts `BfdWinService.Local.v1` on `ncalrpc`, interface version `1.1`.
-`Probe` checks connectivity; `GetSessionStatusV1` returns a fixed session-status
-record. Both require the same service-specific authentication and authorization.
+BFD hosts `BfdWinService.Local.v2` on `ncalrpc`, interface version `2.0`.
+Its sole operation, `GetSessionStatusV1`, returns a fixed session-status record
+and verifies authenticated connectivity through the same call.
 
 This boundary requires local transport, explicit service identities, read-only
 telemetry, and bounded work. The security checks stay separate from the packet
@@ -115,7 +115,7 @@ and management policy:
 ```text
 BROKER CLIENT: one fixed BFD identity policy
   RpcBindingCreateW
-    RPC_PROTSEQ_LRPC -> BfdWinService.Local.v1
+    RPC_PROTSEQ_LRPC -> BfdWinService.Local.v2
     RPC_C_AUTHN_WINNT + RPC_C_AUTHN_LEVEL_PKT_PRIVACY
     RPC_SECURITY_QOS_V5_W:
       MUTUAL_AUTH, STATIC, IDENTIFY, EffectiveOnly=1
@@ -126,7 +126,7 @@ BROKER CLIENT: one fixed BFD identity policy
   RpcBindingSetOption(RPC_C_OPT_UNIQUE_BINDING, 1)
           |
           v
-  Native RpcBindingBind, then GetSessionStatusV1 (Probe in tests)
+  Native RpcBindingBind, then GetSessionStatusV1
     server identity mismatch or API failure -> query fails; no status
 
 BFD SERVER: verify its own restricted service token first

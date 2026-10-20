@@ -205,9 +205,9 @@ See [Microsoft's router management requirements](https://learn.microsoft.com/en-
 The `BgpControl` version `1.0` interface at `BfdWinService.Bgp.v1` uses
 `ncalrpc`. BFD initiates every call on this control interface; the broker
 returns control results on those calls without RPC callbacks. The broker's
-separate `Probe`/status interface calls run in the other direction, to BFD.
+separate session-status calls run in the other direction, to BFD.
 
-The control interface shares the telemetry probe's security implementation:
+The control interface shares the telemetry interface's security implementation:
 WINNT authentication, packet privacy, V5 server identity descriptors, static
 identification credentials, and effective-only privileges. BFD pins LocalSystem
 and the broker service SID together. The broker's protected interface DACL

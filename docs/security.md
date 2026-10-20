@@ -44,14 +44,14 @@ The installed services use two private service channels and a provider path:
 
 | Call initiator to receiver | Channel | Purpose |
 | --- | --- | --- |
-| Broker RPC worker to BFD | Windows local RPC (`ncalrpc`), `BfdWinService.Local.v1` | Mutually authenticated probe and bounded read-only session-status response. |
+| Broker RPC worker to BFD | Windows local RPC (`ncalrpc`), `BfdWinService.Local.v2` | Mutually authenticated, bounded read-only session-status response. |
 | BFD to BGP broker | Windows local RPC (`ncalrpc`), `BfdWinService.Bgp.v1` | Authenticated fixed-target BGP Get/Start/Stop requests. |
 | BGP broker to Windows provider | Existing native MI with COM security | Local `PS_BgpPeer` provider operations under the broker's LocalSystem identity. |
 
 Both private service channels use authenticated `ncalrpc` with packet privacy;
 `RPC_PROTSEQ_LRPC` is the Windows runtime identifier used by the client binding
 and per-call transport check. It does not select a different transport.
-The broker alone initiates `Probe` and session-status calls to BFD. BFD alone
+The broker alone initiates session-status calls to BFD. BFD alone
 initiates BGP control calls to the broker. Each interface has one call-initiation
 direction; replies return on that call. Neither interface defines RPC callbacks,
 and the fast bindings reject server-initiated callbacks. Local security callbacks
@@ -144,7 +144,7 @@ boundaries described in this guide:
 | [src/session.rs](../src/session.rs), [src/packet.rs](../src/packet.rs), and [src/seamless.rs](../src/seamless.rs) | `receive_checked`, `receive_seamless`, `AuthConfig::verify_decoded`, and `respond_checked` |
 | [src/local_rpc.rs](../src/local_rpc.rs) and [src/local_rpc/monitor.rs](../src/local_rpc/monitor.rs) | Private local RPC listener, in-process client, authentication, authorization, supervised worker, and telemetry cache |
 | [src/local_rpc/identity.rs](../src/local_rpc/identity.rs) | Per-call transport/authentication checks and bounded Authz identity queries without token attachment |
-| [rpc/bfd_local.idl](../rpc/bfd_local.idl), [rpc/client.c](../rpc/client.c), and [rpc/server.c](../rpc/server.c) | Probe/status contract, fixed record, MIDL stub bridge, native asynchronous deadlines, and RPC exception boundary |
+| [rpc/bfd_local.idl](../rpc/bfd_local.idl), [rpc/client.c](../rpc/client.c), and [rpc/server.c](../rpc/server.c) | Status-only contract, fixed record, MIDL stub bridge, native asynchronous deadlines, and RPC exception boundary |
 | [rpc/build.rs](../rpc/build.rs) and [rpc/allocator.c](../rpc/allocator.c) | Native MIDL/MSVC build flags, static library assembly, and RPC allocation hooks |
 | [src/runtime/status.rs](../src/runtime/status.rs), [src/local_rpc/status.rs](../src/local_rpc/status.rs), and [src/runtime/state.rs](../src/runtime/state.rs) | Immutable publications and checked RPC projection; the immediate atomic state observer stays separate from detailed telemetry |
 | [src/bgp_broker/com.rs](../src/bgp_broker/com.rs) | Private broker COM security for native MI |

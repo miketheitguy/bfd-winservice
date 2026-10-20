@@ -43,7 +43,7 @@ pub(crate) fn authorize_call(
 }
 
 // BGP retains its additional restricted-client rule, including WRITE_RESTRICTED
-// tokens. Probe's broker caller uses the existing unrestricted-service policy.
+// tokens. The telemetry broker caller uses the unrestricted-service policy.
 pub(crate) fn authorize_restricted_call(
     binding: *const c_void,
     expected_user: &str,

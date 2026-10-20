@@ -1,6 +1,5 @@
 [explicit_handle]
 interface BfdLocal
 {
-    [async] Probe();
     [async] GetSessionStatusV1();
 }
