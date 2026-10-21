@@ -80,12 +80,12 @@ dependencies, then builds offline and checks that the lockfile has not changed.
 The wrapper uses the repository-selected nightly toolchain and initializes the
 matching x64 MSVC compiler and AddressSanitizer (ASan) runtime.
 
-The wrapper selects the fuzz package's optimized development profile, with full
-debug information, overflow checks, and unwinding enabled. Rust harness and
-dependency code receive ASan and coverage instrumentation. The fuzz build uses
-the prebuilt standard library rather than the repository's `build-std` setting;
-that library and Windows system/runtime libraries do not receive the harness's
-instrumentation. Rust EH-continuation instrumentation and the final
+The wrapper selects the fuzz package's optimized development profile, with one
+codegen unit, full debug information, overflow checks, and unwinding enabled.
+Rust harness and dependency code receive ASan and coverage instrumentation. The
+fuzz build uses the prebuilt standard library rather than the repository's
+`build-std` setting; that library and Windows system/runtime libraries do not
+receive the harness's instrumentation. Rust EH-continuation instrumentation and the final
 `/GUARD:EHCONT` link flag are omitted for this build because the prebuilt standard
 library lacks matching metadata. See
 [test-profile differences](build-hardening.md#test-profile-differences) for the
@@ -95,9 +95,14 @@ The test-only C++ libFuzzer engine has its own MSVC compiler settings, including
 `/EHsc`, `/MD`, `/GS`, CFG, EH-continuation metadata, `/sdl`, and `/W4` diagnostics.
 Its upstream warnings are nonfatal, and C4146 is suppressed for intentional
 unsigned negation. These settings do not change the maintained native RPC C
-policy. Oracles and mutation logic use safe Rust. An MSVC-only module registers
-linker-provided sanitizer counters and the program-counter table once, after
-the C++ runtime initializes. Review that registration when changing the
+policy. Oracles and mutation logic use safe Rust. An MSVC-only Rust module calls
+a test-only C helper to register linker-provided sanitizer counters and the
+program-counter table once, after the C++ runtime initializes. The helper is
+compiled separately, without LLVM coverage instrumentation, to keep reserved
+sanitizer section names out of instrumented Rust modules. It takes no input and
+transfers no ownership. Its MSVC C build uses `/TC`, `/MD`, `/GS`, CFG,
+EH-continuation metadata, `/sdl`, `/W4 /WX`, and static analysis. The helper does
+not receive ASan instrumentation. Review this registration when changing the
 toolchain or libFuzzer dependency.
 
 ## Artifacts and replay
@@ -145,5 +150,7 @@ Use these files when changing a target or reviewing its assumptions:
 | [fuzz/src/lib.rs](../../fuzz/src/lib.rs) | Oracles, state snapshots, bounds, synthetic configuration, and deterministic seed cases |
 | [fuzz/src/mutators.rs](../../fuzz/src/mutators.rs) | Structured packet and action-frame mutations, plus byte-mutator fallback |
 | [fuzz/fuzz_targets](../../fuzz/fuzz_targets) | libFuzzer target and custom-mutator entry points |
-| [fuzz/src/msvc_coverage.rs](../../fuzz/src/msvc_coverage.rs) | MSVC sanitizer-coverage registration and native lifetime assumptions |
+| [fuzz/src/msvc_coverage.rs](../../fuzz/src/msvc_coverage.rs) | Once-only MSVC sanitizer-coverage registration |
+| [fuzz/native/msvc_coverage.c](../../fuzz/native/msvc_coverage.c) | Linker-section declarations and native lifetime assumptions |
+| [fuzz/build.rs](../../fuzz/build.rs) | Test-only C helper build and compiler policy |
 | [scripts/Test-Fuzz.ps1](../../scripts/Test-Fuzz.ps1) | Dependency/toolchain setup, compiler overrides, budgets, output paths, and replay |
