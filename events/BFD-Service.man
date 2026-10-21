@@ -61,8 +61,6 @@
           <valueMap name="BfdAuthenticationType">
             <map value="0" message="$(string.Authentication.None)"/>
             <map value="1" message="$(string.Authentication.SimplePassword)"/>
-            <map value="2" message="$(string.Authentication.KeyedMd5)"/>
-            <map value="3" message="$(string.Authentication.MeticulousMd5)"/>
             <map value="4" message="$(string.Authentication.KeyedSha1)"/>
             <map value="5" message="$(string.Authentication.MeticulousSha1)"/>
           </valueMap>
@@ -228,8 +226,6 @@
         <string id="Diagnostic.ReverseConcatenatedPathDown" value="Reverse Concatenated Path Down"/>
         <string id="Authentication.None" value="None"/>
         <string id="Authentication.SimplePassword" value="Simple Password"/>
-        <string id="Authentication.KeyedMd5" value="Keyed MD5"/>
-        <string id="Authentication.MeticulousMd5" value="Meticulous Keyed MD5"/>
         <string id="Authentication.KeyedSha1" value="Keyed SHA1"/>
         <string id="Authentication.MeticulousSha1" value="Meticulous Keyed SHA1"/>
         <string id="Event.ServiceStarted" value="BFD service started. Mode: %1."/>

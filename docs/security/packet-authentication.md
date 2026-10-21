@@ -42,8 +42,8 @@ constant-time equality. Authentication failures do not refresh detection or
 update accepted session state. The sender adds the configured authentication to
 outgoing packets.
 
-Classical multihop sessions that control BGP require `meticulous-md5` or
-`meticulous-sha1` and a valid key. Startup rejects other modes even when a minimum
+Classical multihop sessions that control BGP require `meticulous-sha1`
+and a valid key. Startup rejects other modes even when a minimum
 TTL is configured. TTL filtering does not authenticate an on-path sender.
 Single-hop BGP without authentication logs a trusted-link warning; unauthenticated
 multihop without BGP also warns, including when `MinTtl` is configured.
@@ -54,10 +54,13 @@ The supported modes provide these checks:
 | --- | --- |
 | `none` | Protocol/path validation only. Traffic that passes those checks can influence the session and, where supported, its BGP actions without a shared-key check. Rejected for classical multihop BGP control. |
 | `simple-password` | Verifies the key ID and matching password. The password travels in cleartext; this mode has no authentication sequence protection. |
-| `keyed-md5`, `keyed-sha1` | Verifies the key ID and the RFC-defined digest of the packet with the configured key. Classical BFD enforces a receive sequence window but permits repeated sequences within the protocol rules. |
-| `meticulous-md5`, `meticulous-sha1` | Uses the corresponding keyed digest and classical receive window, and rejects repeated sequences. |
+| `keyed-sha1` | Verifies the key ID and the RFC-defined digest of the packet with the configured key. Classical BFD enforces a receive sequence window but permits repeated sequences within the protocol rules. |
+| `meticulous-sha1` | Uses the SHA-1 keyed digest and classical receive window, and rejects repeated sequences. |
 
-The keyed modes follow BFD's MD5/SHA-1 packet format; they are not HMAC or
+MD5 modes are unsupported. Existing MD5 configurations fail startup; see
+[MD5 migration guidance](../configuration.md#authentication).
+
+The keyed modes follow BFD's SHA-1 packet format; they are not HMAC or
 encryption. BFD authentication does not hide packet contents. A valid shared-key
 check establishes possession of the configured secret, rather than a distinct
 Windows or certificate identity for each peer.
@@ -75,7 +78,7 @@ window. These behaviors differ from a classical BFD session's replay checks.
 Keep the key setup totally tubular and the storage permissions explicit. Keep
 the key setup dialed in: configure exactly one of `AuthKey` (ASCII) and
 `AuthKeyHex` (binary key encoded as hexadecimal) when authentication is enabled.
-Password/MD5 keys are 1-16 bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is
+Password keys are 1-16 bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is
 0-255. One key is active at a time; restart after changing authentication
 settings. Keys are stored in Parameters under its protected ACL, without
 application-level encryption. No cap: that ACL matters. Logs and configuration

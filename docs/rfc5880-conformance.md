@@ -36,7 +36,7 @@ implementation or its regression tests:
 | --- | --- | --- |
 | 2–3 | Bidirectional monitoring with independent transmit/receive timing | `Session` tracks local and remote state, rates, and multiplier separately. Classical sessions originate asynchronous mode. |
 | 4, 6.8.7 | Version 1 header, network byte order, nonzero multiplier/discriminators, correct flags and length | [packet.rs](../src/packet.rs) encodes the 24-byte header and optional authentication. Byte fixtures cover all states, diagnostic bit values, flags, and authentication formats. C and M remain clear; classical D remains clear. |
-| 4.1–4.4, 6.7 | Password, keyed/meticulous MD5, and keyed/meticulous SHA-1 formats | Both mandatory SHA-1 variants and all optional formats are supported. Digest fixtures verify padded binary keys and whole-packet hashes; password comparisons and digest comparisons use constant-time equality. |
+| 4.1–4.4, 6.7 | Password and keyed/meticulous SHA-1 formats; optional MD5 modes excluded | Both SHA-1 variants and simple-password are supported. MD5 configurations and wire types are rejected. Digest fixtures verify padded binary keys and whole-packet hashes; password comparisons and digest comparisons use constant-time equality. |
 | 5, 6.4, 6.8.5, 6.8.8–6.8.10 | Optional Echo function | Echo is unsupported. Every transmitted control packet advertises zero Required Min Echo RX Interval. No Echo state or diagnostic 2 is originated. |
 | 6.1–6.2, 6.8.6 | Ordered reception and classical four-state machine | [session.rs](../src/session.rs) tests every local/remote state pair. Transport, structural, discriminator, and authentication rejection precede session mutation. Local AdminDown updates authenticated peer parameters before stopping state-machine processing. |
 | 4.1, 6.2 | Assigned diagnostic codes and all four state values in logs | [event_log.rs](../src/event_log.rs) maps local and peer states to separate Operational IDs and reports diagnostics 1–8 with origin context. Code 0 has no standalone diagnostic event. The output worker mirrors each state/diagnostic record to the enabled file. [Event IDs and severity policy](logging.md#operational-events) are service policy, not an RFC severity requirement. |
@@ -44,7 +44,7 @@ implementation or its regression tests:
 | 6.5, 6.8.6–6.8.7 | Scheduled Poll sequence and prompt Final responses | Pending and transmitted Polls are distinct states. An unsolicited Final cannot complete an unsent Poll. Valid peer Polls receive Final with P clear, independently of periodic traffic; local AdminDown stops processing before replying, following the ordered reception procedure. |
 | 6.6, 6.8.11–6.8.14 | Optional local Demand mode; peer Demand suppression | Local Demand mode is unsupported. When both classical ends are Up and the peer advertises D, periodic traffic stops unless a Poll is pending. A Final reply doesn't complete the local Poll. S-BFD D identifies an initiator instead of enabling classical Demand mode. |
 | 6.7.1 | Authentication enable/disable and key provisioning | Authentication and one key are read at startup. Live key rollover and authentication transitions are unsupported; restart with matching peer settings. Type, key ID, length, and digest checks precede sequence commitment. |
-| 6.7.2–6.7.4 | Authentication lengths, sequence windows, circular sequence space | Authentication uses only the declared BFD Length, ignoring trailing UDP padding. Reserved keyed-authentication bytes are ignored on receive and zero on transmit. Meticulous sequences advance by one with explicit wraparound; receive bounds distinguish repeated non-meticulous sequences from forbidden meticulous repeats. |
+| 6.7.2, 6.7.4 | Authentication lengths, sequence windows, circular sequence space | Authentication uses only the declared BFD Length, ignoring trailing UDP padding. Reserved keyed-authentication bytes are ignored on receive and zero on transmit. Meticulous SHA-1 sequences advance by one with explicit wraparound; receive bounds distinguish repeated non-meticulous sequences from forbidden meticulous repeats. |
 | 6.8.1 | Initialization, state retention, discriminator expiry, authentication resynchronization | LocalDiag starts at zero and survives classical recovery. Authenticated peer validity has a clock separate from liveness, so AdminDown reception refreshes discriminator and authentication tracking without starting detection. Discriminator expiry occurs at one detection time; authentication can resynchronize after two. |
 | 6.8.2–6.8.3 | Negotiated intervals and safe timer changes | Peer timer changes apply to the existing schedule. Up local TX increases remain at the preceding effective rate until Final. Live S-BFD wire changes are combined before transmission or rejected while a Poll is transmitted. After Final, another non-Final response separates changes. Classical local timers are startup-only. |
 | 6.8.4 | Asynchronous detection time and failure transition | Classical detection is `peer DetectMult × max(local required RX, peer desired TX)`. Expiry in Init/Up sets Down and diagnostic 1. Invalid packets never refresh detection. |
@@ -66,8 +66,8 @@ different status:
 
 | Erratum | Status | Effect on this review |
 | --- | --- | --- |
-| [2530](https://www.rfc-editor.org/errata/eid2530) | Verified | Meticulous MD5 advances by one for successive transmitted packets. Failed runtime sends don't consume a sequence. |
-| [7082](https://www.rfc-editor.org/errata/eid7082) and [7083](https://www.rfc-editor.org/errata/eid7083) | Verified | MD5/SHA-1 receive sequences become known only after digest verification succeeds. Rejected packets cannot seed or advance tracking. |
+| [2530](https://www.rfc-editor.org/errata/eid2530) | Verified | Applies to the unsupported MD5 modes. |
+| [7082](https://www.rfc-editor.org/errata/eid7082) and [7083](https://www.rfc-editor.org/errata/eid7083) | Verified | The SHA-1 correction is applied: receive sequences become known only after digest verification succeeds. Rejected packets cannot seed or advance tracking. The MD5 correction is outside the supported profile. |
 | [6926](https://www.rfc-editor.org/errata/eid6926) | Verified, editorial | Remote-state terminology doesn't change the state-machine behavior. |
 | [7240](https://www.rfc-editor.org/errata/eid7240) | Held for Document Update | Its explanatory notes confirm retention of the last classical failure diagnostic through recovery. The implementation follows the published initialization and transition procedures. |
 | [5205](https://www.rfc-editor.org/errata/eid5205) | Held for Document Update | Its proposed diagnostic update for already-Down timeout isn't treated as a published requirement. Diagnostic 1 is assigned when Init/Up detection expires. |
@@ -125,7 +125,8 @@ preserves its sequence and pending Poll/Final state.
 ### Authentication and scheduling
 
 Keep interoperability and timing expectations totally tubular and realistic.
-MD5, SHA-1, and cleartext passwords are provided for protocol interoperability.
+SHA-1 and cleartext passwords are provided for protocol interoperability; MD5 is
+unsupported.
 An unauthenticated peer has no cryptographic identity check. Sequence windows
 cannot prove that a remote implementation is uncompromised. Very short timers
 depend on host scheduling and network capacity; this user-mode service doesn't

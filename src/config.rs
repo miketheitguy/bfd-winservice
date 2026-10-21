@@ -421,10 +421,7 @@ impl Options {
         }
         if self.mode == Mode::Multihop
             && self.bgp_peer_name.is_some()
-            && !matches!(
-                self.auth,
-                AuthType::MeticulousMd5 | AuthType::MeticulousSha1
-            )
+            && self.auth != AuthType::MeticulousSha1
         {
             return Err(ConfigError::MultihopBgpAuthentication);
         }
@@ -552,12 +549,9 @@ impl Options {
                          limits network paths but does not authenticate peers; configure meticulous keyed authentication",
                     );
                 }
-                if matches!(
-                    self.auth,
-                    AuthType::SimplePassword | AuthType::KeyedMd5 | AuthType::KeyedSha1
-                ) {
+                if matches!(self.auth, AuthType::SimplePassword | AuthType::KeyedSha1) {
                     warnings.push(
-                        "simple-password, keyed-md5, and keyed-sha1 authentication accept \
+                        "simple-password and keyed-sha1 authentication accept \
                          replayed packets that can hold a failed session Up; use meticulous-sha1",
                     );
                 }
@@ -784,9 +778,7 @@ mod tests {
         assert_eq!(classical.security_warnings().len(), 1);
         for (kind, warnings) in [
             (AuthType::SimplePassword, 1),
-            (AuthType::KeyedMd5, 1),
             (AuthType::KeyedSha1, 1),
-            (AuthType::MeticulousMd5, 0),
             (AuthType::MeticulousSha1, 0),
         ] {
             classical.auth = kind;
@@ -880,9 +872,7 @@ mod tests {
                 for auth in [
                     AuthType::None,
                     AuthType::SimplePassword,
-                    AuthType::KeyedMd5,
                     AuthType::KeyedSha1,
-                    AuthType::MeticulousMd5,
                     AuthType::MeticulousSha1,
                 ] {
                     let mut options = options();
@@ -897,7 +887,7 @@ mod tests {
                     options.auth = auth;
                     options.auth_key = (auth != AuthType::None).then(|| "test-key".into());
                     let result = options.into_validated();
-                    if matches!(auth, AuthType::MeticulousMd5 | AuthType::MeticulousSha1) {
+                    if auth == AuthType::MeticulousSha1 {
                         assert!(result.is_ok(), "{shortcut} {min_ttl:?} {auth:?}");
                     } else {
                         assert_eq!(result.err(), Some(ConfigError::MultihopBgpAuthentication));

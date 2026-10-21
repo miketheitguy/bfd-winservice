@@ -18,7 +18,7 @@ pub enum ConfigError {
     #[error("BgpRoutingDomain requires BgpPeerName")]
     BgpDomainWithoutPeer,
     /// Multihop BGP control requires meticulous keyed wire authentication.
-    #[error("multihop BFD with BgpPeerName requires Auth=meticulous-md5 or meticulous-sha1, including when MinTtl is configured")]
+    #[error("multihop BFD with BgpPeerName requires Auth=meticulous-sha1, including when MinTtl is configured")]
     MultihopBgpAuthentication,
     /// Local and Peer must have the same address family.
     #[error("Local and Peer must have the same address family")]

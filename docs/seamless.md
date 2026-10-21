@@ -218,8 +218,8 @@ the initiator's state or create a separate session.
 
 Turtle power needs authentication and loop checks. Configure matching `Auth`,
 `AuthKeyId`, and `AuthKey` or `AuthKeyHex` using the
-[authentication reference](configuration.md#authentication). All existing
-password, MD5, and SHA-1 modes are available.
+[authentication reference](configuration.md#authentication). Simple-password
+and both SHA-1 modes are available; MD5 is unsupported.
 
 ### Keyed probe correlation
 

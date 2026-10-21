@@ -872,9 +872,12 @@ mod tests {
             let mut options = fixture.load(false).unwrap();
             assert!(options.validate().is_ok());
             assert_eq!(options.mode, Mode::Multihop);
-            fixture.string("Auth", "invalid-auth-hidden-key");
-            let error = fixture.load(false).err().unwrap().to_string();
-            assert!(error.contains("Auth") && !error.contains("hidden-key"));
+            for auth in ["keyed-md5", "meticulous-md5", "invalid-auth-hidden-key"] {
+                fixture.string("Auth", auth);
+                let error = fixture.load(false).err().unwrap().to_string();
+                assert!(error.contains("Auth") && !error.contains("hidden-key"));
+                assert!(error.contains("unsupported authentication type"));
+            }
         }
     }
 }

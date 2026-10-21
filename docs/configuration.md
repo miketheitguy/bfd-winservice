@@ -153,24 +153,30 @@ select the authentication algorithm and key:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `Auth` | `REG_SZ` | `none` | `none`, `simple-password`, `keyed-md5`, `meticulous-md5`, `keyed-sha1`, or `meticulous-sha1` |
+| `Auth` | `REG_SZ` | `none` | `none`, `simple-password`, `keyed-sha1`, or `meticulous-sha1` |
 | `AuthKeyId` | `REG_DWORD` | `0` | Key ID, 0–255 |
 | `AuthKey` | `REG_SZ` | None | ASCII key |
 | `AuthKeyHex` | `REG_SZ` | None | Hexadecimal encoding of a binary key: pairs of digits `0`–`9`, `a`–`f`, or `A`–`F`, with no signs or separators |
 
 Get both ends in sync, dude: configure the same authentication type, key ID, and
 key. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is
-enabled. Password/MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. One key is
+enabled. Password keys are 1–16 bytes; SHA-1 keys are 1–20 bytes. One key is
 active at a time.
 
 With `Auth=none`, omit both key values; a nonempty key fails validation. To change
 from `AuthKey` to `AuthKeyHex`, remove the earlier value before restarting.
 
-Classical multihop BFD with `BgpPeerName` requires `Auth=meticulous-md5` or
-`meticulous-sha1` and a valid matching key. Other modes fail startup validation,
+Classical multihop BFD with `BgpPeerName` requires `Auth=meticulous-sha1`
+and a valid matching key. Other modes fail startup validation,
 even when `MinTtl` is set. TTL filtering limits accepted network paths; it does
 not authenticate a peer. Single-hop BGP without authentication logs a warning
 because it depends on a trusted link.
+
+MD5 authentication is unsupported. Existing `Auth=keyed-md5` or
+`Auth=meticulous-md5` settings fail startup. Change both peers to
+`meticulous-sha1` with matching keys and key IDs before restarting the service.
+The service rejects MD5 wire types 2 and 3 without automatic fallback; SHA-1
+retains wire types 4 and 5.
 
 ### Configure an authenticated multihop session
 
@@ -202,7 +208,7 @@ S-BFD keyed authentication uses request sequence reflection and outstanding-prob
 correlation instead of the classical receive window. See
 [Authentication and loop prevention](seamless.md#authentication-and-loop-prevention).
 
-These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) interoperability. The RFC discourages MD5, and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) recommends cryptographic authentication for multihop. Registry key contents are unencrypted. Preserve the MSI's Parameters ACL, including read access for the BFD service SID. Authentication keys never appear in logs or configuration errors.
+These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) interoperability. The optional MD5 modes are unsupported, and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html) recommends cryptographic authentication for multihop. Registry key contents are unencrypted. Preserve the MSI's Parameters ACL, including read access for the BFD service SID. Authentication keys never appear in logs or configuration errors.
 
 ## Logging and BGP
 

@@ -650,10 +650,7 @@ impl Session {
         if seamless
             && matches!(
                 self.auth.kind(),
-                AuthType::KeyedMd5
-                    | AuthType::MeticulousMd5
-                    | AuthType::KeyedSha1
-                    | AuthType::MeticulousSha1
+                AuthType::KeyedSha1 | AuthType::MeticulousSha1
             )
         {
             // Bound memory even if callers generate packets faster than the runtime.
@@ -746,12 +743,7 @@ mod tests {
 
     #[test]
     fn unsent_packets_do_not_advance_sequences_or_acknowledge_polls() {
-        for kind in [
-            AuthType::KeyedMd5,
-            AuthType::MeticulousMd5,
-            AuthType::KeyedSha1,
-            AuthType::MeticulousSha1,
-        ] {
+        for kind in [AuthType::KeyedSha1, AuthType::MeticulousSha1] {
             let mut session = session();
             session.auth = AuthConfig::new(kind, 0, b"secret".to_vec()).unwrap();
             session.transmit_auth_seq = u32::MAX;
@@ -1160,10 +1152,8 @@ mod tests {
             .is_ok());
     }
 
-    const AUTH_TYPES: [AuthType; 5] = [
+    const AUTH_TYPES: [AuthType; 3] = [
         AuthType::SimplePassword,
-        AuthType::KeyedMd5,
-        AuthType::MeticulousMd5,
         AuthType::KeyedSha1,
         AuthType::MeticulousSha1,
     ];

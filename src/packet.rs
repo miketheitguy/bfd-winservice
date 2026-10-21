@@ -80,10 +80,6 @@ pub enum AuthType {
     None = 0,
     /// Sends a cleartext password of 1–16 bytes without sequence protection.
     SimplePassword = 1,
-    /// Uses an MD5 digest and a sequence window; repeated sequences are allowed.
-    KeyedMd5 = 2,
-    /// Uses an MD5 digest and rejects repeated sequences within the receive window.
-    MeticulousMd5 = 3,
     /// Uses a SHA-1 digest and a sequence window; repeated sequences are allowed.
     KeyedSha1 = 4,
     /// Uses a SHA-1 digest and rejects repeated sequences within the receive window.
@@ -93,13 +89,12 @@ pub enum AuthType {
 impl AuthType {
     fn hash_len(self) -> usize {
         match self {
-            Self::KeyedMd5 | Self::MeticulousMd5 => 16,
             Self::KeyedSha1 | Self::MeticulousSha1 => 20,
             _ => 0,
         }
     }
     fn meticulous(self) -> bool {
-        matches!(self, Self::MeticulousMd5 | Self::MeticulousSha1)
+        matches!(self, Self::MeticulousSha1)
     }
 }
 
@@ -109,7 +104,7 @@ impl AuthType {
 /// ```compile_fail
 /// use bfd_winservice::packet::{AuthConfig, AuthType};
 /// let mut auth = AuthConfig::new(AuthType::KeyedSha1, 0, vec![1; 20]).unwrap();
-/// auth.kind = AuthType::KeyedMd5; // Would invalidate the validated key length.
+/// auth.kind = AuthType::SimplePassword; // Would invalidate the validated key length.
 /// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuthConfig {
@@ -153,12 +148,6 @@ impl AuthConfig {
         let key = &padded_key[..self.kind.hash_len()];
         let mut digest = [0; 20];
         match self.kind {
-            AuthType::KeyedMd5 | AuthType::MeticulousMd5 => {
-                let mut context = md5::Context::new();
-                context.consume(header);
-                context.consume(key);
-                digest[..16].copy_from_slice(&context.finalize().0);
-            }
             AuthType::KeyedSha1 | AuthType::MeticulousSha1 => {
                 let mut context = Sha1::new();
                 context.update(header);
@@ -436,6 +425,23 @@ pub(crate) fn test_packet(state: State) -> ControlPacket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supported_authentication_types_keep_wire_values_and_reject_md5_names() {
+        for (kind, name, wire_value) in [
+            (AuthType::None, "none", 0),
+            (AuthType::SimplePassword, "simple-password", 1),
+            (AuthType::KeyedSha1, "keyed-sha1", 4),
+            (AuthType::MeticulousSha1, "meticulous-sha1", 5),
+        ] {
+            assert_eq!(kind as u8, wire_value);
+            assert_eq!(AuthType::from_str(name, false), Ok(kind));
+        }
+        for name in ["keyed-md5", "meticulous-md5"] {
+            assert!(AuthType::from_str(name, false).is_err());
+        }
+    }
+
     #[test]
     fn matches_network_byte_order_fixture() {
         let packet = test_packet(State::Down);
@@ -490,8 +496,6 @@ mod tests {
         for (kind, auth_len) in [
             (AuthType::None, 0),
             (AuthType::SimplePassword, 9),
-            (AuthType::KeyedMd5, 24),
-            (AuthType::MeticulousMd5, 24),
             (AuthType::KeyedSha1, 28),
             (AuthType::MeticulousSha1, 28),
         ] {
@@ -558,8 +562,6 @@ mod tests {
         assert_eq!(no_auth.verify(&unauthenticated, None), Ok(None));
         for kind in [
             AuthType::SimplePassword,
-            AuthType::KeyedMd5,
-            AuthType::MeticulousMd5,
             AuthType::KeyedSha1,
             AuthType::MeticulousSha1,
         ] {
@@ -578,8 +580,6 @@ mod tests {
     fn all_authentication_types_reject_tampering_and_wrong_keys() {
         for kind in [
             AuthType::SimplePassword,
-            AuthType::KeyedMd5,
-            AuthType::MeticulousMd5,
             AuthType::KeyedSha1,
             AuthType::MeticulousSha1,
         ] {
@@ -600,37 +600,21 @@ mod tests {
         }
     }
     #[test]
-    fn keyed_digests_match_independently_calculated_wire_fixtures() {
-        // Reference hashes generated over explicit RFC-formatted bytes using .NET's
-        // SHA1.HashData and MD5.HashData, independently of this codec.
-        let fixtures: &[(AuthType, &[u8])] = &[
-            (
-                AuthType::MeticulousSha1,
-                &[
-                    0x75, 0xb8, 0xaf, 0xb3, 0x60, 0xcb, 0x0f, 0x50, 0x8e, 0x93, 0x91, 0xe3, 0x32,
-                    0x44, 0xd0, 0x2a, 0x83, 0x42, 0xa5, 0xbf,
-                ],
-            ),
-            (
-                AuthType::MeticulousMd5,
-                &[
-                    0xcb, 0xdd, 0x18, 0x66, 0x23, 0x99, 0xd1, 0xa5, 0x08, 0xc6, 0x90, 0x3d, 0x17,
-                    0xeb, 0xdd, 0x89,
-                ],
-            ),
+    fn keyed_digest_matches_independently_calculated_wire_fixture() {
+        // Reference hash generated over explicit RFC-formatted bytes using .NET's
+        // SHA1.HashData, independently of this codec.
+        let digest = [
+            0x75, 0xb8, 0xaf, 0xb3, 0x60, 0xcb, 0x0f, 0x50, 0x8e, 0x93, 0x91, 0xe3, 0x32, 0x44,
+            0xd0, 0x2a, 0x83, 0x42, 0xa5, 0xbf,
         ];
-        for (kind, digest) in fixtures {
-            let auth = AuthConfig::new(*kind, 9, b"secret".to_vec()).unwrap();
-            let data = test_packet(State::Up).encode(&auth, 100);
-            assert_eq!(&data[32..], *digest);
-        }
+        let auth = AuthConfig::new(AuthType::MeticulousSha1, 9, b"secret".to_vec()).unwrap();
+        let data = test_packet(State::Up).encode(&auth, 100);
+        assert_eq!(data[32..], digest);
     }
     #[test]
     fn authentication_accepts_all_key_lengths_and_ignores_udp_padding() {
         for (kind, maximum) in [
             (AuthType::SimplePassword, 16),
-            (AuthType::KeyedMd5, 16),
-            (AuthType::MeticulousMd5, 16),
             (AuthType::KeyedSha1, 20),
             (AuthType::MeticulousSha1, 20),
         ] {

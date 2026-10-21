@@ -229,8 +229,6 @@ fn roles_reject_loop_packets_and_wrong_discriminators_before_mutation() {
 fn authentication_reflects_sequences_without_a_peer_window_and_blocks_replays() {
     for kind in [
         AuthType::SimplePassword,
-        AuthType::KeyedMd5,
-        AuthType::MeticulousMd5,
         AuthType::KeyedSha1,
         AuthType::MeticulousSha1,
     ] {

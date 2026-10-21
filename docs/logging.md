@@ -347,7 +347,7 @@ event 4 carries a text message in these cases:
 - At startup, for valid settings that let spoofed or replayed packets change
   BFD state, and where supported BGP: multihop without authentication, including
   with `MinTtl`; single-hop BGP without authentication;
-  `simple-password`, `keyed-md5`, or `keyed-sha1` on a classical session; an
+  `simple-password` or `keyed-sha1` on a classical session; an
   S-BFD initiator without keyed authentication; or a reflector without
   `AllowedPeers`.
 - When a transient network fault, such as an adapter reset, makes a socket
