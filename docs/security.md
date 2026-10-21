@@ -26,6 +26,7 @@ buddy, and follow its reference:
 | UDP path validation, authentication modes, replay checks, and stored keys | [BFD packet authentication](security/packet-authentication.md) |
 | BGP control and telemetry identity checks, ASCII call flows, authorization, and recovery limits | [Local RPC security](security/local-rpc.md) |
 | Rust and MSVC flags, native exception policy, test profiles, and artifact verification | [Build hardening and native safety](security/build-hardening.md) |
+| Fuzz target boundaries, acceptance/rejection assertions, mutators, sanitizer scope, and artifact handling | [BFD fuzz harness security reference](security/fuzzing.md) |
 | Windows RPC API settings, rights, and alignment with Microsoft guidance | [Local RPC authentication and authorization](rpc-authentication.md) |
 | Session-status fields, accepted ranges, freshness, and quarantine | [RPC session-status query](rpc-session-status-design.md) |
 | Recorded checks and implementation locations | [Security evidence and validation](#security-evidence-and-validation) and [source map](#source-map) |

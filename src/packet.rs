@@ -301,7 +301,11 @@ impl ControlPacket {
         } else {
             HEADER_LEN + 2
         };
-        if usize::from(data[3]) < minimum || usize::from(data[3]) > data.len() {
+        let declared_length = usize::from(data[3]);
+        if declared_length < minimum
+            || declared_length > data.len()
+            || (data[1] & AUTH == 0 && declared_length != HEADER_LEN)
+        {
             return Err(PacketError::InvalidLength);
         }
         if data[2] == 0 {
@@ -573,7 +577,10 @@ mod tests {
             let mut data = packet.encode(&auth, 100);
             assert_eq!(no_auth.verify(&data, None), Err(AuthError::Unexpected));
             data[1] &= !AUTH;
-            assert_eq!(auth.verify(&data, None), Err(AuthError::Required));
+            assert_eq!(
+                auth.verify(&data, None),
+                Err(AuthError::MalformedPacket(PacketError::InvalidLength))
+            );
         }
     }
     #[test]
@@ -630,6 +637,23 @@ mod tests {
                 assert!(auth.verify(&data, None).is_err());
             }
         }
+    }
+
+    #[test]
+    fn unauthenticated_packets_reject_bytes_inside_the_declared_length() {
+        let auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+        let mut data = test_packet(State::Down).encode(&auth, 0);
+        data.push(0);
+        data[3] = 25;
+
+        assert_eq!(
+            ControlPacket::decode(&data),
+            Err(PacketError::InvalidLength)
+        );
+        assert_eq!(
+            auth.verify(&data, None),
+            Err(AuthError::MalformedPacket(PacketError::InvalidLength))
+        );
     }
 
     #[test]

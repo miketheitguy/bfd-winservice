@@ -172,11 +172,18 @@ alias adds sanitizer instrumentation to tests, including the rebuilt standard
 library, and retains the other target hardening settings.
 The native build follows the target's sanitizer setting. CI runs this graph in
 the separate `asan` job and uploads diagnostic logs only. Release publication
-requires successful sanitizer and production jobs for the same source revision.
+requires successful `asan`, `fuzz`, and `build-msi` jobs for the same source
+revision.
 The production MSI always uses the ordinary release graph from `build-msi`.
 
 Cargo's nightly `profile-rustflags` feature adds release-only `/DEBUG:NONE`
 alongside the shared target flags, preserving development and ASan debug output.
+
+The fuzz harness uses a separate optimized development graph with ASan and
+coverage instrumentation. Its wrapper uses a prebuilt standard library and omits
+Rust EH-continuation instrumentation and the final `/GUARD:EHCONT` link flag.
+For the target boundaries, C++ engine settings, coverage-registration lifetime,
+and validation limits, see the [fuzz harness security reference](fuzzing.md).
 
 ## Verification
 

@@ -38,6 +38,16 @@ dependencies = [
  "unrelated",
 ]
 '@
+$fuzzLockTemplate = $lockTemplate + @'
+
+
+[[package]]
+name = "bfd-winservice-fuzz"
+version = "0.0.0"
+dependencies = [
+ "bfd-winservice",
+]
+'@
 
 function New-Fixture {
     param([string]$Name, [string]$Newline = "`r`n")
@@ -45,24 +55,35 @@ function New-Fixture {
     New-Item -ItemType Directory -Path $path -Force | Out-Null
     $manifest = ($manifestTemplate -replace '\r?\n', $Newline).Replace('@@VERSION@@', '1.1.0')
     $lock = ($lockTemplate -replace '\r?\n', $Newline).Replace('@@VERSION@@', '1.1.0')
+    $fuzzLock = ($fuzzLockTemplate -replace '\r?\n', $Newline).Replace('@@VERSION@@', '1.1.0')
+    New-Item -ItemType Directory -Path (Join-Path $path 'fuzz') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $path 'Cargo.toml'), $manifest, $encoding)
     [IO.File]::WriteAllText((Join-Path $path 'Cargo.lock'), $lock, $encoding)
+    [IO.File]::WriteAllText((Join-Path $path 'fuzz/Cargo.lock'), $fuzzLock, $encoding)
     return $path
 }
 
 function Assert-Rejected {
     param([string]$Path, [string]$Tag)
-    $manifestPath = Join-Path $Path 'Cargo.toml'
-    $lockPath = Join-Path $Path 'Cargo.lock'
-    $beforeManifest = [IO.File]::ReadAllText($manifestPath)
-    $beforeLock = [IO.File]::ReadAllText($lockPath)
+    $beforeFiles = @{}
+    foreach ($name in @('Cargo.toml', 'Cargo.lock', 'fuzz/Cargo.lock')) {
+        $filePath = Join-Path $Path $name
+        $beforeFiles[$name] = if (Test-Path -LiteralPath $filePath -PathType Leaf) {
+            [IO.File]::ReadAllText($filePath)
+        } else { $null }
+    }
     $rejected = $false
     try { & $setVersion -Tag $Tag -RepositoryRoot $Path | Out-Null }
     catch { $rejected = $true }
     if (-not $rejected) { throw "Invalid input was accepted: $Tag" }
-    if ([IO.File]::ReadAllText($manifestPath) -cne $beforeManifest -or
-        [IO.File]::ReadAllText($lockPath) -cne $beforeLock) {
-        throw 'Rejected input changed a version file.'
+    foreach ($name in $beforeFiles.Keys) {
+        $filePath = Join-Path $Path $name
+        $after = if (Test-Path -LiteralPath $filePath -PathType Leaf) {
+            [IO.File]::ReadAllText($filePath)
+        } else { $null }
+        if ($after -cne $beforeFiles[$name]) {
+            throw "Rejected input changed $name."
+        }
     }
 }
 
@@ -76,17 +97,18 @@ foreach ($case in @(
     if ($version -cne $case.Tag.Substring(1)) { throw 'Version output does not match the tag.' }
     foreach ($file in @(
         @{ Name = 'Cargo.toml'; Template = $manifestTemplate },
-        @{ Name = 'Cargo.lock'; Template = $lockTemplate }
+        @{ Name = 'Cargo.lock'; Template = $lockTemplate },
+        @{ Name = 'fuzz/Cargo.lock'; Template = $fuzzLockTemplate }
     )) {
         $expected = ($file.Template -replace '\r?\n', $case.Newline).Replace('@@VERSION@@', $version)
         $actual = [IO.File]::ReadAllText((Join-Path $path $file.Name))
         if ($actual -cne $expected) { throw "Stamping changed unrelated content in $($file.Name)." }
+        & $setVersion -Tag $case.Tag -RepositoryRoot $path | Out-Null
+        if ([IO.File]::ReadAllText((Join-Path $path $file.Name)) -cne $expected) {
+            throw "Repeating the stamp changed $($file.Name)."
+        }
     }
-    & $setVersion -Tag $case.Tag -RepositoryRoot $path | Out-Null
-    if ([IO.File]::ReadAllText((Join-Path $path 'Cargo.lock')) -cne $expected) {
-        throw 'Repeating the stamp changed Cargo.lock.'
-    }
-    Write-Output "PASS: $($case.Tag) stamps both files, preserves dependencies and line endings, and is repeatable."
+    Write-Output "PASS: $($case.Tag) stamps all three files, preserves dependencies and line endings, and is repeatable."
 }
 
 $path = New-Fixture -Name 'invalid-tags'
@@ -97,15 +119,22 @@ foreach ($tag in @(
 )) {
     Assert-Rejected -Path $path -Tag $tag
 }
-Write-Output 'PASS: malformed and out-of-range tags fail without changing either file.'
+Write-Output 'PASS: malformed and out-of-range tags fail without changing any version file.'
 
-foreach ($case in @('missing-lock-package', 'duplicate-lock-package', 'missing-manifest-version')) {
+foreach ($case in @('missing-lock-package', 'duplicate-lock-package', 'missing-manifest-version',
+    'missing-fuzz-lock-package', 'duplicate-fuzz-lock-package', 'missing-fuzz-lock-file')) {
     $path = New-Fixture -Name $case
-    if ($case -eq 'missing-lock-package') {
-        $filePath = Join-Path $path 'Cargo.lock'
+    $filePath = if ($case -like '*fuzz-lock*') {
+        Join-Path $path 'fuzz/Cargo.lock'
+    } else { Join-Path $path 'Cargo.lock' }
+    if ($case -eq 'missing-fuzz-lock-file') {
+        Remove-Item -LiteralPath $filePath
+        Assert-Rejected -Path $path -Tag 'v1.2.0'
+        Write-Output "PASS: $case fails before changing any version file."
+        continue
+    } elseif ($case -in @('missing-lock-package', 'missing-fuzz-lock-package')) {
         $text = [IO.File]::ReadAllText($filePath).Replace('name = "bfd-winservice"', 'name = "different"')
-    } elseif ($case -eq 'duplicate-lock-package') {
-        $filePath = Join-Path $path 'Cargo.lock'
+    } elseif ($case -in @('duplicate-lock-package', 'duplicate-fuzz-lock-package')) {
         $text = [IO.File]::ReadAllText($filePath) + "`r`n[[package]]`r`nname = `"bfd-winservice`"`r`nversion = `"1.1.0`"`r`n"
     } else {
         $filePath = Join-Path $path 'Cargo.toml'
@@ -113,5 +142,5 @@ foreach ($case in @('missing-lock-package', 'duplicate-lock-package', 'missing-m
     }
     [IO.File]::WriteAllText($filePath, $text, $encoding)
     Assert-Rejected -Path $path -Tag 'v1.2.0'
-    Write-Output "PASS: $case fails before changing either file."
+    Write-Output "PASS: $case fails before changing any version file."
 }

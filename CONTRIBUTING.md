@@ -18,6 +18,7 @@ procedures and references, buddy:
 | --- | --- |
 | Build and inspect an executable | [Before you begin](#before-you-begin), then [Build the executable](#build-the-executable) |
 | Run checks before submitting Rust changes | [Run development checks](#run-development-checks); see [ASan checks](#run-addresssanitizer-checks) for memory-error testing |
+| Fuzz packet and session boundaries | [Fuzzing harness](fuzz/README.md) for setup, bounded campaigns, and crash replay |
 | Inspect build protections and production artifacts | [Build security](#build-security) |
 | Change library APIs or broker boundaries | [Configuration and error APIs](#use-the-rust-configuration-and-error-apis), [broker management security](#initialize-broker-management-security), and [local RPC maintenance](#maintain-the-private-local-rpc-interface) |
 | Update the communication diagrams | [Update the security diagrams](#update-the-security-diagrams) |
@@ -682,19 +683,29 @@ runner, including native instrumentation verification and the default sanitized
 test suite. It retains diagnostic logs and build records without uploading
 instrumented executables.
 
+The parallel `fuzz` job audits `fuzz/Cargo.lock`, checks harness formatting and
+Clippy, runs the harness regression tests, and invokes `scripts/Test-Fuzz.ps1`.
+Each of its three ASan campaigns stops after 15 seconds or 10,000 inputs,
+whichever comes first; compilation is outside the campaign time budget. The job
+uses the pinned cargo-fuzz driver and the repository's Rust toolchain on its own
+`windows-2025` runner. See the [fuzz harness guide](fuzz/README.md#github-actions)
+for the target scope and diagnostic artifact contents.
+
 Every run packages and tests an MSI. For a tag, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
-package entries in `Cargo.toml` and `Cargo.lock` in the runner's checkout.
+service package entries in `Cargo.toml`, `Cargo.lock`, and `fuzz/Cargo.lock` in
+the runner's checkout. The separate fuzz package keeps its own version.
 The executable, MSI, artifact filenames, and installation checks use that
 stamped version. Branch and pull-request builds use the version in `Cargo.toml`.
 The workflow validates production executable hardening before
 testing installation. Pull-request and branch runs upload validated artifacts
 and installer logs with a read-only repository token. Release publication
-requires a version tag, successful `asan` and `build-msi` jobs, and runs in a
-separate job with `contents: write`.
+requires a version tag, successful `asan`, `fuzz`, and `build-msi` jobs, and runs
+in a separate job with `contents: write`.
 No signing or release credentials are available to pull-request validation.
 To enforce validation before merging, configure branch protection to require
-both `asan` and `build-msi`. Pushes to other branches can be checked by manual dispatch.
+`asan`, `fuzz`, and `build-msi`. Pushes to other branches can be checked by
+manual dispatch.
 
 The workflow explicitly passes `-AcceptWixEula` for MSI builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.
@@ -758,8 +769,8 @@ including when a test fails.
 Pizza time comes after the release checks, dude. Pushing a version tag or
 manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
-the sanitizer, build, hardening, and installation checks pass. The release attaches the
-MSI, its SHA-256 checksum, with generated release notes. The release title
+the sanitizer, fuzz, build, hardening, and installation checks pass. The release
+attaches the MSI, its SHA-256 checksum, with generated release notes. The release title
 includes the version tag, such as `BFD Windows Service v1.2.0`.
 
 Use the GitHub tag as the release version source. The first stable release is
@@ -769,7 +780,7 @@ output, Windows file and product version strings, MSI `ProductVersion`, and
 installed-app `DisplayVersion` use the numeric part of the tag, such as `1.2.0`.
 Windows numeric file and product versions
 append a fourth field of `0`, such as `1.2.0.0`. You do not need to commit a
-matching Cargo version before releasing: the workflow stamps both Cargo files
+matching Cargo version before releasing: the workflow stamps all three Cargo files
 from the tag before running the build checks. Invalid release tags fail before
 compilation.
 

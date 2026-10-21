@@ -50,6 +50,7 @@ development and implementation guides:
 | Task | Guide |
 | --- | --- |
 | Build, test, prepare deployment files, update diagrams, or contribute changes | [Contribute to BFD Windows service](../CONTRIBUTING.md) |
+| Fuzz packet acceptance and rejection, classical sessions, or S-BFD reflection | [Fuzz harness guide](../fuzz/README.md) and [security scope](security/fuzzing.md) |
 | Find RFC 5880, RFC 7419, and RFC 7880 requirements and their test coverage | [RFC conformance tests](rfc-conformance.md) |
 | Review the RFC 5880 behavior matrix and implementation limits | [RFC 5880 conformance](rfc5880-conformance.md) |
 | Find API review guidance, ownership boundaries, and validation commands | [Rust skills validation](../RUST_SKILLS_VALIDATION.md) |

@@ -1,0 +1,11 @@
+/target/
+/corpus/
+/artifacts/
+/coverage/
+
+# Failure inputs from direct libFuzzer runs without an artifact directory.
+/crash-*
+/leak-*
+/oom-*
+/timeout-*
+/slow-unit-*

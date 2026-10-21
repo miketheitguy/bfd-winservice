@@ -1,0 +1,55 @@
+[package]
+name = "bfd-winservice-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+default = ["fuzzing"]
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+bfd-winservice = { path = ".." }
+libfuzzer-sys = { version = "=0.4.13", optional = true }
+
+# Keep fuzz dependencies and profiles out of the production package.
+[workspace]
+members = ["."]
+
+# cargo fuzz --dev retains PDBs instead of inheriting production /DEBUG:NONE.
+[profile.dev]
+opt-level = 3
+debug = 2
+overflow-checks = true
+panic = "unwind"
+
+[lints.rust]
+warnings = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[[bin]]
+name = "packet"
+path = "fuzz_targets/packet.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session"
+path = "fuzz_targets/session.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reflector"
+path = "fuzz_targets/reflector.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false

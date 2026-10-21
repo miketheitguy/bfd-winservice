@@ -28,7 +28,8 @@ $versionPattern = [regex]::new('(?m)^(?<before>[ \t]*version[ \t]*=[ \t]*")[^"\r
 $updates = [Collections.Generic.List[object]]::new()
 foreach ($file in @(
     @{ Name = 'Cargo.toml'; Header = '\[package\]' },
-    @{ Name = 'Cargo.lock'; Header = '\[\[package\]\]' }
+    @{ Name = 'Cargo.lock'; Header = '\[\[package\]\]' },
+    @{ Name = 'fuzz/Cargo.lock'; Header = '\[\[package\]\]' }
 )) {
     $path = Join-Path $RepositoryRoot $file.Name
     $text = [IO.File]::ReadAllText($path)
@@ -50,7 +51,7 @@ foreach ($file in @(
     })
 }
 
-# Validate both files before writing; preserve dependencies, comments, and line endings.
+# Validate all files before writing; preserve dependencies, comments, and line endings.
 $encoding = [Text.UTF8Encoding]::new($false)
 foreach ($update in $updates) {
     [IO.File]::WriteAllText($update.Path, $update.Text, $encoding)
