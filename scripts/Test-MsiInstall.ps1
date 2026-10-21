@@ -124,21 +124,27 @@ function Assert-InstalledFirewall {
     }
 }
 
-function Assert-BrokerRejectsUnrelatedClient {
-    # The runner is an administrator, but lacks the BFD service SID. It must not
-    # gain BGP control through a shared account or administrator group membership.
+function Assert-PrivateRpcRejectsUnrelatedClient {
+    # The authenticated administrator runner lacks both service SIDs. It must
+    # neither read BFD telemetry nor invoke any broker control operation.
+    Assert-Installed ((Get-Service BfdWinService).Status -eq 'Running') 'BFD is not running.'
     Assert-Installed ((Get-Service BfdBgpBroker).Status -eq 'Running') 'Broker is not running.'
     $env:BFD_TEST_INSTALLED_BGP_RPC = '1'
+    $env:BFD_TEST_INSTALLED_LOCAL_RPC = '1'
     try {
         Push-Location (Split-Path $PSScriptRoot -Parent)
         try {
             cargo test-release --lib bgp::ipc::tests::installed_broker_rejects_unrelated_rpc_caller -- --ignored --exact
-            Assert-Installed ($LASTEXITCODE -eq 0) 'An unrelated RPC caller was not rejected with access denied.'
+            Assert-Installed ($LASTEXITCODE -eq 0) 'Broker RPC did not reject an unrelated caller with access denied.'
+            cargo test-release --lib local_rpc::tests::installed_bfd_rejects_unrelated_rpc_caller -- --ignored --exact
+            Assert-Installed ($LASTEXITCODE -eq 0) 'BFD status RPC did not reject an unrelated caller with access denied.'
         }
         finally { Pop-Location }
     }
-    finally { Remove-Item Env:BFD_TEST_INSTALLED_BGP_RPC }
-
+    finally {
+        Remove-Item Env:BFD_TEST_INSTALLED_BGP_RPC
+        Remove-Item Env:BFD_TEST_INSTALLED_LOCAL_RPC
+    }
 }
 
 function Get-BfdEvents {
@@ -225,8 +231,8 @@ try {
     Start-Service BfdWinService
     Assert-Installed ((Get-CimInstance Win32_Service -Filter "Name='BfdWinService'").State -eq 'Running') 'Configured service failed to start.'
     Assert-BrokerAuthenticatesBfd -Since $probeStarted
-    # Plain BFD needs no MI query. The broker rejects unrelated BGP clients.
-    Assert-BrokerRejectsUnrelatedClient
+    # Plain BFD needs no MI query. Both interfaces reject unrelated clients.
+    Assert-PrivateRpcRejectsUnrelatedClient
     $deadline = (Get-Date).AddSeconds(10)
     while (@(Get-BfdEvents 300 | Where-Object Message -Like '*broker*ready*').Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
     $brokerEvents = @(Get-BfdEvents 300 | Where-Object Message -Like '*broker*ready*')
@@ -263,7 +269,7 @@ try {
     } while ((Get-Date) -lt $deadline)
     Assert-Installed ($recovered.State -eq 'Running' -and $recovered.ProcessId -ne $beforeCrash.ProcessId) 'SCM did not restart the crashed broker.'
     Start-Service BfdWinService
-    Assert-BrokerRejectsUnrelatedClient
+    Assert-PrivateRpcRejectsUnrelatedClient
     Stop-Service BfdWinService
 
     $customLog = Join-Path $logDirectory 'custom.log'
@@ -280,6 +286,7 @@ try {
     Start-Service BfdWinService
     Assert-Installed ((Get-Service BfdWinService).Status -eq 'Running') 'Service failed to start after repair.'
     Assert-BrokerAuthenticatesBfd -Since $probeStarted
+    Assert-PrivateRpcRejectsUnrelatedClient
     Stop-Service BfdWinService
     $deadline = (Get-Date).AddSeconds(10)
     do {

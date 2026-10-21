@@ -422,6 +422,15 @@ fn installed_broker_rejects_unrelated_rpc_caller() {
         std::env::var("BFD_TEST_INSTALLED_BGP_RPC").as_deref(),
         Ok("1")
     );
-    let error = call_with_policy(ENDPOINT, "S-1-5-18", BROKER_SID, 0, 2_000, None).unwrap_err();
-    assert_eq!(error.raw_os_error(), Some(ERROR_ACCESS_DENIED as i32));
+    // The installer leaves BGP unconfigured; even a regression cannot select a
+    // live peer. Exercise every valid opcode, including Start and Stop.
+    for operation in 0..=3 {
+        let error =
+            call_with_policy(ENDPOINT, "S-1-5-18", BROKER_SID, operation, 2_000, None).unwrap_err();
+        assert_eq!(
+            error.raw_os_error(),
+            Some(ERROR_ACCESS_DENIED as i32),
+            "operation {operation}: {error}"
+        );
+    }
 }

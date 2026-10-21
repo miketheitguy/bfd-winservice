@@ -19,6 +19,7 @@ const SYSTEM: &str = "S-1-5-18";
 const LOCAL_SERVICE: &str = "S-1-5-19";
 const FIXTURE_ENDPOINT: &str = "BFD_LRPC_FIXTURE_ENDPOINT";
 const FIXTURE_USER: &str = "BFD_LRPC_FIXTURE_USER";
+const FIXTURE_GROUP: &str = "BFD_LRPC_FIXTURE_GROUP";
 const FIXTURE_MARKER: &str = "BFD_LRPC_FIXTURE_MARKER";
 const FIXTURE_DELAY: &str = "BFD_LRPC_FIXTURE_DELAY_MS";
 const FIXTURE_CORRUPT: &str = "BFD_LRPC_FIXTURE_CORRUPT";
@@ -47,6 +48,15 @@ impl RpcFixture {
     }
 
     fn start_status(expected_caller_user: &str, delay_ms: u32, corrupt: u32) -> Self {
+        Self::start_policy(expected_caller_user, AUTHENTICATED_USERS, delay_ms, corrupt)
+    }
+
+    fn start_policy(
+        expected_caller_user: &str,
+        expected_caller_group: &str,
+        delay_ms: u32,
+        corrupt: u32,
+    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let marker = directory.path().join("rpc-state");
         let output = File::create(directory.path().join("child.log")).unwrap();
@@ -65,6 +75,7 @@ impl RpcFixture {
             ])
             .env(FIXTURE_ENDPOINT, &endpoint)
             .env(FIXTURE_USER, expected_caller_user)
+            .env(FIXTURE_GROUP, expected_caller_group)
             .env(FIXTURE_MARKER, &marker)
             .env(FIXTURE_DELAY, delay_ms.to_string())
             .env(FIXTURE_CORRUPT, corrupt.to_string())
@@ -351,6 +362,39 @@ fn callback_rejects_wrong_account_even_when_interface_acl_admits_its_group() {
 }
 
 #[test]
+fn authenticated_caller_without_broker_service_sid_is_denied() {
+    let user = current_user();
+    // Pin the real fixture server, but keep the production broker-only caller
+    // group. Authentication and even local administrator membership must not
+    // substitute for the missing enabled service SID.
+    let fixture = RpcFixture::start_policy(&user, BROKER_SID, 0, 0);
+    let error = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
+    assert!(
+        matches!(error, SessionStatusQueryError::Rpc(ref e)
+        if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32)),
+        "{error}"
+    );
+    fixture.stop();
+}
+
+#[test]
+#[ignore = "installer harness only; requires the installed BFD service"]
+fn installed_bfd_rejects_unrelated_rpc_caller() {
+    assert_eq!(
+        std::env::var("BFD_TEST_INSTALLED_LOCAL_RPC").as_deref(),
+        Ok("1")
+    );
+    // Bypass the production client's own broker-identity guard so this tests
+    // rejection by the real RPC server, using authenticated runner credentials.
+    let error = query_with_policy(ENDPOINT, LOCAL_SERVICE, SERVICE_SID).unwrap_err();
+    assert!(
+        matches!(error, SessionStatusQueryError::Rpc(ref e)
+        if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32)),
+        "{error}"
+    );
+}
+
+#[test]
 fn delayed_native_call_is_cancelled_before_the_server_handler_finishes() {
     let user = current_user();
     let fixture = RpcFixture::start_with_delay(&user, 5_000);
@@ -467,6 +511,7 @@ fn rpc_fixture_child() {
     };
     let endpoint = endpoint.into_string().unwrap();
     let user = std::env::var(FIXTURE_USER).unwrap();
+    let group = std::env::var(FIXTURE_GROUP).unwrap_or_else(|_| AUTHENTICATED_USERS.to_owned());
     let marker = PathBuf::from(std::env::var_os(FIXTURE_MARKER).unwrap());
     let delay_ms = std::env::var(FIXTURE_DELAY).unwrap().parse().unwrap();
     TEST_STATUS_DELAY_MS.store(delay_ms, Ordering::Relaxed);
@@ -483,8 +528,7 @@ fn rpc_fixture_child() {
     crate::runtime::drop_privileges().unwrap();
     let (_publisher, observer) = status::tests::fixture();
     let server =
-        LocalRpcServer::with_status_policy(&endpoint, &user, AUTHENTICATED_USERS, Some(observer))
-            .unwrap();
+        LocalRpcServer::with_status_policy(&endpoint, &user, &group, Some(observer)).unwrap();
     fs::write(&marker, b"ready").unwrap();
     if let Some(stop_marker) = std::env::var_os(FIXTURE_STOP_MARKER) {
         let deadline = Instant::now() + CHILD_TIMEOUT;

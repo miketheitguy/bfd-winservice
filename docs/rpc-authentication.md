@@ -63,6 +63,15 @@ The identity requirements are:
 | Enabled, non-deny-only caller group | Broker service SID | BFD service SID |
 | Restricted caller check | Native interface ACL semantics | Also require BFD SID in any nonempty restricting list |
 
+Authenticated users, local administrators, and domain administrators have no
+direct access to either private interface. Neither DACL grants access to
+Authenticated Users, Administrators, or the service account alone. Each caller
+must satisfy both the exact account and enabled service-SID checks in the table.
+Remote callers are rejected regardless of their credentials or administrator
+membership. Host administrators remain trusted because they can reconfigure or
+replace the services; RPC authorization does not contain a compromised host
+administrator.
+
 Both use WINNT packet privacy, QOS V5 with the conditional server descriptor,
 static identity tracking, Identify, effective-only credentials, unique bindings,
 and `DONTLINGER`. Both servers use local-only, secure-only, no-cache callbacks
@@ -465,11 +474,12 @@ From the repository root on the supported Windows build host, run the RPC tests:
 
 ```powershell
 cargo test-release --lib local_rpc::
+cargo test-release --lib bgp::ipc::
 ```
 
-Expect zero failures. Two ignored fixture tests are child-process entry points
-that the parent tests invoke explicitly. The separate MI/RPC coexistence test
-is opt-in; run it with the command in
+Expect zero failures. Ignored child-process entry points are invoked explicitly
+by their parent tests. The MI/RPC coexistence and installed-service checks are
+opt-in; run the telemetry coexistence check with the command in
 [the status verification reference](rpc-session-status-design.md#verification-and-source-map).
 Native restricted-token fixtures require a normal Windows token environment;
 an already-restricted sandbox can prevent `CreateRestrictedToken` from
@@ -483,9 +493,14 @@ shutdown. They do not impersonate an installed service. The explicit coexistence
 checks fixed-policy RPC against real read-only MI provider traffic.
 
 The release workflow's `Test-MsiInstall.ps1` separately requires a fresh broker
-event confirming the handshake after first start and after repair. That
-disposable-runner test exercises the actual SCM-issued service accounts, service
-SIDs, and restricted BFD token. Fixture success does not establish that installed
+event confirming the handshake after first start and after repair. After first
+start, broker recovery, and repair, it also uses the authenticated administrator
+runner's own credentials to require access denied from the BFD status operation
+and all four broker control opcodes. These checks call the native RPC helpers
+directly, bypassing client-side service-identity guards so the receiving RPC
+interfaces must enforce rejection. The disposable-runner test exercises the
+actual SCM-issued service accounts, service SIDs, and restricted BFD token.
+Fixture success does not establish that installed
 validation passed. For operational queries, see
 [Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
 
@@ -504,4 +519,4 @@ The implementation is divided across these files:
 | [rpc/bfd_local.idl](../rpc/bfd_local.idl) and [client ACF](../rpc/bfd_local_client.acf) | Status-only contract, fixed field ranges, and asynchronous client generation |
 | [rpc/client.c](../rpc/client.c), [server bridge](../rpc/server.c), and [RPC build](../rpc/build.rs) | Native completion, cancellation, exceptions, manager bridge, and MIDL compilation |
 | [RPC tests](../src/local_rpc/tests.rs) and [replacement-token tests](../src/local_rpc/tests/restricted.rs) | Native positive and negative fixtures |
-| [MSI installation tests](../scripts/Test-MsiInstall.ps1) | Actual installed-service handshake after start and repair |
+| [MSI installation tests](../scripts/Test-MsiInstall.ps1) | Actual service handshake and rejection of unrelated authenticated RPC callers after install, recovery, and repair |
