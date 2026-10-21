@@ -1,14 +1,15 @@
 # RFC 5880 conformance review
 
-This reference is for maintainers and network administrators checking the
-service's asynchronous BFD implementation against
+Cowabunga, RFC crew. Trace requirements to the implementation receipts.
+Maintainers and network admins, let's take the protocol review for a spin. This
+reference checks the service's asynchronous BFD implementation against
 [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html). It maps requirements to
 code, records regression evidence, and identifies deployment and feature limits.
 The review covers the complete RFC, including its security considerations and
 non-normative backward-compatibility appendix.
 
-The linked code and tests are the implementation receipts: use them to check
-the supported profile before choosing a deployment.
+The linked code and tests are the implementation receipts, dude: use them to
+check the supported profile before choosing a deployment.
 
 Classical IPv4/IPv6 sessions use the single-hop and multihop transport profiles
 described in [Network and protocol behavior](protocol.md). S-BFD uses RFC 5880
@@ -27,7 +28,8 @@ and [deployment limits](#deployment-and-implementation-limits) to assess a host.
 
 ## Requirement mapping
 
-The following table groups related RFC requirements. Paths identify the
+Let the turtle team follow the requirement-to-code trail. Here's the RFC
+requirement lineup. The table groups related rules; paths identify the
 implementation or its regression tests:
 
 | RFC section | Requirement | Implementation and evidence |
@@ -56,7 +58,9 @@ implementation or its regression tests:
 
 ## Errata interpretation
 
-The review considers the [RFC Editor's RFC 5880 errata](https://www.rfc-editor.org/errata/rfc5880).
+Give correction status the Donatello treatment before applying it. The review
+considers the
+[RFC Editor's RFC 5880 errata](https://www.rfc-editor.org/errata/rfc5880).
 Verified corrections and proposals held for a future document update have
 different status:
 
@@ -72,15 +76,17 @@ different status:
 
 ## Deployment and implementation limits
 
-The following limits apply when using the implemented protocol profile.
+A bodacious deployment still needs these scope checks. Before you shout
+Cowabunga, like, check these limits on the implemented protocol profile.
 
 ### Discriminator allocation
 
-Assign a distinct `Discriminator` to each coexisting BFD session on the same
-system. An omitted classical discriminator uses a random nonzero value; the
-service doesn't coordinate allocation with other processes or other BFD
-implementations. S-BFD reflector identifiers must also be unique in their
-configured discriminator domain.
+Ninja discipline starts with distinct session identifiers. Keep session
+identities dialed in: assign a distinct `Discriminator` to each coexisting BFD
+session on the same system. An omitted classical discriminator uses a random
+nonzero value; the service doesn't coordinate allocation with other processes or
+other BFD implementations. S-BFD reflector identifiers must also be unique in
+their configured discriminator domain.
 
 ### Transport and feature scope
 
@@ -109,23 +115,27 @@ remain in force. A final BGP action can extend total stop time.
 
 ### Library transmission ownership
 
-The public `Session::packet` convenience APIs treat returned bytes as a
-transmission for sequence and probe tracking. Callers must deliver those bytes;
-retry the same bytes if a send fails. The Windows runtime uses separate prepare
-and commit steps, so actual send failure preserves its sequence and pending
-Poll/Final state.
+Turtle power includes honoring the packet-delivery contract. The public
+`Session::packet` convenience APIs treat returned bytes as a transmission for
+sequence and probe tracking. Callers must deliver those bytes; retry the same
+bytes if a send fails. Don't freestyle the ownership contract, buddy. The
+Windows runtime uses separate prepare and commit steps, so actual send failure
+preserves its sequence and pending Poll/Final state.
 
 ### Authentication and scheduling
 
+Keep interoperability and timing expectations totally tubular and realistic.
 MD5, SHA-1, and cleartext passwords are provided for protocol interoperability.
 An unauthenticated peer has no cryptographic identity check. Sequence windows
 cannot prove that a remote implementation is uncompromised. Very short timers
 depend on host scheduling and network capacity; this user-mode service doesn't
-guarantee hardware-level detection latency.
+guarantee hardware-level detection latency. No cap: timer settings alone don't
+prove what a busy host can deliver.
 
 ## Regression evidence
 
-The following suites cover protocol behavior, shutdown, and diagnostic output.
+Check the regression receipts before the pizza victory lap. These suites bring
+the receipts for protocol behavior, shutdown, and diagnostic output.
 
 ### Session and packet regressions
 

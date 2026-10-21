@@ -1,12 +1,14 @@
 # Service communication
 
-For developers and Windows administrators, this page maps the installed
-services' network endpoints, private local RPC interfaces, and BGP actions. See
+Cowabunga, developers and Windows admins! Let's trace the service lineup, dude.
+This page maps the installed services' network endpoints, private local RPC
+interfaces, and BGP actions. See
 [Security, authentication, and build hardening](security.md) for identities,
 permissions, and authentication boundaries.
 
-The key receipt: the packet engine drives BGP actions. The broker's status cache
-is for observation, and an SCM `Running` status doesn't mean the session is Up.
+The key receipt, no cap: the packet engine drives BGP actions. The broker's
+status cache is for observation, and an SCM `Running` status doesn't mean the
+session is Up.
 
 BFD hosts an authenticated local RPC interface for the broker. The broker calls
 it from a worker thread inside its existing process. BGP control uses a separate
@@ -19,7 +21,7 @@ Authz authorization. The protocol name is `ncalrpc` on both paths; LRPC is the
 Windows runtime's local-RPC name, not a separate transport or weaker mode.
 Neither path uses TCP or the RPC named-pipe transport.
 
-Each interface permits calls initiated in one direction:
+Each interface keeps call initiation in one direction, dude:
 
 | Call initiator | RPC server | Endpoint (`ncalrpc`) | Operations |
 | --- | --- | --- | --- |
@@ -33,9 +35,10 @@ Neither interface defines RPC callback operations, and fast bindings reject
 server-initiated RPC callbacks. Local authorization callbacks only check access
 inside the receiving process. See [Windows fast-binding restrictions](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
 
-The runtime and lifecycle diagrams are embedded below as Mermaid. The
-[RPC authentication diagram](rpc-authentication.md#rpc-authentication-flow)
-shows the client, Windows RPC, and server checks. Their matching
+The runtime and lifecycle diagrams each have separate PNG and Mermaid sections.
+Use the PNG versions in GitHub mobile and select an image to open it at full size.
+The [RPC authentication diagram](rpc-authentication.md#rpc-authentication-flow)
+shows the client, Windows RPC, and server checks in both formats. Their matching
 [editable draw.io source](service-communication.drawio) has three pages.
 
 Telemetry uses `BfdWinService.Local.v2`, `BfdLocal` version `2.0`.
@@ -51,11 +54,18 @@ cleanup functions. For ASCII call flows and the security assessment, see
 
 ## Runtime flow
 
-The boxes group work by process. Blue represents BFD, purple represents the
-broker, amber marks authentication gates, green marks checked telemetry, and
-gray represents Windows or a network peer. RPC arrows show call initiation;
-responses return on the same call. The dashed BGP link is Windows-managed.
-Classical multihop BGP control requires meticulous keyed authentication.
+Here's how to read the lineup, buddy: the boxes group work by process. Blue
+represents BFD, purple represents the broker, amber marks authentication gates,
+green marks checked telemetry, and gray represents Windows or a network peer.
+RPC arrows show call initiation; responses return on the same call. The dashed
+BGP link is Windows-managed. Classical multihop BGP control requires meticulous
+keyed authentication.
+
+### Runtime diagram (PNG)
+
+[![Runtime boundaries showing BFD packet processing, broker status queries, and BFD-initiated BGP control.](images/service-communication-runtime-v2-hardened.png)](images/service-communication-runtime-v2-hardened.png)
+
+### Runtime diagram (Mermaid)
 
 ```mermaid
 ---
@@ -116,7 +126,10 @@ flowchart TB
     style rt_broker fill:#F0EAF8,stroke:#7957A2,color:#1C2B43
 ```
 
-The two installed services use these paths:
+### Runtime behavior
+
+Cowabunga, runtime crew. Follow which process initiates each operation. The two
+installed services roll through these paths:
 
 1. `BfdWinService` receives and validates UDP packets and executes BFD/S-BFD
    timers as LocalService. Its mutable session has one engine owner.
@@ -136,15 +149,21 @@ The two installed services use these paths:
    `PS_BgpPeer` provider for its configured target. Windows RRAS manages the BGP
    connection to the remote peer.
 
-The status cache is observational. Invalid, unavailable, or stale telemetry does
-not request a BGP action or become a fabricated BFD state. The provider worker
-remains independent of telemetry and uses the broker's reduced SYSTEM token
-and configured COM/MI security.
+Telemetry vibe check: the status cache is, like, observational. Invalid,
+unavailable, or stale telemetry does not request a BGP action or become a
+fabricated BFD state. The provider worker remains independent of telemetry and
+uses the broker's reduced SYSTEM token and configured COM/MI security.
 
 ## Service lifecycle
 
-SCM starts BFD as soon as the broker reports Running. The broker's telemetry
-worker runs concurrently with BFD startup.
+SCM gives BFD the go-ahead as soon as the broker reports Running. The broker's
+telemetry worker runs concurrently with BFD startup.
+
+### Lifecycle diagram (PNG)
+
+[![Service lifecycle showing SCM startup order, concurrent telemetry fetching, stalled-worker quarantine, and administrative shutdown.](images/service-communication-lifecycle-v2-hardened.png)](images/service-communication-lifecycle-v2-hardened.png)
+
+### Lifecycle diagram (Mermaid)
 
 ```mermaid
 ---
@@ -206,17 +225,22 @@ flowchart TB
     style lc_bfd fill:#EAF2FF,stroke:#3A69A6,color:#1C2B43
 ```
 
-SCM starts `RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`.
-The broker secures its BGP control RPC interface before reporting Running,
-then starts the telemetry monitor and retries while BFD initializes. BFD gives
-RPC a read-only observer before moving the engine to its packet worker. Neither SCM Running nor RPC success implies a session is Up.
+### Startup and shutdown behavior
+
+Keep the turtle team in formation through startup and cleanup. SCM starts
+`RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`. The broker
+secures its BGP control RPC interface before reporting Running, then starts the
+telemetry monitor and retries while BFD initializes. BFD gives RPC a read-only
+observer before moving the engine to its packet worker. Neither SCM Running nor
+RPC success implies a session is Up.
 
 BFD closes its observer as soon as packet processing ends, before announcements
 and BGP cleanup. After cleanup, it unregisters and drains its interface before
-releasing the security descriptor. The broker stops its
-supervisor without joining an unfinished native RPC worker. That single owned
-worker retains its native call storage until completion or process exit; it is
-never forcibly terminated or replaced repeatedly.
+releasing the security descriptor. The broker stops its supervisor without
+joining an unfinished native RPC worker. That single owned worker retains its
+native call storage until completion or process exit; it is never forcibly
+terminated or replaced repeatedly. A native ownership wipeout isn't an
+acceptable cleanup strategy.
 
 An administrative BFD stop repeats AdminDown announcements for a communicating
 classical session's detection period, capped by `MaxShutdownAnnounceMs`. Other
@@ -230,6 +254,7 @@ RPC telemetry budget. See [BGP lifecycle and shutdown](bgp.md).
 
 ## Private local RPC status
 
+Donatello would trace the snapshot, identity checks, and native ownership.
 `src/local_rpc.rs` owns registration and the fixed BFD client identity policy.
 `src/local_rpc/status.rs` owns the fixed record and conversion into Rust domain
 types. `src/local_rpc/monitor.rs` owns one supervised RPC worker and the cache.
@@ -258,8 +283,9 @@ operator queries, see [Monitor service status and BFD events](monitoring.md).
 
 ## UDP inputs and outputs
 
-The selected role determines the socket endpoints. `P` and `Q` denote the local
-and peer stable source ports, respectively, each in 49152-65535. The port
+Match the wire path before the packet crew gets to kick shell. Get the role
+dialed in first: it determines the socket endpoints. `P` and `Q` denote the
+local and peer stable source ports, respectively, each in 49152-65535. The port
 numbers can differ. Outgoing TTL/hop limit is 255.
 
 | Role | Outgoing packet | Incoming packet | Receive TTL/hop limit |
@@ -276,9 +302,11 @@ other than 7784; the installed firewall limits requests to 49152-65535.
 
 ## BGP behavior
 
-BGP control runs only when `BgpPeerName` is configured for classical BFD or an
-S-BFD initiator. Reflectors reject BGP control. Plain BFD still has the installed
-SCM dependency on the broker, but starts no BGP worker and makes no BGP RPC connection check.
+Turtle power follows engine state and the configured control policy. BGP control
+runs only when `BgpPeerName` is configured for classical BFD or an S-BFD
+initiator. Reflectors reject BGP control. Plain BFD still has the installed SCM
+dependency on the broker, but starts no BGP worker and makes no BGP RPC
+connection check.
 
 Startup reads BGP status without changing the peer. Entering Up requests Start
 if needed; Down after the session has established requests Stop. Peer AdminDown

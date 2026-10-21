@@ -1,8 +1,9 @@
 # Configure Seamless BFD
 
-This guide is for Windows network administrators configuring IP-routed Seamless
-Bidirectional Forwarding Detection (S-BFD). You can run a persistent initiator
-that probes a remote entity, or a stateless reflector that answers probes.
+Cowabunga, S-BFD crew. Choose your part in the probe mission. Windows network
+admins, let's catch the IP-routed Seamless Bidirectional Forwarding Detection
+(S-BFD) wave. You can run a persistent initiator that probes a remote entity, or
+a stateless reflector that answers probes.
 
 The implementation uses [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html)
 for protocol behavior and [RFC 7881](https://www.rfc-editor.org/rfc/rfc7881.html)
@@ -17,7 +18,8 @@ After completing [Before you begin](#before-you-begin), choose
 
 ## Before you begin
 
-Prepare these prerequisites:
+Get the ninja gear together before sending probes. Before you send probes, get
+these prerequisites dialed in, buddy:
 
 - Install the [MSI package](setup.md#install-with-an-msi) for service execution,
   or prepare supplied loose files for console execution using
@@ -57,7 +59,8 @@ retaining existing settings. The MSI already provisions the defaults.
 
 ## Configure an initiator
 
-Use this procedure on the node that sends probes to a provisioned reflector.
+Time for the turtle team to send the probes. On the node sending probes to a
+provisioned reflector, this is your line to ride.
 
 ### 1. Provision the target and discriminators
 
@@ -109,9 +112,10 @@ A successful command produces no output. For foreground execution, use
 
 ### 3. Verify establishment
 
-Follow [Verify peer communication](setup.md#6-verify-peer-communication).
-Event `100` marks a valid response, and event `102` marks `Up`.
-The first valid `Up` response establishes the session without entering `Init`.
+Follow [Verify peer communication](setup.md#6-verify-peer-communication). Event
+`100` marks a valid response, and event `102` marks `Up`. The first valid `Up`
+response establishes the session without entering `Init`. Cowabunga! That
+response is your establishment receipt.
 
 The initial request already contains `RemoteDiscriminator`. No discriminator
 exchange or routing-protocol advertisement is required by the service. The
@@ -123,7 +127,8 @@ For operator checks and the broker's private telemetry contract, see
 
 ## Configure a reflector
 
-Use this procedure on the node that answers initiator probes.
+Keep the reply side totally tubular, dude. On the node answering initiator
+probes, follow this procedure and keep it, like, totally mellow.
 
 ### 1. Provision the local entity
 
@@ -179,7 +184,8 @@ lookup must succeed before the reply is sent.
 
 ## Restrict sources and support anycast
 
-Use `AllowedPeers` to configure source filtering:
+Channel Donatello: check which sources belong in this setup. Choose who gets
+past the source-filter vibe check with `AllowedPeers`:
 
 - On an initiator, `Peer` is always accepted. `AllowedPeers` adds permitted
   response sources, including individual nodes serving an anycast target.
@@ -210,41 +216,47 @@ the initiator's state or create a separate session.
 
 ## Authentication and loop prevention
 
-Configure matching `Auth`, `AuthKeyId`, and `AuthKey` or `AuthKeyHex` using the
+Turtle power needs authentication and loop checks. Configure matching `Auth`,
+`AuthKeyId`, and `AuthKey` or `AuthKeyHex` using the
 [authentication reference](configuration.md#authentication). All existing
 password, MD5, and SHA-1 modes are available.
 
 ### Keyed probe correlation
 
-A keyed reflector verifies the digest and returns the request's sequence
-number with a newly computed digest. It doesn't apply a sequence window to
-incoming requests. An initiator accepts a keyed response only for an outstanding,
-unexpired transmitted sequence and consumes it once, including across wraparound.
-The Windows runtime records probes only after a successful socket send.
-Tracking is bounded to the newest 1,024 transmitted keyed probes. Choose rates and
-round-trip budgets that keep the number of outstanding probes within this bound.
+Bodacious replies still need to match the outstanding probe. Replay check, dude:
+a keyed reflector verifies the digest and returns the request's sequence number
+with a newly computed digest. It doesn't apply a sequence window to incoming
+requests. An initiator accepts a keyed response only for an outstanding,
+unexpired transmitted sequence and consumes it once, including across
+wraparound. The Windows runtime records probes only after a successful socket
+send. Tracking is bounded to the newest 1,024 transmitted keyed probes. Choose
+rates and round-trip budgets that keep the number of outstanding probes within
+this bound.
 
 ### Role and port checks
 
-Initiators send Demand=1 and accept only Demand=0 responses. Reflectors accept
-only Demand=1 requests and send Demand=0 responses. Reflectors also reject source
-ports `0` and `7784`, preventing reflector-to-reflector loops. Invalid packets
-never refresh liveness or cause a response. Authentication failures use
-Operational event `105`.
+Ninja discipline keeps the request and reply roles straight. Initiators send
+Demand=1 and accept only Demand=0 responses. Reflectors accept only Demand=1
+requests and send Demand=0 responses. Reflectors also reject source ports `0`
+and `7784`, preventing reflector-to-reflector loops. Invalid packets never
+refresh liveness or cause a response. Authentication failures use Operational
+event `105`.
 
 ### Reflection limits
 
-A reflector answers at most 1,000 valid requests per second from any one source
-address. The limiter tracks at most 4,096 source addresses in a one-second
-window; additional sources receive no reply until the window resets. These are
-runtime traffic limits, not per-peer BFD sessions. The service reports withheld
-replies with Warning event 4. Without `AllowedPeers`, startup also logs Warning
-event 4.
+Keep the reply traffic under control before the pizza party. A reflector answers
+at most 1,000 valid requests per second from any one source address. The limiter
+tracks at most 4,096 source addresses in a one-second window; additional sources
+receive no reply until the window resets. These are runtime traffic limits, not
+per-peer BFD sessions. Keep that distinction straight, dude. The service reports
+withheld replies with Warning event 4. Without `AllowedPeers`, startup also logs
+Warning event 4.
 
 ## Change timing and entity availability
 
-S-BFD supports live timing updates and reflector maintenance without restarting
-the session. Other settings retain their startup-only behavior.
+Cowabunga, maintenance crew. Check which settings can change live. Rad, S-BFD
+supports live timing updates and reflector maintenance without restarting the
+session. Other settings retain their startup-only behavior.
 
 ### Registry reload behavior
 
@@ -291,8 +303,9 @@ Changes combined before the first Poll transmission share that Poll.
 
 ### Put a reflector in maintenance
 
-To mark a reflector entity temporarily unavailable while keeping the listener
-active, set its maintenance flag:
+Give the reflector a planned break, turtle crew. For a maintenance break that
+keeps the listener active, set the reflector's maintenance flag to mark the
+entity temporarily unavailable:
 
 ```powershell
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
@@ -324,7 +337,8 @@ stateless response settings immediately.
 
 ## RFC 7882 use-case coverage and limits
 
-The IP implementation provides these capabilities:
+A totally tubular deployment still stays within the implemented scope. The IP
+implementation provides these capabilities:
 
 | Requirement | Implementation |
 | --- | --- |

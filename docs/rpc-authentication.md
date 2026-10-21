@@ -1,9 +1,10 @@
 # Local RPC authentication and authorization
 
-For developers and Windows administrators, this reference explains how Windows
-Remote Procedure Call (RPC) authenticates the BGP broker and BFD service, which
-Windows rights they use, and how the implementation follows Microsoft's
-security guidance. For the complete process topology, see
+Cowabunga, identity crew. Check the account and service together. Developers and
+Windows admins, let's check who's actually on the call, dude. This reference
+explains how Windows Remote Procedure Call (RPC) authenticates the BGP broker
+and BFD service, which Windows rights they use, and how the implementation
+follows Microsoft's security guidance. For the complete process topology, see
 [Service communication](service-communication.md).
 
 Both private service interfaces use `ncalrpc`. Windows names this transport
@@ -17,8 +18,8 @@ calls. Neither IDL declares RPC callbacks, and the fast bindings reject
 server-initiated callbacks. The local security callbacks authorize incoming
 calls without contacting the caller. See [fast-binding restrictions](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
 
-The endpoint name isn't the identity check. The receipts are the authenticated
-account and enabled service SID on each side.
+The endpoint name doesn't pass the identity vibe check, like, at all. The
+receipts are the authenticated account and enabled service SID on each side.
 
 The implemented interface provides one bounded read-only session-status
 operation. A successful status query also verifies authenticated connectivity.
@@ -31,7 +32,8 @@ for fields, accepted ranges, freshness, and telemetry quarantine.
 
 ## Find an RPC topic
 
-Use these sections for a specific check or lifecycle question:
+Choose the next authentication mission, turtle crew. Pick the check or lifecycle
+question you're working on, turtle crew:
 
 - [BGP control over local RPC](#bgp-control-over-local-rpc)
 - [Interface and process boundaries](#interface-and-process-boundaries)
@@ -48,10 +50,12 @@ Use these sections for a specific check or lifecycle question:
 
 ## BGP control over local RPC
 
-BFD also calls the broker over `ncalrpc`, using `BgpControl` version `1.0` at
+Keep the control channel ready to kick shell within its fixed contract. BFD also
+calls the broker over `ncalrpc`, using `BgpControl` version `1.0` at
 `BfdWinService.Bgp.v1`. This replaces the BGP named-pipe transport. The two
 channels share native binding, registration, call-attribute, and Authz helpers.
-Deploy matching BFD and broker binaries together for this contract.
+Keep the deployment lineup matched: deploy BFD and broker binaries together for
+this contract.
 
 The identity requirements are:
 
@@ -95,7 +99,8 @@ security settings also apply to BGP control with the identities in this table.
 
 ## Interface and process boundaries
 
-The RPC contract has these properties:
+Donatello would start with the interface contract. Here's the RPC contract at a
+glance, no cap:
 
 | Property | Implemented value |
 | --- | --- |
@@ -110,11 +115,18 @@ The RPC contract has these properties:
 
 ### RPC authentication flow
 
-This embedded Mermaid diagram mirrors the authentication page in the
-[draw.io source](service-communication.drawio). It groups checks by the broker
-client, Windows RPC, and BFD server. Blue represents BFD, purple represents the
-broker, amber marks security gates, green marks checked replies, and gray
-represents Windows.
+The PNG and Mermaid diagrams mirror the authentication page in the
+[draw.io source](service-communication.drawio). Use the PNG version in GitHub
+mobile and select the image to open it at full size. Both versions group checks
+by the broker client, Windows RPC, and BFD server. Blue represents BFD, purple
+represents the broker, amber marks security gates, green marks checked replies,
+and gray represents Windows.
+
+#### Authentication diagram (PNG)
+
+[![RPC authentication showing broker checks of BFD identity, Windows RPC security gates, BFD authorization of the broker, and native resource cleanup.](images/service-communication-authentication-v2-hardened.png)](images/service-communication-authentication-v2-hardened.png)
+
+#### Authentication diagram (Mermaid)
 
 ```mermaid
 ---
@@ -183,6 +195,8 @@ flowchart TB
     style auth_server fill:#EAF2FF,stroke:#3A69A6,color:#1C2B43
 ```
 
+#### Authentication diagram scope
+
 For the matching ASCII diagrams, API responsibilities, and security assessment, see
 [private local RPC authentication](security/local-rpc.md#broker-authenticates-bfd-telemetry).
 
@@ -193,11 +207,12 @@ metadata as authentication evidence.
 
 ## Accounts, service SIDs, and privileges
 
-An account identifies a Windows logon identity. A service security identifier
-(SID) distinguishes services that share an account. The Windows Service Control
-Manager (SCM) applies the installed account, service SID type, and privilege
-policy when it creates each service token. Both account and service identity
-are required here:
+Turtle power needs the right account and service identity. An account identifies
+a Windows logon identity. A service security identifier (SID) distinguishes
+services that share an account. The Windows Service Control Manager (SCM)
+applies the installed account, service SID type, and privilege policy when it
+creates each service token. Both account and service identity are required here.
+Both have to pass the check, dude:
 
 | Process | Account in `TokenUser` | Enabled service group | Privilege policy |
 | --- | --- | --- | --- |
@@ -234,7 +249,8 @@ part of the trusted host administration boundary.
 
 ## Startup and query sequence
 
-Startup and status fetching follow this order:
+Keep the startup lineup totally tubular and in order. Startup and status
+fetching roll in this order:
 
 1. SCM starts the broker dependency. The broker verifies SYSTEM and its service
    SID, initializes the COM/MI host, secures its BGP control RPC interface, and
@@ -266,8 +282,9 @@ not replace BFD session-state events.
 
 ## Server identity checks
 
-The client uses `RpcBindingCreateW` with an explicit local endpoint and the
-following authentication and quality-of-service (QOS) settings:
+Check the server before the ninja team trusts the reply. The client uses
+`RpcBindingCreateW` with an explicit local endpoint and the following
+authentication and quality-of-service (QOS) settings:
 
 | Setting | Value and purpose |
 | --- | --- |
@@ -311,7 +328,7 @@ The broker keeps its BFD account/service-SID policy immutable for the process
 lifetime and uses no permissive/default policy for the BFD endpoint.
 `RPC_C_OPT_UNIQUE_BINDING` separates a transport connection;
 `RPC_BHO_DONTLINGER` avoids retaining it after release. Neither is treated as a
-promise to clear authorization caches. See
+promise to clear authorization caches. Assuming otherwise would be bogus. See
 [RPC binding options](https://learn.microsoft.com/en-us/windows/win32/rpc/binding-option-constants).
 
 Native investigation observed cached decisions when changing the expected
@@ -323,12 +340,13 @@ The broker's existing COM/MI policy and token remain unchanged.
 
 ## Caller identity and authorization
 
-The endpoint and application interface use a protected discretionary access
-control list (DACL) admitting the broker service SID. The server supplies the
-descriptor explicitly rather than relying on the process token's default
-descriptor. The interface ACL and callback are
-separate gates: Windows checks the interface descriptor before the callback.
-See [RPC interface security descriptors](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcserverregisterif3).
+A caller needs more than a bodacious endpoint name. The endpoint and application
+interface use a protected discretionary access control list (DACL) admitting the
+broker service SID. The server supplies the descriptor explicitly rather than
+relying on the process token's default descriptor. The interface ACL and
+callback are separate gates: Windows checks the interface descriptor before the
+callback. The callback doesn't get to wave a denied caller through. See
+[RPC interface security descriptors](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcserverregisterif3).
 
 The interface registration combines these flags:
 
@@ -372,10 +390,11 @@ and [RPC authorization contexts](https://learn.microsoft.com/en-us/windows/win32
 
 ## Runtime management operations
 
-RPC runtime management is a separate interface. BFD installs a process-wide
-`RpcMgmtSetAuthorizationFn` callback before opening its endpoint and denies
-every management operation. This policy remains installed until process exit.
-It does not change the broker provider host's COM/MI process security.
+Keep the management surface in its own shell, dude. RPC runtime management is a
+separate interface. BFD installs a process-wide `RpcMgmtSetAuthorizationFn`
+callback before opening its endpoint and denies every management operation. This
+policy remains installed until process exit. It does not change the broker
+provider host's COM/MI process security.
 
 The runtime defaults and BFD's policy are:
 
@@ -393,12 +412,14 @@ ACL does not replace runtime-management authorization. See Microsoft's
 
 ## Deadlines, cancellation, and resource ownership
 
-MIDL generates an asynchronous client stub with a synchronous server manager.
-Binding and the status call each have a two-second deadline. The broker
-supervisor applies an eight-second monitoring budget. `RPC_C_OPT_CALL_TIMEOUT`
-is ignored for LRPC and is not used as that deadline. See
+Ninja discipline means finishing native ownership before release. MIDL generates
+an asynchronous client stub with a synchronous server manager. Binding and the
+status call each have a two-second deadline. The broker supervisor applies an
+eight-second monitoring budget. `RPC_C_OPT_CALL_TIMEOUT` is ignored for LRPC and
+is not used as that deadline. See
 [call-timeout limitations](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcbindingsetoption)
-and [asynchronous binding](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
+and
+[asynchronous binding](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcbindingbind).
 
 On timeout, the client requests abortive cancellation and waits for native
 completion before completing the call and releasing storage. Output, async
@@ -424,12 +445,13 @@ does not register or stop the broker provider's COM interfaces.
 
 ## Wire validation and extension limits
 
-MIDL generates `/robust` stubs for a fixed 336-byte x64 native status record.
-It uses integer fields and fixed address/instance arrays, with no strings,
-dynamic sizes, application pointers, selected BGP targets, or secret material.
-Declared ranges protect native unmarshaling. A single Rust `TryFrom` conversion
-constructs enums, nonzero identifiers, optional values, addresses, and checked
-time values. There is no validation dependency or repeated validation pass.
+Give the wire record the Donatello treatment before accepting it. MIDL generates
+`/robust` stubs for a fixed 336-byte x64 native status record. It uses integer
+fields and fixed address/instance arrays, with no strings, dynamic sizes,
+application pointers, selected BGP targets, or secret material. Declared ranges
+protect native unmarshaling. A single Rust `TryFrom` conversion constructs
+enums, nonzero identifiers, optional values, addresses, and checked time values.
+There is no validation dependency or repeated validation pass.
 
 Malformed replies clear cached telemetry to `Unavailable` and retry with capped
 backoff on the same worker. The record is neither clamped nor partially accepted.
@@ -449,7 +471,7 @@ Further operations require their own bounds and authorization. See
 
 ## Alignment with security best practices
 
-The implementation applies these principles:
+These principles keep the security setup dialed in:
 
 | Principle | Implementation and evidence |
 | --- | --- |
@@ -470,7 +492,8 @@ protocol health.
 
 ## Verify the implementation
 
-From the repository root on the supported Windows build host, run the RPC tests:
+Save the pizza celebration for the test receipts. Bring the test receipts: from
+the repository root on the supported Windows build host, run the RPC tests:
 
 ```powershell
 cargo test-release --lib local_rpc::
@@ -506,7 +529,7 @@ validation passed. For operational queries, see
 
 ## Source map
 
-The implementation is divided across these files:
+For the code deep dive, follow this file lineup:
 
 | File | Responsibility |
 | --- | --- |

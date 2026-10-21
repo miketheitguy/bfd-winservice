@@ -1,10 +1,11 @@
 # Local RPC security
 
-For developers and security reviewers, this reference traces identity checks,
-authorization, and resource ownership for the two private service Remote
-Procedure Call (RPC) channels. The call flows show logical security gates. For
-the API contract and Microsoft guidance, see [Local RPC authentication and
-authorization](../rpc-authentication.md).
+Cowabunga, RPC crew. Follow the identity checks in both directions. Developers
+and security reviewers, here's the local-RPC security lineup, dude. This
+reference traces identity checks, authorization, and resource ownership for the
+two private service Remote Procedure Call (RPC) channels. The call flows show
+logical security gates. For the API contract and Microsoft guidance, see
+[Local RPC authentication and authorization](../rpc-authentication.md).
 
 See the [security overview](../security.md) for the full boundary map. On this
 page:
@@ -18,12 +19,13 @@ page:
 
 ## BFD authenticates the broker
 
-BFD calls the broker's `BgpControl` version `1.0` interface at the fixed
-`ncalrpc` endpoint `BfdWinService.Bgp.v1`. It uses the same binding helper as
-the telemetry query, with the server identities reversed: LocalSystem and the
+Ninja discipline checks who actually owns the endpoint. BFD calls the broker's
+`BgpControl` version `1.0` interface at the fixed `ncalrpc` endpoint
+`BfdWinService.Bgp.v1`. It uses the same binding helper as the telemetry query,
+with the server identities reversed: LocalSystem and the
 `NT SERVICE\BfdBgpBroker` SID must both satisfy the V5 server security
 descriptor. `QOS.Sid` also pins LocalSystem. An endpoint name alone never
-establishes identity.
+establishes identity. A familiar name doesn't pass the identity vibe check.
 
 Both clients request WINNT authentication with packet privacy, mutual
 authentication, static identity tracking, identification level, and
@@ -36,10 +38,11 @@ the conditional ACE and Microsoft's security references.
 
 ### Startup and registration
 
-The broker checks LocalSystem in its own `TokenUser` and its enabled,
-non-deny-only service SID before registering the interface. It secures the
-endpoint and interface before reporting Running. Registration or endpoint
-collision fails startup; there is no alternate endpoint or pipe fallback.
+Get the broker identity ready before the turtle team accepts requests. The
+broker checks LocalSystem in its own `TokenUser` and its enabled, non-deny-only
+service SID before registering the interface. It secures the endpoint and
+interface before reporting Running. Registration or endpoint collision fails
+startup; there is no alternate endpoint or pipe fallback.
 
 The endpoint and interface use a protected DACL admitting the BFD service SID.
 The shared registration helper applies `RPC_IF_AUTOLISTEN`,
@@ -51,25 +54,28 @@ arguments are unmarshaled.
 
 ### Caller authorization
 
-The manager repeats authorization. It queries an Authz context with
-`RpcGetAuthorizationContextForClient(ImpersonateOnReturn=FALSE)`, requiring
-LocalService as the exact user and an enabled, non-deny-only BFD service group.
-For a restricted caller, `AuthzContextInfoRestrictedSids` must also contain the
-BFD service SID, including for write-restricted tokens. Unrelated LocalService
-processes, ordinary administrator clients, and tokens missing either required
-service-SID entry are rejected. Native information uses the same bounded,
-aligned, pointer-validated storage as the telemetry query. The context is
-released on both success and failure. Neither RPC server impersonates callers
-or opens peer process tokens.
+Give every caller the Donatello treatment: inspect the authenticated identity.
+The manager checks again, buddy: it repeats authorization and queries an Authz
+context with `RpcGetAuthorizationContextForClient(ImpersonateOnReturn=FALSE)`,
+requiring LocalService as the exact user and an enabled, non-deny-only BFD
+service group. For a restricted caller, `AuthzContextInfoRestrictedSids` must
+also contain the BFD service SID, including for write-restricted tokens.
+Unrelated LocalService processes, ordinary administrator clients, and tokens
+missing either required service-SID entry are rejected. Native information uses
+the same bounded, aligned, pointer-validated storage as the telemetry query. The
+context is released on both success and failure. Neither RPC server impersonates
+callers or opens peer process tokens.
 
 ### Fixed operations and bounded dispatch
 
-The robust MIDL contract admits only a connection check and `Get`, `Start`, or
-`Stop`, with a fixed 16-byte result containing a broker-instance nonce, provider
-status, and a Boolean value. The nonce detects restarts; it is not
-authentication evidence. There is no custom byte frame or application connection
-sequence. RPC supplies authenticated message protection. Neither RPC dispatch
-nor a transport disconnect independently requests a provider mutation.
+Keep the operation list tight before anyone gets to kick shell. Keep the
+operation list tight: the robust MIDL contract admits only a connection check
+and `Get`, `Start`, or `Stop`, with a fixed 16-byte result containing a
+broker-instance nonce, provider status, and a Boolean value. The nonce detects
+restarts; it is not authentication evidence. There is no custom byte frame or
+application connection sequence. RPC supplies authenticated message protection.
+Neither RPC dispatch nor a transport disconnect independently requests a
+provider mutation.
 
 One provider request can wait in the bounded queue, and one control manager
 holds the admission permit at a time. Provider calls execute serially on the
@@ -80,17 +86,19 @@ rather than interpreting a transport failure as BGP state.
 
 ### Protected BGP target
 
-The broker independently reads only the BGP peer name and routing domain from
-protected Parameters at startup. Requests cannot specify a peer, routing domain,
+Turtle power stays within the configured target boundary. The broker
+independently reads only the BGP peer name and routing domain from protected
+Parameters at startup. Requests don't get to freestyle a peer, routing domain,
 command, path, or registry key. The broker uses its own LocalSystem authority
 only for that fixed target. This is the service's BGP action policy, not an
 interactive administrator credential passed through the BFD process.
 
 ## Broker authenticates BFD telemetry
 
-BFD hosts `BfdWinService.Local.v2` on `ncalrpc`, interface version `2.0`.
-Its sole operation, `GetSessionStatusV1`, returns a fixed session-status record
-and verifies authenticated connectivity through the same call.
+Cowabunga, telemetry crew. Follow the status call back to BFD. BFD hosts
+`BfdWinService.Local.v2` on `ncalrpc`, interface version `2.0`. Its sole
+operation, `GetSessionStatusV1`, returns a fixed session-status record and
+verifies authenticated connectivity through the same call.
 
 This boundary requires local transport, explicit service identities, read-only
 telemetry, and bounded work. The security checks stay separate from the packet
@@ -108,9 +116,9 @@ callback scheduling.
 
 ### Binding and server setup
 
-Setup checks identities in both directions. The broker specifies its expected
-server identity; BFD separately registers the endpoint, application interface,
-and management policy:
+The mutual-authentication vibe check runs both ways. The broker specifies its
+expected server identity; BFD separately registers the endpoint, application
+interface, and management policy:
 
 ```text
 BROKER CLIENT: one fixed BFD identity policy
@@ -283,12 +291,14 @@ release](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasyn
 
 ### Authz responsibilities
 
-The implemented Authz path fits the requirement to compare the exact account SID
-and enabled service SID directly. Rejection tests cover that policy. The Authz
+Bodacious authorization needs correct native ownership and cleanup. The
+implemented Authz path fits the requirement to compare the exact account SID and
+enabled service SID directly. Rejection tests cover that policy. The Authz
 wrapper owns native buffer parsing, context lifetime, and cleanup. The
 authorization policy, transport/authentication checks, correct API use, and
 reviewed FFI boundary determine whether the implementation enforces its intended
-trust boundary.
+trust boundary. Even, like, totally tubular API choices still need correct
+ownership and policy.
 
 ### Soundness and operational limits
 
@@ -315,10 +325,11 @@ The status and availability boundaries apply these additional checks:
 
 ### Deadlines and recovery
 
-Native bind and call deadlines are two seconds each. An eight-second supervisor
-budget quarantines a stuck worker. Its owned native storage remains live;
-shutdown does not kill that thread, free pending buffers, or wait indefinitely
-for it. At most one monitored RPC operation can remain unfinished.
+Keep pending native storage safe before the pizza break. Native bind and call
+deadlines are two seconds each. An eight-second supervisor budget quarantines a
+stuck worker. No cap: its owned native storage remains live; shutdown does not
+kill that thread, free pending buffers, or wait indefinitely for it. At most one
+monitored RPC operation can remain unfinished.
 
 Completed failures back off through 1, 2, 4, 8, 16, then 30 seconds. A valid
 reply resets polling to one second, and Stop interrupts the wait. Rejecting a
@@ -330,13 +341,14 @@ boundary](../rpc-session-status-design.md#injection-and-rusts-safety-boundary).
 
 ### Concurrency and availability
 
-`MaxRpcSize` does not constrain LRPC, and `MaxCalls` is best effort; a separate
-nonblocking permit caps status managers at four. RPC workers read snapshots
-without taking a lock on the packet engine. These bounds reduce contention but
-do not guarantee availability under host resource exhaustion or an authorized
-client's repeated requests. Status fetches, invalid replies, timeouts, and
-quarantine never fabricate a BFD Down state or issue BGP actions. The existing
-BGP control RPC interface and COM/MI provider policy remain separate.
+A totally tubular design still has availability limits. `MaxRpcSize` does not
+constrain LRPC, and `MaxCalls` is best effort; a separate nonblocking permit
+caps status managers at four. RPC workers read snapshots without taking a lock
+on the packet engine. These bounds reduce contention but do not guarantee
+availability under gnarly host resource exhaustion or an authorized client's
+repeated requests. Status fetches, invalid replies, timeouts, and quarantine
+never fabricate a BFD Down state or issue BGP actions. The existing BGP control
+RPC interface and COM/MI provider policy remain separate.
 
 Native tests cover malformed replies, identity rejection, cancellation, and
 same-process coexistence with real read-only MI provider traffic. Installed

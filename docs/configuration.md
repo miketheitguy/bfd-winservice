@@ -1,9 +1,13 @@
 # Registry configuration reference
 
-This reference is for Windows network administrators selecting settings for one Bidirectional Forwarding Detection (BFD) session. For initial provisioning, see [Set up a BFD session](setup.md).
+Cowabunga, configuration crew. Check every setting before rolling out. Windows
+network admins, this is your settings playbook for one Bidirectional Forwarding
+Detection (BFD) session. Let's get it, like, totally dialed in, dude. For
+initial provisioning, see [Set up a BFD session](setup.md).
 
-Configuration vibe check: the registry is the source of truth. The executable
-accepts `--console`, `--help`, and `--version`; session settings aren't CLI flags.
+Configuration vibe check, no cap: the registry is the source of truth. The
+executable accepts `--console`, `--help`, and `--version`; session settings
+aren't CLI flags.
 
 Both console execution and execution through the Windows Service Control Manager (SCM) read this registry key:
 
@@ -11,7 +15,10 @@ Both console execution and execution through the Windows Service Control Manager
 HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters
 ```
 
-The program reads this key without creating or modifying it. Missing optional values use defaults. Missing required values, incorrect types, or invalid combinations fail startup and identify the affected setting. Registry values use these types:
+The program reads this key without creating or modifying it. Omit an optional
+value and its default takes over. A missing required value, wrong type, or
+invalid combination stops startup and names the affected setting. Keep it
+tubular and check the types: registry values use these types:
 
 - **Strings:** `REG_SZ`. `REG_EXPAND_SZ` and environment-variable expansion are unsupported.
 - **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
@@ -20,7 +27,10 @@ Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/wind
 
 ## Apply changes and access settings
 
-Restart to reload startup settings. S-BFD timing and maintenance settings reload when the Parameters key changes; see [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
+Turtle power still follows the reload and permission rules. Restart to reload
+startup settings. S-BFD timing and maintenance settings reload when the
+Parameters key changes; see
+[Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 The MSI protects this key: SYSTEM and administrators have full control, and the
 enabled BFD service SID has read access. Console execution and configuration
@@ -32,7 +42,9 @@ events](monitoring.md).
 
 ## Addresses and transport
 
-Control traffic uses User Datagram Protocol (UDP). Receive validation checks the IPv4 time-to-live (TTL) or IPv6 hop limit.
+Get the packet route totally tubular before tuning anything else. Control
+traffic uses User Datagram Protocol (UDP). Receive validation checks the IPv4
+time-to-live (TTL) or IPv6 hop limit.
 
 For classical BFD, use `Multihop` to select the transport. If you omit this value or set it to `0`,
 the service uses single-hop. Set it to `1` for multihop. The following values
@@ -53,14 +65,17 @@ configure the addresses and transport:
 `Multihop` must be a `REG_DWORD` with value `0` or `1`. Any other value or
 registry type fails startup.
 
-The legacy `Mode` value is ignored. Use `Multihop`; a stored `Mode=multihop`
-doesn't select multihop. Single-hop always requires a received TTL/hop limit of
-255 and rejects `MinTtl` and `Passive=1`. An optional `InterfaceIndex` on another
-role still constrains incoming traffic to that interface.
+Heads up, buddy: the legacy `Mode` value is ignored. Use `Multihop`; a stored
+`Mode=multihop` doesn't select multihop. Single-hop always requires a received
+TTL/hop limit of 255 and rejects `MinTtl` and `Passive=1`. An optional
+`InterfaceIndex` on another role still constrains incoming traffic to that
+interface.
 
 ### Address validation
 
-IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`; do not add a `%scope` suffix.
+Give address syntax the Donatello treatment, dude. IPv6 addresses must be
+literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`;
+do not add a `%scope` suffix.
 
 For S-BFD, `Local`, `Peer`, and `AllowedPeers` must be usable unicast addresses.
 IPv4 `0.0.0.0/8`, IPv4 `240.0.0.0/4`, and IPv4-mapped IPv6 addresses are
@@ -73,7 +88,8 @@ With `PointToPoint=1`, outgoing packets still go to the configured `Peer`. Incom
 
 ## Seamless BFD
 
-Use these values to select an S-BFD role and its target or source policy:
+Pick the S-BFD role for this ninja mission. Use these values to select an S-BFD
+role and its target or source policy:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -95,8 +111,9 @@ Reflectors reject `BgpPeerName`, `SourcePort`, and `RemoteDiscriminator`.
 
 ## Timing
 
-Transmit (TX) and receive (RX) intervals use microseconds. For S-BFD initiators,
-`MinRxUs` is a round-trip time (RTT) allowance. These values control session timing:
+Bodacious timers need the right units, crew. Transmit (TX) and receive (RX)
+intervals use microseconds. For S-BFD initiators, `MinRxUs` is a round-trip time
+(RTT) allowance. These values control session timing:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -113,7 +130,10 @@ Transmit interval = max(local desired TX, peer required RX)
 Detection time    = peer multiplier × max(local required RX, peer desired TX)
 ```
 
-Periodic transmit intervals are randomly reduced by 0–25%, or 10–25% when the local multiplier is 1. With matching 300000-microsecond intervals and multiplier 3, detection time is 900 ms. Windows scheduling adds latency; the service does not guarantee microsecond timing.
+Periodic transmit intervals are randomly reduced by 0–25%, or 10–25% when the
+local multiplier is 1. With matching 300000-microsecond intervals and multiplier
+3, detection time is 900 ms. Gnarly scheduling reality: Windows adds latency;
+the service does not guarantee microsecond timing.
 
 For S-BFD, see [timing and live updates](seamless.md#change-timing-and-entity-availability).
 For multihop timeout backoff and expired peer RX limits, see
@@ -128,7 +148,8 @@ the timers used while BFD runs. See [shutdown behavior](protocol.md#supported-mo
 
 ## Authentication
 
-These values select the authentication algorithm and key:
+Ninja discipline starts with matching authentication settings. These values
+select the authentication algorithm and key:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -137,7 +158,10 @@ These values select the authentication algorithm and key:
 | `AuthKey` | `REG_SZ` | None | ASCII key |
 | `AuthKeyHex` | `REG_SZ` | None | Hexadecimal encoding of a binary key: pairs of digits `0`–`9`, `a`–`f`, or `A`–`F`, with no signs or separators |
 
-Configure the same authentication type, key ID, and key at both ends. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is enabled. Password/MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. One key is active at a time.
+Get both ends in sync, dude: configure the same authentication type, key ID, and
+key. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is
+enabled. Password/MD5 keys are 1–16 bytes; SHA1 keys are 1–20 bytes. One key is
+active at a time.
 
 With `Auth=none`, omit both key values; a nonempty key fails validation. To change
 from `AuthKey` to `AuthKeyHex`, remove the earlier value before restarting.
@@ -182,11 +206,14 @@ These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html)
 
 ## Logging and BGP
 
-These values control text logging and integration with a Windows Border Gateway Protocol (BGP) peer.
+Keep the observation and control gear ready for the turtle team. These values
+control text logging and integration with a Windows Border Gateway Protocol
+(BGP) peer.
 
 ### Text logging
 
-These values control text logging:
+Keep the log receipts ready before pizza time. These values control text
+logging:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -202,17 +229,19 @@ File output rotates at 64 MiB with one `.1` backup; see
 
 ### BGP target
 
-These values select the Windows BGP peer:
+Choose the intended target before you kick shell. These values select the
+Windows BGP peer:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `BgpPeerName` | `REG_SZ` | None | Enable control of this configured Windows BGP peer |
 | `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional domain; requires `BgpPeerName` |
 
-Both BGP names must contain a non-whitespace character. Console execution
-rejects BGP control. Restart both installed services when changing either BGP
-value so the BFD worker and broker use the same target.
-For classical multihop sessions, configure [meticulous keyed
-authentication](#authentication) before enabling `BgpPeerName`.
+Keep these names legit: both BGP names must contain a non-whitespace character.
+Console execution rejects BGP control. Restart both installed services when
+changing either BGP value so the BFD worker and broker use the same target. For
+classical multihop sessions, configure
+[meticulous keyed authentication](#authentication) before enabling
+`BgpPeerName`.
 
 For provisioning and verification, see [Logs and events](logging.md) and [Control a Windows BGP peer](bgp.md).

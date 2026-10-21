@@ -1,8 +1,9 @@
 # RFC conformance tests
 
-This reference is for maintainers and network administrators checking BFD
-protocol behavior. It maps the service's implemented profile to
-[RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html),
+Cowabunga, conformance crew. Tie each claim to the behavior exercised.
+Maintainers and network admins, let's check the protocol receipts. This
+reference helps you check BFD protocol behavior. It maps the service's
+implemented profile to [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html),
 [RFC 7419](https://www.rfc-editor.org/rfc/rfc7419.html), and
 [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html), records regression
 coverage, and explains what passing tests establish.
@@ -14,10 +15,11 @@ discriminators, and forwarding-plane reset notifications require additional
 integration. Tests cover the rules applicable to the implemented profile;
 passing them doesn't certify every optional feature or deployment.
 
-Treat passing tests as receipts for the behavior they exercise. Multipoint BFD
-from [RFC 8562](https://www.rfc-editor.org/rfc/rfc8562.html) and Unaffiliated BFD
-Echo from [RFC 9747](https://www.rfc-editor.org/rfc/rfc9747.html) are outside the
-implemented profile.
+Cowabunga for passing tests, dude. Treat them as receipts for the behavior they
+exercise. Multipoint BFD from
+[RFC 8562](https://www.rfc-editor.org/rfc/rfc8562.html) and Unaffiliated BFD
+Echo from [RFC 9747](https://www.rfc-editor.org/rfc/rfc9747.html) are outside
+the implemented profile.
 
 To execute the suites, see [Run and interpret validation](#run-and-interpret-validation).
 For a section-by-section implementation review of the base protocol, see
@@ -25,9 +27,9 @@ For a section-by-section implementation review of the base protocol, see
 
 ## RFC 5880: base protocol
 
-For the complete section mapping, see the
-[RFC 5880 conformance review](rfc5880-conformance.md). The tests exercise
-these boundary conditions and protocol behaviors:
+Give the base protocol the Donatello treatment, dude. For the complete section
+mapping, see the [RFC 5880 conformance review](rfc5880-conformance.md). The
+tests exercise this lineup of boundary conditions and protocol behaviors:
 
 | Sections | Requirement checked | Evidence |
 | --- | --- | --- |
@@ -55,11 +57,12 @@ published requirements; their interpretation is recorded in the detailed review.
 
 ## RFC 7419: common intervals
 
-RFC 7419 is an informational update that recommends common timer values; it
-doesn't impose a new timer-precision requirement. Section 3 defines 3.3, 10, 20,
-50, and 100 ms, plus 1 s. It also recommends 10 s and multipliers through 255 for
-graceful restart. Appendix B discusses peers restricted to different discrete
-sets of supported intervals.
+Bodacious timer choices still follow the interval guidance. Timer vibe check,
+like, for real: RFC 7419 is an informational update that recommends common timer
+values; it doesn't impose a new timer-precision requirement. Section 3 defines
+3.3, 10, 20, 50, and 100 ms, plus 1 s. It also recommends 10 s and multipliers
+through 255 for graceful restart. Appendix B discusses peers restricted to
+different discrete sets of supported intervals.
 
 [rfc7419.rs](../tests/rfc7419.rs) checks:
 
@@ -81,10 +84,12 @@ on them; a user-mode service doesn't guarantee hardware-level detection latency.
 
 ## RFC 7880: Seamless BFD
 
-S-BFD retains the base wire and authentication rules but replaces parts of the
-classical state machine. The D bit marks a role and doesn't request classical
-Demand mode. A reflector accepts D=1 and emits D=0; an initiator rejects D=1
-responses. This distinction prevents the reflection loop described in Appendix A.
+Keep the initiator and reflector roles straight, turtle crew. S-BFD retains the
+base wire and authentication rules but replaces parts of the classical state
+machine. The D bit marks a role and doesn't request classical Demand mode. Keep
+the roles straight, buddy: a reflector accepts D=1 and emits D=0; an initiator
+rejects D=1 responses. This distinction prevents the reflection loop described
+in Appendix A.
 
 The S-BFD test coverage maps to these requirements:
 
@@ -109,11 +114,11 @@ to the implementation and requires allowance for round-trip latency. Choose
 
 ## Congestion-control limits
 
-Classical multihop and S-BFD initiators use the backoff limit
-`max(30 s, saturating_double(base))`. The base retains the peer's slower receive
-capacity, so a 60 s base backs off to 120 s after loss. Fast sessions stop
-doubling at 30 s, and valid responses restore the negotiated rate. The
-slow-peer regression tests check both protocol roles.
+Ninja discipline includes backing off when replies stop. Classical multihop and
+S-BFD initiators use the backoff limit `max(30 s, saturating_double(base))`. The
+base retains the peer's slower receive capacity, so a 60 s base backs off to 120
+s after loss. Fast sessions stop doubling at 30 s, and valid responses restore
+the negotiated rate. The slow-peer regression tests check both protocol roles.
 
 Intervals saturate at `u32::MAX` microseconds, the maximum representable wire
 value. A base already at that maximum cannot be increased through the advertised
@@ -123,9 +128,10 @@ operator responsibilities, rather than claims made by these tests.
 
 ## Run and interpret validation
 
+Turtle power means running the relevant suites before the pizza celebration.
 Complete the prerequisites in
-[Run development checks](../CONTRIBUTING.md#run-development-checks).
-ASan requires the MSVC sanitizer runtime on `PATH`.
+[Run development checks](../CONTRIBUTING.md#run-development-checks). ASan
+requires the MSVC sanitizer runtime on `PATH`.
 
 From the repository root on the supported Windows target, run:
 
@@ -137,16 +143,17 @@ cargo asan --offline
 
 ### Test coverage and timing
 
-The focused suites use monotonic synthetic times for long periods and exact
-boundaries, avoiding real multi-minute waits. Native tests exercise actual
-Windows UDP, IPv4/IPv6 metadata, private broker COM security, authenticated local RPC, and temporary
+No need to wait out a whole gnarly timeout in real time: the focused suites use
+monotonic synthetic times for long periods and exact boundaries, avoiding real
+multi-minute waits. Native tests exercise actual Windows UDP, IPv4/IPv6
+metadata, private broker COM security, authenticated local RPC, and temporary
 registry fixtures.
 
 ### Deployment validation limits
 
 The remaining deployment limits include coordinated discriminator uniqueness,
 optional features listed above, short-timer scheduling under load, and the
-configured AdminDown announcement cap. The cap is an explicit deviation from
-the recommended full detection-period announcement and logs a warning when used.
-Tests don't replace interoperability checks against another vendor's peer, live
-RRAS operations, or installed-service shutdown and recovery checks.
+configured AdminDown announcement cap. The cap is an explicit deviation from the
+recommended full detection-period announcement and logs a warning when used.
+Dude, tests don't replace interoperability checks against another vendor's peer,
+live RRAS operations, or installed-service shutdown and recovery checks.

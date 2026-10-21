@@ -1,12 +1,21 @@
 # Rust skills validation — historical snapshot (2026-10-01)
 
-**Archived audit, not an assessment of the current code.** The findings, examples, source hashes, rule statuses, and test counts below describe the 2026-09-30/2026-10-01 implementation. F1 and F2 were subsequently fixed; use [the current correctness review](../../CODE_REVIEW.md) and [validation guide](../../RUST_SKILLS_VALIDATION.md) for the current state. Source links resolve to current files, so historical line anchors may no longer identify the original code. This 265-rule matrix has not been reassessed.
+**Archived audit, not an assessment of the current code.** Like, total
+flashback, turtle crew. These findings, examples, source hashes, rule statuses,
+and test counts describe the 2026-09-30/2026-10-01 implementation. F1 and F2
+were subsequently fixed; use
+[the current correctness review](../../CODE_REVIEW.md) and
+[validation guide](../../RUST_SKILLS_VALIDATION.md) for the current state.
+Source links resolve to current files, so historical line anchors may no longer
+identify the original code. No cap: this 265-rule matrix has not been
+reassessed.
 
 Initial audit: 2026-09-30. Miri revalidation: 2026-10-01. Scope: the entire service crate, its tests, Cargo manifest/lockfile, and README. The revalidation adds three ancillary-parser unit tests and Miri instructions; production behavior is unchanged.
 
 ## Navigate this snapshot
 
-Use these links to inspect the original assessment and its evidence:
+Cowabunga, archive crew. Keep the original review context in view. Cruise
+through these links to inspect the original assessment and its receipts:
 
 - [Result and assessment counts](#result).
 - [Confirmed defects](#confirmed-defects) and [guideline gaps](#guideline-gaps-and-recommendations).
@@ -16,7 +25,13 @@ Use these links to inspect the original assessment and its evidence:
 
 ## Result
 
-All 265 rules referenced by the local [rust-skills catalog](../../.codex/skills/rust-skills/SKILL.md) were assessed across all 26 categories. No `SKILLS.md` exists in this workspace; the active `SKILL.md` is the actual catalog. All referenced rule files exist. The vendored skill's illustrative code and its separate checks crate are reference material, not service targets.
+Read this as the score from that historical ninja mission. All 265 rules
+referenced by the local
+[rust-skills catalog](../../.codex/skills/rust-skills/SKILL.md) were assessed
+across all 26 categories. No `SKILLS.md` exists in this workspace; the active
+`SKILL.md` is the actual catalog. All referenced rule files exist. The vendored
+skill's illustrative code and its separate checks crate are reference material,
+not service targets.
 
 The standard checks pass. Miri now passes all 21 library tests with strict provenance, including the unsafe ancillary parser; its three focused tests also pass with Tree Borrows. Native testing passes all 26 tests. Two public-library validation defects from the initial audit remain open. No P0/P1 ownership, borrowing, or memory-safety defect was identified in the tested paths. Native Winsock operations remain outside Miri's supported execution paths. The codebase does not yet fully satisfy the applicable guidelines.
 
@@ -129,13 +144,24 @@ Recommended follow-up: adopt the RAII fixture throughout engine tests, retain bo
 
 ### Conditional performance/API improvements
 
-Packet encode/receive and keyed authentication allocate small buffers repeatedly. Options is cloned into both Engine and Session, including authentication strings retained after key parsing. Reserve complete packet capacity, separate operational settings from CLI secrets, and consider reusable or bounded inline buffers only after measuring a representative workload. No allocation or latency benchmark was run, and no improvement magnitude is claimed.
+Donatello would measure before calling an optimization bodacious. Packet
+encode/receive and keyed authentication allocate small buffers repeatedly.
+Options is cloned into both Engine and Session, including authentication strings
+retained after key parsing. Reserve complete packet capacity, separate
+operational settings from CLI secrets, and consider reusable or bounded inline
+buffers only after measuring a representative workload. No allocation or latency
+benchmark was run, and no improvement magnitude is claimed. Keep that
+performance flex grounded in measurements, buddy.
 
 Public API ergonomics could benefit from intentional visibility, redacted Debug, selected must_use annotations, root re-exports, and distinct ID types. No Tokio, Rayon, Serde, builder framework, arena, or extra abstraction is required merely because its rules are in the catalog.
 
 ## Checks and evidence
 
-Environment: `rustc 1.98.1 (48a229cea 2026-09-01)`, `cargo 1.98.1 (797e8a9bc 2026-08-05)`, target `x86_64-pc-windows-msvc`, edition 2021. The locally staged Windows CRT/SDK libraries and Rust's `rust-lld` were used as linker inputs; Cargo.toml/toolchain configuration was not changed.
+Turtle power still needs the original toolchain and evidence scope. Environment:
+`rustc 1.98.1 (48a229cea 2026-09-01)`, `cargo 1.98.1 (797e8a9bc 2026-08-05)`,
+target `x86_64-pc-windows-msvc`, edition 2021. The locally staged Windows
+CRT/SDK libraries and Rust's `rust-lld` were used as linker inputs;
+Cargo.toml/toolchain configuration was not changed.
 
 Formatting, native tests, and default Clippy were rerun on 2026-10-01. Documentation, optimized build, expanded lint counts, and the bounded packet/authentication probes below are results from 2026-09-30; production code is unchanged.
 
@@ -211,7 +237,10 @@ A repeat run requested on 2026-10-01 confirmed the same results: 21 strict-prove
 
 ## Source snapshot
 
-All nine service/test Rust files were inspected. SHA-256 identifies the source state after the Miri revalidation; only transport.rs changed, by adding tests. A service Git worktree was not available at the workspace root.
+Keep the recorded source identity totally tubular and explicit. All nine
+service/test Rust files were inspected. SHA-256 identifies the source state
+after the Miri revalidation; only transport.rs changed, by adding tests. A
+service Git worktree was not available at the workspace root.
 
 | File | Lines | SHA-256 |
 |---|---:|---|
@@ -259,7 +288,12 @@ All nine service/test Rust files were inspected. SHA-256 identifies the source s
 
 ## Complete rule matrix
 
-Every catalog rule appears once below, in catalog order. Pass is an evidence-based assessment within this service's scope, not a universal proof. Recommendations are conditional; N/A rows describe why a rule is irrelevant. Rule links point to the exact local guidance used.
+Check the scope of every verdict before the pizza victory lap. Here's the full
+rule lineup, buddy: every catalog rule appears once, in catalog order. Pass is
+an evidence-based assessment within this service's scope, not a universal proof.
+Recommendations are conditional; N/A rows describe why a rule is irrelevant.
+Rule links point to the exact local guidance used. Keep that scope dialed in
+before treating an old Pass as a fresh victory lap.
 
 ### Ownership & Borrowing
 

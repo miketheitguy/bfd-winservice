@@ -1,10 +1,12 @@
 # Service isolation and permissions
 
-For Windows administrators and developers, this reference explains installed
-service identities, privilege reduction, protected objects, and the broker's
-Component Object Model (COM) and Management Infrastructure (MI) provider
-boundary. Use it to distinguish service isolation from local administrative
-access. For channel authentication, see [Local RPC security](local-rpc.md).
+Cowabunga, service crew. Check the token before the mission starts. Windows
+admins and developers, let's check which permissions each process actually gets,
+dude. This reference explains installed service identities, privilege reduction,
+protected objects, and the broker's Component Object Model (COM) and Management
+Infrastructure (MI) provider boundary. Use it to distinguish service isolation
+from local administrative access. For channel authentication, see
+[Local RPC security](local-rpc.md).
 
 See the [security overview](../security.md) for the full boundary map. On this
 page:
@@ -15,9 +17,10 @@ page:
 
 ## Identities and privileges
 
-Windows account and service-SID checks keep each process on the permissions its
-role needs. The network-facing BFD service and the privileged BGP broker use
-separate identities.
+Keep every turtle in its assigned permissions lane. Windows account and
+service-SID checks keep each process in its lane with the permissions its role
+needs. The network-facing BFD service and the privileged BGP broker use separate
+identities.
 
 ### Installed service tokens
 
@@ -40,8 +43,9 @@ semantics](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/n
 
 ### Startup identity checks
 
-Before loading configuration, creating sockets, or registering local RPC in
-service mode, BFD checks its own process token. `TokenUser` must be
+Channel Donatello: inspect the token before opening resources. Identity
+preflight, buddy: before loading configuration, creating sockets, or registering
+local RPC in service mode, BFD checks its own process token. `TokenUser` must be
 LocalService. The BFD SID must be enabled and not deny-only in `TokenGroups`;
 both that SID and the write-restricted marker `S-1-5-33` must appear in
 `TokenRestrictedSids`. These queries never attach a token to a thread or require
@@ -50,7 +54,7 @@ restriction; the startup guard verifies the expected account and SID lists.
 
 ### Permissions by identity
 
-The installed services and local callers have these permissions:
+Here's the permissions lineup for installed services and local callers:
 
 | Identity | Permissions and limits |
 | --- | --- |
@@ -63,8 +67,9 @@ The installed services and local callers have these permissions:
 
 ### BFD privilege allowlist
 
-The MSI sets BFD's SCM `RequiredPrivileges` list to `SeChangeNotifyPrivilege`
-and `SeCreateGlobalPrivilege` in a native commit action after the installation
+Turtle power comes with a deliberately small privilege list. The MSI sets BFD's
+SCM `RequiredPrivileges` list to `SeChangeNotifyPrivilege` and
+`SeCreateGlobalPrivilege` in a native commit action after the installation
 transaction succeeds. Installation leaves the services stopped, so the allowlist
 is in place before the first normal service start. SCM applies it when Windows
 creates the process. The BFD process also permanently removes unused token
@@ -78,12 +83,14 @@ ACL and service identity checks.
 
 ### Broker privilege allowlist
 
-The LocalSystem broker permanently removes every token privilege except
-`SeChangeNotifyPrivilege` after verifying its service identity and before
-initializing COM/MI, loading its target, or registering RPC. Failure to reduce
-the token fails startup. Provider calls use the broker's own account without
-`SeImpersonatePrivilege`. Its SYSTEM account and group memberships still confer
-administrative access; privilege removal does not sandbox the broker.
+A privileged broker still needs ninja discipline. The LocalSystem broker
+permanently removes every token privilege except `SeChangeNotifyPrivilege` after
+verifying its service identity and before initializing COM/MI, loading its
+target, or registering RPC. Failure to reduce the token fails startup. Provider
+calls use the broker's own account without `SeImpersonatePrivilege`. Its SYSTEM
+account and group memberships still confer administrative access; privilege
+removal does not sandbox the broker. A smaller privilege list is, like, tubular,
+but it doesn't erase the account's authority.
 
 The MSI preserves the broker's SCM `RequiredPrivileges` configuration. Applying
 the broker's allowlist in process avoids adding a second irreversible SCM policy
@@ -93,6 +100,7 @@ separate isolated test reads the local provider schema with the reduced token.
 
 ### Installation and rollback
 
+Keep the rollback plan totally tubular, including unusual prior settings.
 Deferred account/SID configuration and rollback preserve the existing privilege
 policy, including an unspecified or empty list. The commit action sets the BFD
 minimum as its last operation that can fail; a rare snapshot-cleanup error is
@@ -102,14 +110,16 @@ to an assumed Windows default.
 
 ### Console execution
 
-Foreground `--console` execution uses the launching account and removes unused
-privileges. It provides no BGP control. Removing token privileges does not
-remove account or group memberships: an elevated console process still has the
-launching administrator's identity. The LocalService boundary applies to the
-MSI-installed service.
+A console mission uses the launching identity, turtle crew. Foreground
+`--console` execution uses the launching account and removes unused privileges.
+It provides no BGP control. Removing token privileges does not remove account or
+group memberships: an elevated console process still has the launching
+administrator's identity. The LocalService boundary applies to the MSI-installed
+service.
 
 ## Service control, configuration, and diagnostic access
 
+Know who can read, configure, and kick shell with service controls.
 Authenticated readers can inspect the granted service information; elevated
 administrators and SYSTEM hold the configuration and control rights.
 
@@ -120,7 +130,7 @@ control and configuration changes; SYSTEM retains full control.
 
 ### Protected object permissions
 
-The MSI provisions protected permissions for these objects:
+Object-permission vibe check: the MSI protects these objects:
 
 | Object | Write/control access | Read/query access |
 | --- | --- | --- |
@@ -153,8 +163,10 @@ and events](../logging.md).
 
 ## Local Windows provider security
 
-The broker executes provider work under its own LocalSystem identity. RPC
-authorization does not attach a caller token to the provider worker.
+Check the provider boundary before the pizza victory lap. Keep this one
+straight, no cap: the broker executes provider work under its own LocalSystem
+identity. RPC authorization does not attach a caller token to the provider
+worker.
 
 Native Management Infrastructure (MI) calls target the local
 `root/Microsoft/Windows/RemoteAccess` namespace and `PS_BgpPeer` class. The

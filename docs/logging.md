@@ -1,16 +1,20 @@
 # Logs and events
 
-This guide is for Windows operators reading Bidirectional Forwarding Detection
-(BFD) events and administrators configuring log destinations. Use [Set up a BFD
-session](setup.md) to provision a fresh installation.
+Cowabunga, log crew. Follow the events to the evidence. Windows operators and
+admins, let's read the receipts. Use this guide to read Bidirectional Forwarding
+Detection (BFD) events and configure log destinations. Use
+[Set up a BFD session](setup.md) to provision a fresh installation.
 
-Log vibe check: event 1 means the engine started; event 102 means BFD reached
-`Up`. Broker event 300 for mutual RPC authentication proves a separate service
-identity check, even when BFD is `Down`.
+Log vibe check, dude: event 1 means the engine started; event 102 means BFD
+reached `Up`. Broker event 300 for mutual RPC authentication proves a separate
+service identity check, even when BFD is `Down`.
 
 ## Log destinations
 
-In Windows Service Control Manager (SCM) mode, the service uses Event Tracing for Windows (ETW) to publish Operational events. In console mode, it writes to standard output (STDOUT). The service supports these destinations:
+Pick where the turtle team gets its diagnostic receipts. In Windows Service
+Control Manager (SCM) mode, the service uses Event Tracing for Windows (ETW) to
+publish Operational events. In console mode, it writes to standard output
+(STDOUT). The service supports these destinations:
 
 | Destination | When used | Content |
 | --- | --- | --- |
@@ -20,27 +24,31 @@ In Windows Service Control Manager (SCM) mode, the service uses Event Tracing fo
 
 ### Console and packet text
 
-Ordinary send errors are logged at most once per second. Generic discard reasons require `Verbose=1` and have a separate one-second limit. These messages go to STDOUT or the configured file; they do not produce Operational events.
+Keep the noise mellow: ordinary send errors are logged at most once per second.
+Generic discard reasons require `Verbose=1` and have a separate one-second
+limit. These messages go to STDOUT or the configured file; they do not produce
+Operational events.
 
 If a STDOUT write fails, the shared writer disables further console writes and attempts one standard error (STDERR) diagnostic. File logging, BFD execution, and Border Gateway Protocol (BGP) control continue. A failed diagnostic write is ignored.
 
 ### Output queue and loss
 
-One background writer handles text output and ETW events for the engine and its
-BGP worker. Slow output does not delay BFD timers or Stop processing. The queue
-holds up to 256 records; when it fills, additional records are dropped instead
-of delaying protocol execution. Text messages are limited to 16 KiB on UTF-8
-character boundaries. When output resumes, the writer reports how many records
-were dropped to STDOUT or the enabled file log. This diagnostic does not produce
-an Operational event.
+Even a bodacious log pipeline has queue limits. One background writer handles
+the text and ETW workload for the engine and its BGP worker. Slow output does
+not delay BFD timers or Stop processing. The queue holds up to 256 records; when
+it fills, additional records are dropped instead of delaying protocol execution.
+Text messages are limited to 16 KiB on UTF-8 character boundaries. When output
+resumes, the writer reports how many records were dropped to STDOUT or the
+enabled file log. This diagnostic does not produce an Operational event.
 
 ### File rotation and buffering
 
-File output rotates before a complete line would exceed 64 MiB. The writer
-renames the active file to `LogFilePath` with `.1` appended, replacing the earlier
-backup, and creates a new file. Each file stays within 64 MiB, including buffered
-bytes and timestamps. Existing oversized files are rotated without extending
-them; the logger does not shrink their existing contents.
+Keep the log stash totally tubular and check rotation behavior. File output
+rotates before a complete line would exceed 64 MiB. The writer renames the
+active file to `LogFilePath` with `.1` appended, replacing the earlier backup,
+and creates a new file. Each file stays within 64 MiB, including buffered bytes
+and timestamps. Existing oversized files are rotated without extending them; the
+logger does not shrink their existing contents.
 
 If a reader denies delete sharing, rotation can fail. Lines that need rotation
 are dropped from file output until rotation succeeds, with retries at most once
@@ -58,14 +66,15 @@ STDOUT.
 
 ### Shutdown and timestamps
 
-Before reporting Stopped, each service explicitly waits up to two seconds for
-queued output to flush. Releasing the last logger then allows up to another
-500 milliseconds for the writer to drain; console shutdown uses this final-drop
-wait. If output remains blocked, execution ends without waiting for that writer.
-Queued events can be lost in this case; abrupt termination can also lose
-buffered file entries. File timestamps record when the writer formats each
-entry. Slow output can delay that timestamp relative to the underlying BFD
-state change, and buffering can delay when the entry becomes visible.
+Ninja discipline includes knowing when an entry was written. Before reporting
+Stopped, each service explicitly waits up to two seconds for queued output to
+flush. Releasing the last logger then allows up to another 500 milliseconds for
+the writer to drain; console shutdown uses this final-drop wait. If output
+remains blocked, execution ends without waiting for that writer. Queued events
+can be lost in this case; abrupt termination can also lose buffered file
+entries. File timestamps record when the writer formats each entry. Slow output
+can delay that timestamp relative to the underlying BFD state change, and
+buffering can delay when the entry becomes visible.
 
 ## Read logs without service-control privileges
 
@@ -84,9 +93,11 @@ events](monitoring.md).
 
 ## Configure file logging
 
-Run the commands in **PowerShell as Administrator**. Provision the session and
-copy the logging script using [Set up a BFD session](setup.md) first. For a custom
-destination, review [File paths, permissions, and timestamps](#file-paths-permissions-and-timestamps)
+Get the log destination ready before pizza time. Time to lock in: run the
+commands in **PowerShell as Administrator**. Provision the session and copy the
+logging script using [Set up a BFD session](setup.md) first. For a custom
+destination, review
+[File paths, permissions, and timestamps](#file-paths-permissions-and-timestamps)
 before enabling output.
 
 <a id="1-provision-the-defaults"></a>
@@ -116,7 +127,7 @@ LogToFile (REG_DWORD): 0
 
 ### 2. Enable file output
 
-Set the output path and enable file logging:
+Dial in the output path and enable file logging:
 
 ```powershell
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
@@ -138,13 +149,18 @@ Start the service or console process, or restart it if already running, to load 
 Get-Content 'C:\ProgramData\BfdWinService\trace.log' -Tail 20
 ```
 
-Confirm that each line has a UTC timestamp ending in `Z`. Console output uses Unix milliseconds; redirecting STDOUT to a file preserves that console format.
+Timestamp vibe check, turtle crew: each line needs a UTC timestamp ending in
+`Z`. Console output uses Unix milliseconds; redirecting STDOUT to a file
+preserves that console format.
 
 To disable file output, set `LogToFile` to DWORD `0` and restart execution. See the [configuration reference](configuration.md#logging-and-bgp) for the setting types and defaults.
 
 ## File paths, permissions, and timestamps
 
-At startup, the process reads `LogFilePath` and `LogToFile` from the Parameters key. If `LogFilePath` is absent, it uses `C:\ProgramData\BfdWinService\trace.log`.
+Give the log path the Donatello treatment: check access and timestamps. At
+startup, the process reads `LogFilePath` and `LogToFile` from the Parameters
+key. If `LogFilePath` is absent, it uses
+`C:\ProgramData\BfdWinService\trace.log`.
 
 The script and executable fallback use that literal path. The MSI instead
 provisions the path under the machine's ProgramData location, which can differ.
@@ -177,15 +193,18 @@ Each file line starts with the current UTC time in `YYYY-MM-DDTHH:mm:ss.sssZ` fo
 
 ## Operational events
 
-In Event Viewer, open **Applications and Services Logs → BFD-Service → Operational**.
-The provider uses one Operational channel. State events and diagnostic events
-are separate records, with independent severity levels.
+Cowabunga, event crew. Check the event meaning and severity together. In Event
+Viewer, open **Applications and Services Logs → BFD-Service → Operational**. The
+provider uses one Operational channel. State events and diagnostic events are
+separate records, with independent severity levels.
 
 ### BGP broker and RPC telemetry events
 
-The BGP broker uses this channel for event **300** (Information: readiness and
+Turtle power means telling provider results from telemetry results. The BGP
+broker uses this channel for event **300** (Information: readiness and
 management results) and **301** (Error: startup, authorization, or provider
-failure). These messages include the configured peer and operation when available.
+failure). These messages include the configured peer and operation when
+available.
 
 Event 300 also records `BFD local RPC mutual service identity verified`,
 `BFD session status unavailable`, and `BFD session telemetry stale`. The broker
@@ -207,7 +226,7 @@ actions.
 
 ### Lifecycle, communication, and state events
 
-The following events identify execution, communication, and state changes:
+These events bring the receipts for execution, communication, and state changes:
 
 | ID | Level | Meaning |
 | --- | --- | --- |
@@ -255,7 +274,8 @@ Suppression affects logging only; BFD state and BGP actions are unchanged.
 
 ### Diagnostic events
 
-The diagnostic names follow
+A radical-looking event still needs its diagnostic context. The diagnostic names
+follow
 [RFC 5880 section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1).
 The following severity levels are the service's logging policy:
 
@@ -321,7 +341,8 @@ leave the preceding settings active.
 
 ### Service warnings
 
-Warning event 4 carries a text message. The service writes it in these cases:
+Check these warnings before the turtle team rolls on. Heads up, buddy: Warning
+event 4 carries a text message in these cases:
 
 - At startup, for valid settings that let spoofed or replayed packets change
   BFD state, and where supported BGP: multihop without authentication, including
@@ -348,11 +369,13 @@ The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](..
 
 ## Logging failures
 
-ETW registration failures are reported to STDERR before the optional file log is open. ETW write failures go to the optional text log. Neither stops BFD.
-For each queued state or diagnostic record, the worker attempts ETW output
-before file output. An ETW failure doesn't suppress the file entry; a file
-failure doesn't disable later ETW writes. Queue loss, blocked output, and
-shutdown drain limits still apply to both destinations.
+Keep your shell together and inspect the failed output path. A logging failure
+is, like, a major bummer. ETW registration failures are reported to STDERR
+before the optional file log is open. ETW write failures go to the optional text
+log. Neither stops BFD. For each queued state or diagnostic record, the worker
+attempts ETW output before file output. An ETW failure doesn't suppress the file
+entry; a file failure doesn't disable later ETW writes. Queue loss, blocked
+output, and shutdown drain limits still apply to both destinations.
 
 The logger starts before configuration is read. Its output worker registers the provider before processing queued events, allowing registry and file-log startup failures to emit event 3. Dispatcher/control-handler failures, registration failures, blocked output, queue overflow, or abrupt process termination can prevent lifecycle events. A successful ETW write does not guarantee Event Log delivery; install the manifest and keep the channel enabled.
 

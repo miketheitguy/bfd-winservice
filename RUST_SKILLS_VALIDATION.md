@@ -1,16 +1,19 @@
 # Rust skills validation — current guide
 
-Updated 2026-10-16. This guide helps Rust maintainers check the implemented API
-and choose validation commands using the local
-[Rust skill](.codex/skills/rust-skills/SKILL.md). The
-[correctness review](CODE_REVIEW.md) records fixes, checks, and validation limits.
-The [2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves
+Cowabunga, validation crew. Bring the receipts for the checkout you inspect.
+Updated 2026-10-16. Rust maintainers, let's get the validation lineup dialed in.
+This guide helps you check the implemented API and choose validation commands
+using the local [Rust skill](.codex/skills/rust-skills/SKILL.md). The
+[correctness review](CODE_REVIEW.md) records fixes, checks, and validation
+limits. The
+[2026-10-01 audit](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) preserves
 the original 265-rule matrix; its defect examples, source hashes, rule counts,
 and test counts are historical.
 
 ## Choose a validation task
 
-Use these links to separate checkout guidance from recorded results:
+Choose your next test mission, turtle crew. Like, pick your line, buddy: these
+links separate checkout guidance from recorded results:
 
 | Task | Section |
 | --- | --- |
@@ -23,10 +26,12 @@ Use these links to separate checkout guidance from recorded results:
 
 ## Read the validation receipts
 
-Each dated section records its own revision. Counts and successful checks are
-historical evidence, not a passing result for this checkout. The documentation
-audit on 2026-10-15 checks descriptions against source and build configuration;
-it does not rerun or replace the recorded runtime tests.
+Donatello would check both the revision and the test scope. History vibe check:
+each dated section records its own revision. Counts and successful checks are
+historical evidence, not a passing result for this checkout. No cap: rerun the
+checks before shouting Cowabunga for this checkout. The documentation audit on
+2026-10-15 checks descriptions against source and build configuration; it does
+not rerun or replace the recorded runtime tests.
 
 Use these implementation details when an older entry describes a superseded
 design:
@@ -56,12 +61,14 @@ design:
 
 ## Current API and validation
 
-Use these sections for checkout commands and API contracts. Dated test
-paragraphs retain the results and limits of their recorded revisions.
+Keep the active API guidance ready to kick shell. Use these sections for
+checkout commands and API contracts. Dated test paragraphs retain the results
+and limits of their recorded revisions.
 
 ### Check the current checkout
 
-On x64 Windows with the MSVC toolchain and Windows SDK installed, use the
+Get the toolchain lined up for a bodacious validation run. Time to lock in. On
+x64 Windows with the MSVC toolchain and Windows SDK installed, use the
 repository's nightly toolchain and build configuration:
 
 ```powershell
@@ -120,7 +127,11 @@ File log entries use `YYYY-MM-DDTHH:mm:ss.sssZ` timestamps sampled immediately b
 
 ### Ownership and concurrency boundaries
 
-Session reception verifies authentication before modifying state, timers, or sequence tracking. Verification returns a sequence for the session to commit; verification alone does not update tracking. Transport peer/path checks happen before session processing in the runtime.
+Ninja discipline starts with clear owners and native lifetimes. Keep ownership
+dialed in, dude. Session reception verifies authentication before modifying
+state, timers, or sequence tracking. Verification returns a sequence for the
+session to commit; verification alone does not update tracking. Transport
+peer/path checks happen before session processing in the runtime.
 
 The broker's MI wrappers own their native handles, keep them on the calling
 thread, and release children before their session/application. Borrowed MI
@@ -155,10 +166,12 @@ The unsafe ancillary parser checks buffer bounds before unaligned reads. Its syn
 
 ## Historical validation records
 
-These entries preserve earlier implementation and validation results. Their
+Turtle power keeps old results tied to their original missions. These are the
+flashback receipts: earlier implementation and validation results. Their
 behavior descriptions and counts apply to the named revisions; use
 [Read the validation receipts](#read-the-validation-receipts) for superseded
-details and [Check the current checkout](#check-the-current-checkout) to run checks.
+details and [Check the current checkout](#check-the-current-checkout) to run
+checks.
 
 ### Local RPC security validation — 2026-10-15
 
@@ -253,8 +266,8 @@ strict Clippy, and rustdoc checks passed. One opt-in CIM schema test was ignored
 
 ### Expanded hardening review — 2026-10-08
 
-This entry records the Rust-only build and release PDBs at that revision. The
-native RPC bridge and symbol-free release policy described in
+Heads up, buddy: this entry records the Rust-only build and release PDBs at that
+revision. The native RPC bridge and symbol-free release policy described in
 [build security](CONTRIBUTING.md#build-security) supersede those details.
 
 Mapped the requested MSVC and Rust settings to the Rust-only build in

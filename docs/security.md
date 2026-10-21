@@ -1,9 +1,11 @@
 # Security, authentication, and build hardening
 
-For Windows administrators, developers, and security reviewers, this guide maps
-the service's trust boundaries and links to the detailed security references.
-Use it to find the identity, permission, authentication, or build protection that
-applies to a channel. For installation steps, see [Set up a BFD session](setup.md).
+Cowabunga, security crew. Check which boundary each protection covers. Windows
+admins, developers, and security reviewers, let's get the boundaries dialed in.
+This guide maps the service's trust boundaries and links to the detailed
+security references. Use it to find the identity, permission, authentication, or
+build protection that applies to a channel. For installation steps, see
+[Set up a BFD session](setup.md).
 
 The network-facing BFD process runs as LocalService. A separate LocalSystem BGP
 broker performs privileged management for one configured target through COM/MI.
@@ -15,7 +17,8 @@ protects a different boundary.
 
 ## Find a security topic
 
-Choose the reference for the boundary you need to inspect:
+Pick the next security mission, turtle crew. Pick the boundary you're checking,
+buddy, and follow its reference:
 
 | Topic | Reference |
 | --- | --- |
@@ -29,12 +32,14 @@ Choose the reference for the boundary you need to inspect:
 
 ## Identities and privileges
 
-The MSI installs BFD with a restricted service SID and a two-privilege allowlist.
-The broker retains its separate LocalSystem management identity and removes
-all token privileges except `SeChangeNotifyPrivilege` at startup. Both services
+Ninja discipline starts with checking the actual service identity. The MSI
+installs BFD with a restricted service SID and a two-privilege allowlist. The
+broker retains its separate LocalSystem management identity and removes all
+token privileges except `SeChangeNotifyPrivilege` at startup. Both services
 check their own account and enabled service SID before opening their private
-interfaces. Account membership or an endpoint name alone does not authenticate
-a service.
+interfaces. Account membership or an endpoint name alone does not authenticate a
+service. An endpoint-name vibe check alone would be bogus. As if a familiar name
+were proof of identity.
 
 For token checks, write-restriction semantics, installer rollback, console
 execution, and local administrative access, see
@@ -42,7 +47,8 @@ execution, and local administrative access, see
 
 ## Communication boundaries
 
-The installed services use two private service channels and a provider path:
+Give each service channel the Donatello treatment. Here's how the installed
+services roll: two private service channels and a provider path:
 
 | Call initiator to receiver | Channel | Purpose |
 | --- | --- | --- |
@@ -74,10 +80,12 @@ security settings and their alignment with Microsoft guidance.
 
 ## Authentication and authorization
 
-Authentication establishes who sent a packet or request. Authorization determines
-which actions that identity can perform. Windows uses account and service tokens
-for local access; configured BFD wire authentication uses a shared secret. UDP
-source and TTL checks do not replace an identity check.
+Turtle power still needs separate identity and permission checks. Authentication
+establishes who sent a packet or request. Authorization determines which actions
+that identity can perform. Windows uses account and service tokens for local
+access; configured BFD wire authentication uses a shared secret. UDP source and
+TTL checks do not replace an identity check. No cap: path checks and identity
+checks prove different things.
 
 The boundary labels match the [service communication diagrams](service-communication.md):
 
@@ -92,19 +100,21 @@ The boundary labels match the [service communication diagrams](service-communica
 
 ## Rust compiler and linker hardening
 
-Both executables use Rust instrumentation, MSVC mitigation metadata, and native C
-compiler checks. Production panics abort; test profiles use different panic and
-diagnostic settings. These protections supplement authentication and input
+Both executables use Rust instrumentation, MSVC mitigation metadata, and native
+C compiler checks. Production panics abort; test profiles use different panic
+and diagnostic settings. These protections supplement authentication and input
 validation. Their effectiveness depends on the emitted artifacts and applicable
-Windows process policy.
+Windows process policy. Even totally tubular compiler flags still need artifact
+receipts, for sure.
 
 For the complete option tables, native FFI exception policy, sanitizer scope, and
 verification limits, see [Build hardening and native safety](security/build-hardening.md).
 
 ## Security evidence and validation
 
-The design follows least privilege, explicit authorization, defense in depth,
-and careful ownership of native resources. Microsoft's
+Bodacious security claims need evidence and clear limits. The design follows
+least privilege, explicit authorization, defense in depth, and careful ownership
+of native resources. Microsoft's
 [RPC client-authentication guidance](https://learn.microsoft.com/en-us/windows/win32/rpc/controlling-client-authentication)
 supports the callback, call-attribute, and Authz approach. Its
 [service access-rights guidance](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights)
@@ -134,8 +144,9 @@ to keep each result tied to its revision.
 
 ## Source map
 
-These files implement the authentication, privilege, and native resource
-boundaries described in this guide:
+Follow the code trail before the pizza break. For the code receipts, these files
+implement the authentication, privilege, and native resource boundaries
+described in this guide:
 
 | Path | Relevant implementation |
 | --- | --- |

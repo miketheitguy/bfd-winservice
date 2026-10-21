@@ -1,16 +1,17 @@
 # Set up a BFD session
 
-This guide is for Windows systems administrators provisioning a fresh
-Bidirectional Forwarding Detection (BFD) Windows service installation or a
-foreground console session. The service monitors one configured local/peer pair.
-Use [Install with an MSI](#install-with-an-msi) for the package produced by
-GitHub Actions. Loose files support foreground console execution; SCM operation
+Cowabunga, install crew. Get the session ready for action. Windows systems
+admins, let's get this setup rolling. Use this guide for a fresh Bidirectional
+Forwarding Detection (BFD) Windows service installation or a foreground console
+session. The service monitors one configured local/peer pair. Use
+[Install with an MSI](#install-with-an-msi) for the package produced by GitHub
+Actions. Loose files support foreground console execution; SCM operation
 requires the MSI to provision both services and their security settings.
 
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
 
-The startup vibe check has two parts: Windows reports `Running`, then BFD
+The startup vibe check has two parts, dude: Windows reports `Running`, then BFD
 reports `Up` after it establishes peer communication.
 
 Choose the path for your deployment:
@@ -25,7 +26,8 @@ Choose the path for your deployment:
 
 ## Before you begin
 
-Prepare the following:
+Gather the gear before the ninja mission starts. Before you send it, line up
+these prerequisites:
 
 - Obtain the x64 MSI from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
@@ -41,7 +43,7 @@ Prepare the following:
   firewall rules or discover peers. The MSI installs the rules described in
   [MSI firewall rules](#msi-firewall-rules).
 
-Find the interface that owns your local address:
+Get your bearings: find the interface that owns your local address:
 
 ```powershell
 Get-NetIPAddress |
@@ -53,6 +55,7 @@ the default single-hop session.
 
 ## Install with an MSI
 
+Kick shell with the installer while keeping its privilege requirements clear.
 Installation, repair, and removal require administrator privileges. The MSI
 requests elevation for its per-machine installation and rejects installation
 sessions without the required privileges. Run command-line installation from
@@ -101,7 +104,8 @@ means installation succeeded and Windows requests a restart.
 
 ### 2. Configure and start the session
 
-Before the first start, complete these steps:
+Turtle power starts with preflight, buddy. Like, for sure, complete these steps
+before the first start:
 
 1. [Enable SEHOP for the executable](#enable-sehop-for-the-executable).
    The MSI doesn't change Windows Exploit Protection policy.
@@ -116,7 +120,8 @@ references to configure authentication, multihop, S-BFD, or file output.
 
 ### Installed resources and security settings
 
-The MSI installs the following resources for all users:
+Donatello would inspect the full installation inventory, dude. The MSI installs
+the following resources for all users:
 
 - Both executables, the manifest, and logging script in
   `C:\Program Files\BfdWinService`.
@@ -169,10 +174,11 @@ The MSI installs the following resources for all users:
 
 ### MSI firewall rules
 
-Four rules allow UDP for the installed executable on Domain, Private, and Public
-profiles. Remote addresses are unrestricted so multihop, anycast, and
-point-to-point configurations can use their configured peers.
-The rules have these protocol and port restrictions:
+Keep the network entrance totally tubular and check the actual rules. Four rules
+allow UDP for the installed executable on Domain, Private, and Public profiles.
+Remote addresses are unrestricted so multihop, anycast, and point-to-point
+configurations can use their configured peers. The rules have these protocol and
+port restrictions:
 
 | Rule | Protocol / action | Direction | Local ports | Remote ports |
 | --- | --- | --- | --- | --- |
@@ -194,8 +200,8 @@ Get-NetFirewallRule |
     Select-Object DisplayName, Direction, Enabled, Profile
 ```
 
-Confirm that the four rules are enabled. To inspect ports, pipe the matching
-rules to `Get-NetFirewallPortFilter`.
+Firewall vibe check: confirm that the four rules are enabled. To inspect ports,
+pipe the matching rules to `Get-NetFirewallPortFilter`.
 
 ### Remove an MSI installation
 
@@ -212,8 +218,9 @@ remain consistent.
 
 ## Prepare installation files
 
-For a console-only deployment, copy the supplied files to a permanent folder.
-Skip this section when the MSI already installed them:
+Pack the console gear before the pizza run. For a console-only deployment, copy
+the supplied files to a permanent folder. If the MSI already installed them,
+you're set; skip this section:
 
 ```powershell
 $deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
@@ -238,9 +245,9 @@ copying files doesn't create services, service identities, or access policies.
 
 ## Enable SEHOP for the executable
 
-In **PowerShell as Administrator**, enable Structured Exception Handling
-Overwrite Protection (SEHOP) for the executable. For an MSI deployment, also
-apply it to the broker:
+Turtle power includes checking the Windows process protections. In **PowerShell
+as Administrator**, enable Structured Exception Handling Overwrite Protection
+(SEHOP) for the executable. For an MSI deployment, also apply it to the broker:
 
 ```powershell
 Set-ProcessMitigation -Name bfd-winservice.exe -Enable SEHOP
@@ -306,7 +313,8 @@ event manifest.
 
 ### 2. Configure the session
 
-Provision the required session values:
+Bodacious sessions start with the right configuration. Dial in the required
+session values:
 
 ```powershell
 $localIp = 'LOCAL_IP'
@@ -355,21 +363,23 @@ For authentication, multihop, or other settings, see the
 
 ### 3. Verify the Operational log
 
-The MSI registers the Event Tracing for Windows (ETW) manifest. Confirm that
-the provider and channel are available:
+Check the log receipts before shouting Cowabunga. The MSI registers the Event
+Tracing for Windows (ETW) manifest. Confirm that the provider and channel are
+available:
 
 ```powershell
 Get-WinEvent -ListProvider 'BFD-Service'
 Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
-The queries display the `BFD-Service` provider and its Operational channel.
-If either is missing, repair the MSI installation before starting BFD.
-Starting the executable doesn't install the manifest.
+The queries display the `BFD-Service` provider and its Operational channel. If
+either is missing, that's a setup bummer: repair the MSI installation before
+starting BFD. Starting the executable doesn't install the manifest.
 
 ### 4. Start the service
 
-Start the provisioned service:
+Roll out, ninja crew, after the configuration steps are complete. Start the
+provisioned service:
 
 ```powershell
 Start-Service BfdWinService
@@ -379,7 +389,8 @@ The command returns without output on success.
 
 ### 5. Verify startup
 
-Check the Windows Service Control Manager (SCM) status:
+Cowabunga, verification crew. Check the process status separately. Check the
+Windows Service Control Manager (SCM) status:
 
 ```powershell
 Get-Service BfdWinService | Select-Object Name, Status, StartType
@@ -412,7 +423,8 @@ The RPC interface has no administrator-facing configuration or public query clie
 
 ### 6. Verify peer communication
 
-After configuring the remote peer, inspect startup and handshake events:
+Save the pizza celebration for the peer-communication receipts. After
+configuring the remote peer, check the startup and handshake receipts:
 
 ```powershell
 $eventFilter = @{
@@ -440,7 +452,7 @@ For monitoring scripts, see [Monitor service status and BFD events](monitoring.m
 
 ### 7. Optional: Stop the service
 
-To stop the session, run:
+A turtle knows when to exit with cleanup, dude. To stop the session, run:
 
 ```powershell
 Stop-Service BfdWinService
@@ -459,13 +471,15 @@ See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 
 ## Run in a console
 
-Console execution reads the same Parameters registry values as service execution.
-Run it as Administrator when using the MSI-protected key. Console mode does not
-authorize BGP operations; leave `BgpPeerName` and `BgpRoutingDomain`
-unset for foreground execution.
+Take the session on a foreground mission, turtle crew. Console execution reads
+the same Parameters registry values as service execution. Run it as
+Administrator when using the MSI-protected key. Console mode does not authorize
+BGP operations; leave `BgpPeerName` and `BgpRoutingDomain` unset for foreground
+execution.
 
-Stop an installed `BfdWinService` before running the same session in a console;
-both processes would otherwise compete for the same addresses and ports.
+Dude, stop an installed `BfdWinService` before running the same session in a
+console; both processes would otherwise compete for the same addresses and
+ports.
 
 ### 1. Configure the registry values
 
@@ -496,8 +510,8 @@ output with ISO-8601 UTC timestamps.
 
 ### 3. Verify the handshake
 
-After configuring the remote peer, confirm the console output contains
-`state=Up`. This confirms BFD establishment separately from the
+For the real connection flex, configure the remote peer and confirm the console
+output contains `state=Up`. This confirms BFD establishment separately from the
 `service started` message.
 
 ### 4. Stop the session
@@ -525,8 +539,9 @@ This shell redirection is separate from the `LogToFile` setting.
 
 ## Remove a legacy manual installation
 
-For an MSI installation, use [Remove an MSI installation](#remove-an-msi-installation).
-The following procedure removes services from a legacy manual installation.
+Wrap up the old mission before the next pizza break. For an MSI installation,
+use [Remove an MSI installation](#remove-an-msi-installation). The following
+procedure removes services from a legacy manual installation.
 
 Use **PowerShell as Administrator** with the installed manifest path.
 

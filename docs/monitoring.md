@@ -1,33 +1,39 @@
 # Monitor service status and BFD events
 
-This guide is for Windows operators checking service lifecycle and Bidirectional
+Cowabunga, monitoring crew. Check the evidence before the victory lap. Windows
+operators, let's check the receipts for service lifecycle and Bidirectional
 Forwarding Detection (BFD) session transitions. Use Windows service queries for
 process lifecycle and the Operational event log for transitions over time.
 
-`Running` isn't an Up-session flex: check the transition events and their
-timestamps before drawing conclusions about peer health.
+Save the Cowabunga for the evidence, dude. `Running` alone doesn't earn an
+Up-session flex: check the transition events and their timestamps before drawing
+conclusions about peer health.
 
 ## Before you begin
 
-Use a PowerShell session on the installed host. Authenticated local users can
-query service lifecycle without elevation. Event queries also require permission
-to read the Operational channel under the host's Windows Event Log policy.
+Gather the host access needed for the ninja mission. Use a PowerShell session on
+the installed host. Authenticated local users can query service lifecycle
+without elevation. Event queries also require permission to read the Operational
+channel under the host's Windows Event Log policy.
 
 For access rights by operation, see [Access permissions](#access-permissions).
 
 ## Available monitoring interfaces
 
-The BFD service exposes private read-only session telemetry to the broker over
-mutually authenticated local RPC. The broker uses an in-process worker and a
-validated cache; there is no administrative RPC client or public status endpoint.
-See [RPC session-status query](rpc-session-status-design.md) for fields and
-freshness. Use the lifecycle and event queries here for operator monitoring.
-RPC success authenticates the exchange but does not by itself establish a
-fresh snapshot or an Up session.
+Turtle power starts with using the interface meant for the job. The BFD service
+exposes private read-only session telemetry to the broker over mutually
+authenticated local RPC. The broker uses an in-process worker and a validated
+cache; there is no administrative RPC client or public status endpoint. See
+[RPC session-status query](rpc-session-status-design.md) for fields and
+freshness. Use the lifecycle and event queries here for operator monitoring. RPC
+success authenticates the exchange but does not by itself establish a fresh
+snapshot or an Up session.
 
 ## Monitor lifecycle and state transitions
 
-Use separate queries for Windows lifecycle and recorded BFD transitions.
+Keep these observations in formation, turtle crew. Keep these checks in their
+own lanes: use separate queries for Windows lifecycle and recorded BFD
+transitions.
 
 ### Query service lifecycle
 
@@ -42,7 +48,8 @@ BFD session reached `Up`.
 
 ### Read recent BFD transitions
 
-Read recent local state-transition events with:
+Channel Donatello and read the event history carefully. Read recent local
+state-transition events with:
 
 ```powershell
 Get-WinEvent -FilterHashtable @{
@@ -59,8 +66,9 @@ under load. A latest event is not a guaranteed current-state snapshot. See
 
 ## Verify broker-to-BFD authentication
 
-Use event messages to distinguish authenticated replies from connection,
-validation, and worker failures.
+Bodacious telemetry needs verified service identities. Like, hello: for the RPC
+vibe check, use event messages to distinguish authenticated replies from
+connection, validation, and worker failures.
 
 ### Query authentication events
 
@@ -85,6 +93,7 @@ logged on first connection or recovery, not after every one-second query.
 
 ### Investigate RPC status failures
 
+A missing reply is a bummer, dude; inspect the failure category.
 `BFD session status unavailable` reports a connection or RPC failure; the cache
 is cleared and the monitor retries. `BFD session telemetry stale` means the
 conservative snapshot age exceeds two seconds. That is a monitoring threshold,
@@ -114,22 +123,24 @@ Get-WinEvent -FilterHashtable @{
 } | Select-Object TimeCreated, Id, Message
 ```
 
-Investigate mismatched binaries, BFD startup errors, clock validity, and the
-record rejection category when errors repeat. Rejected replies recover
-automatically; a stuck-worker quarantine requires investigation and a restart
-through the normal service administration workflow. Do not broaden an ACL or
-treat an old successful event as current telemetry. Ordinary failures and
-rejected-data errors are each limited to one report per minute, even across
-successful replies; a stalled-worker quarantine logs once. Matching executables,
-installed accounts, service SIDs, and privilege policy remain required.
+When the errors keep rolling in, investigate mismatched binaries, BFD startup
+errors, clock validity, and the record rejection category. Rejected replies
+recover automatically; a stuck-worker quarantine requires investigation and a
+restart through the normal service administration workflow. Do not broaden an
+ACL or treat an old successful event as current telemetry. Old receipts don't
+get a freshness glow-up, buddy. Ordinary failures and rejected-data errors are
+each limited to one report per minute, even across successful replies; a
+stalled-worker quarantine logs once. Matching executables, installed accounts,
+service SIDs, and privilege policy remain required.
 
 For packet communication and session readiness, use events 100–112 separately.
 The private RPC endpoint needs no firewall rule or public client configuration.
 
 ## Access permissions
 
-The MSI applies protected Windows Service Control Manager (SCM) permissions to
-both services:
+A ninja mission still needs the required access rights. Permissions check, no
+cap: the MSI applies protected Windows Service Control Manager (SCM) permissions
+to both services:
 
 | Operation | Allowed principals |
 | --- | --- |
@@ -147,10 +158,11 @@ uses Windows Event Log permissions without a custom channel ACL.
 
 ## Broker communication
 
-Border Gateway Protocol (BGP) requests pass through the authenticated service
-local RPC interface. The caller must
-have LocalService in `TokenUser`, an enabled BFD service group, and the BFD SID
-in a restricted token's restricting list; an ordinary
-administrator process cannot submit broker requests. This service-to-service
-permission is required for BGP control. See [Control a Windows BGP peer](bgp.md)
-for the BGP RPC contract, broker identity checks, and native provider calls.
+Keep the broker boundary totally tubular and service-specific. Border Gateway
+Protocol (BGP) requests pass through the authenticated service local RPC
+interface. The caller must have LocalService in `TokenUser`, an enabled BFD
+service group, and the BFD SID in a restricted token's restricting list; an
+ordinary administrator process cannot submit broker requests. This
+service-to-service permission is required for BGP control. See
+[Control a Windows BGP peer](bgp.md) for the BGP RPC contract, broker identity
+checks, and native provider calls.

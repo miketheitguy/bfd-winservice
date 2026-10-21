@@ -1,8 +1,9 @@
 # Contribute to BFD Windows service
 
-This guide is for developers building, testing, and changing BFD Windows service.
-It also explains how to prepare the files that systems administrators install.
-Run the commands from the repository root.
+Developers, let's build something, like, totally tubular. This guide covers
+building, testing, and changing BFD Windows service. It also explains how to
+prepare the files that systems administrators install. Run the commands from the
+repository root.
 
 For service installation and configuration, see
 [Set up a BFD session](docs/setup.md). For the full guide map, see the
@@ -10,7 +11,8 @@ For service installation and configuration, see
 
 ## Choose a development task
 
-Use these entry points to find the relevant procedure or reference:
+Cowabunga, code crew. Choose your next mission. Pick your next move from these
+procedures and references, buddy:
 
 | Task | Start here |
 | --- | --- |
@@ -25,7 +27,8 @@ Use these entry points to find the relevant procedure or reference:
 
 ## Before you begin
 
-You need:
+Get your development gear together before you kick shell. Before you paddle out,
+get this toolchain together:
 
 - 64-bit Windows 10 or later, or Windows Server 2016 or later, on an
   x64 processor.
@@ -41,12 +44,13 @@ generates RPC stubs from the interface definition and compiles a small native
 wrapper that contains Windows RPC exceptions. Service logic and authentication
 remain in Rust.
 
-Before you ship, bring receipts: record the checks you ran and the deployment
-behavior that still needs a provisioned Windows Server.
+Before you ship, bring receipts, dude: record the checks you ran and the
+deployment behavior that still needs a provisioned Windows Server.
 
 ## Build the executable
 
-Build the executable and inspect its command-line help:
+Bodacious builds start with the actual compiler output. Time to lock in: build
+the executable and inspect its command-line help:
 
 ```powershell
 cargo build --locked --release
@@ -69,8 +73,9 @@ RPC build. For custom installations, set `BFD_MIDL_PATH`, `BFD_MC_PATH`, and
 
 ## Build security
 
-For the runtime authentication boundaries, diagrams, and the security benefits
-of each build option, see [Security, authentication, and build hardening](docs/security.md).
+Turtle power means checking the build protections, dude. For the runtime
+authentication boundaries, diagrams, and the security benefits of each build
+option, see [Security, authentication, and build hardening](docs/security.md).
 
 Windows builds support only `x86_64-pc-windows-msvc`. This is the default target;
 the build rejects other Windows targets, including 32-bit x86 and ARM64.
@@ -295,11 +300,12 @@ Source checksums aren't a binary signature.
 
 ### Run AddressSanitizer checks
 
-AddressSanitizer (ASan) detects memory errors during testing. The repository's
-`cargo asan` alias enables `-Z sanitizer=address`, preserves the Windows
-hardening flags, rebuilds the standard library, and writes to `target/asan`.
-It also passes the sanitizer flag to `rustdoc` for documentation tests.
-Its dedicated profile uses unwinding for the test harness.
+Channel Donatello: look for memory errors before the pizza celebration. For the
+memory-error vibe check, AddressSanitizer (ASan) detects memory errors during
+testing. The repository's `cargo asan` alias enables `-Z sanitizer=address`,
+preserves the Windows hardening flags, rebuilds the standard library, and writes
+to `target/asan`. It also passes the sanitizer flag to `rustdoc` for
+documentation tests. Its dedicated profile uses unwinding for the test harness.
 
 The sanitizer is enabled only by this alias. Rust documents ASan for testing
 and fuzzing because its instrumentation adds runtime overhead. Cargo uses
@@ -343,11 +349,12 @@ build does not pass MSVC's `/fsanitize=address` option.
 
 ## Use the Rust configuration and error APIs
 
-`Options` contains mutable provisioning input. Call `Options::into_validated()`
-to produce an immutable `ValidatedOptions` snapshot. On Windows,
-`config::load_registry()` returns this snapshot directly. Clones share its
-storage, and `ProtocolRole` carries the required nonzero initiator or reflector
-discriminator.
+Keep ownership totally tubular and follow the validated API. `Options` contains
+mutable provisioning input. Call `Options::into_validated()` to produce an
+immutable `ValidatedOptions` snapshot. Sweet: validation gives startup settings
+a stable home. On Windows, `config::load_registry()` returns this snapshot
+directly. Clones share its storage, and `ProtocolRole` carries the required
+nonzero initiator or reflector discriminator.
 
 Use `Engine::from_config`, `Session::from_config`, `Reflector::from_config`, and
 `Transport::from_config` to reuse a snapshot without repeating validation.
@@ -418,15 +425,17 @@ observers remain available to library users and UDP integration tests.
 
 ## Maintain the private local RPC interface
 
-`src/local_rpc.rs` hosts the private BFD interface. Its `GetSessionStatusV1`
-operation copies one published snapshot on an RPC worker. The broker queries it
-from one supervised worker inside its existing process; it launches no helper.
-Keep this path separate from the BGP control RPC interface and COM/MI provider worker. The
-BGP interface in `src/bgp/ipc.rs` shares the telemetry interface's binding, registration, and
-Authz helpers, with server/caller identities reversed. Preserve its additional
-restricting-SID check for restricted BFD callers. Its bounded queue sends work
-to the serialized provider worker; RPC callbacks never execute MI operations.
-The contracts are `rpc/bfd_local.idl` and `rpc/bgp_control.idl`.
+Ninja discipline, dude: keep the service boundaries clear. `src/local_rpc.rs`
+hosts the private BFD interface. Its `GetSessionStatusV1` operation copies one
+published snapshot on an RPC worker. The broker queries it from one supervised
+worker inside its existing process; it launches no helper. Keep this path in its
+own lane, dude, separate from the BGP control RPC interface and COM/MI provider
+worker. The BGP interface in `src/bgp/ipc.rs` shares the telemetry interface's
+binding, registration, and Authz helpers, with server/caller identities
+reversed. Preserve its additional restricting-SID check for restricted BFD
+callers. Its bounded queue sends work to the serialized provider worker; RPC
+callbacks never execute MI operations. The contracts are `rpc/bfd_local.idl` and
+`rpc/bgp_control.idl`.
 
 Preserve the conditional server identity policy, exact caller account and
 service SID checks, Identify credentials, packet privacy, and management denial.
@@ -461,16 +470,19 @@ authenticated status fetch after installed first start and repair.
 ## Update the security diagrams
 
 The [communication guide](docs/service-communication.md) embeds the runtime and
-lifecycle diagrams as fenced `mermaid` blocks. The
+lifecycle diagrams. The
 [RPC reference](docs/rpc-authentication.md#rpc-authentication-flow) embeds the
-authentication diagram. Edit those blocks to update the rendered Markdown
-diagrams; each includes an accessible title and description.
+authentication diagram. Each diagram has separate PNG and Mermaid sections,
+with the PNG first for GitHub mobile. Edit the fenced `mermaid` blocks to update
+the Mermaid versions; each includes an accessible title and description.
 
 The [draw.io source](docs/service-communication.drawio) contains the same three
-views as editable pages. Keep the Mermaid blocks, draw.io pages, exported PNGs,
-and nearby prose synchronized with the implementation. Check the rendered
-diagrams in a Mermaid-enabled Markdown preview, including service identities,
-RPC arrow directions, endpoint versions, and native resource ownership.
+views as editable pages. Keep the whole diagram lineup in sync: Mermaid blocks,
+draw.io pages, exported PNGs, and nearby prose must match the implementation.
+Check the rendered diagrams in a Mermaid-enabled Markdown preview, including
+service identities, RPC arrow directions, endpoint versions, and native resource
+ownership. Check that the embedded PNGs display in the Markdown pages and link
+to the full-size images.
 
 With draw.io Desktop installed in its default Windows location, export from the
 repository root:
@@ -503,7 +515,8 @@ matching text explanation and useful alt text in the consuming Markdown page.
 
 ## Prepare installation files
 
-Give administrators these files from the same source revision:
+Pack the whole turtle team from the same checkout. Keep the deployment bundle
+dialed in: give administrators these files from the same source revision:
 
 - `bfd-winservice.exe`: the release executable.
 - `bfd-bgp-broker.exe`: the privileged BGP broker, installed by the MSI.
@@ -554,12 +567,13 @@ provider operations, with no service installation or BGP changes.
 
 ## Build an MSI
 
-Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-or a later SDK. WiX 7 requires explicit acceptance of its
-[Open Source Maintenance Fee EULA](https://docs.firegiant.com/wix/osmf/).
-Review the terms and any applicable maintenance fee before accepting them.
-The build script accepts the EULA by default. To build an MSI, run from the
-repository root:
+Cowabunga, packaging crew. Check the prerequisites before building. Install the
+[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or a later SDK.
+WiX 7 requires explicit acceptance of its
+[Open Source Maintenance Fee EULA](https://docs.firegiant.com/wix/osmf/). Hold
+up, buddy: review the terms and any applicable maintenance fee before accepting
+them. The build script accepts the EULA by default. To build an MSI, run from
+the repository root:
 
 ```powershell
 .\scripts\Build-Msi.ps1
@@ -641,11 +655,11 @@ and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-wi
 
 ### Build with GitHub Actions
 
-The [Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pull
+Send the build through its training session before calling it bodacious. The
+[Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pull
 requests, pushes to `main`, and version tags matching `v*`. It also supports
-manual dispatch from a tag or branch.
-It audits `Cargo.lock` against the
-RustSec advisory database with `cargo audit`, then checks version stamping, Rust
+manual dispatch from a tag or branch. It audits `Cargo.lock` against the RustSec
+advisory database with `cargo audit`, then checks version stamping, Rust
 formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
 `rust-toolchain.toml`. The auditor is built with stable Rust outside the
 repository, so the repository's build-std configuration doesn't apply to it.
@@ -719,12 +733,12 @@ including when a test fails.
 
 ### Publish a GitHub release
 
-Pushing a version tag or manually running the workflow on that tag publishes a
+Pizza time comes after the release checks, dude. Pushing a version tag or
+manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
-the build, hardening, and installation checks pass. The release attaches the MSI,
-its SHA-256 checksum, with generated release
-notes. The release title includes the version tag, such as
-`BFD Windows Service v1.2.0`.
+the build, hardening, and installation checks pass. The release attaches the
+MSI, its SHA-256 checksum, with generated release notes. The release title
+includes the version tag, such as `BFD Windows Service v1.2.0`.
 
 Use the GitHub tag as the release version source. The first stable release is
 `v1.0.0`; increase the minor version for each subsequent release, such as
@@ -766,7 +780,8 @@ It preserves assets already attached to a published release.
 
 ## Run development checks
 
-Run these checks before committing Rust changes:
+Turtle power means running the checks on your own changes. Get the validation
+receipts before committing Rust changes:
 
 ```powershell
 cargo test --locked
@@ -859,7 +874,8 @@ See the [validation guide](RUST_SKILLS_VALIDATION.md) and
 
 ## Submit a change
 
-Before submitting a change:
+Make the handoff totally tubular for the next maintainer. Before you call it
+ready to ship, run this final vibe check:
 
 1. Update the tests when protocol behavior or validation changes.
 2. Update the administrator guides when registry values, service behavior, or

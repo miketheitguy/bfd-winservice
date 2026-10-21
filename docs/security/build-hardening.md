@@ -1,9 +1,10 @@
 # Build hardening and native safety
 
-For developers and release maintainers, this reference explains the Rust, MSVC,
-and native RPC protections applied to both executables, their limits, and how to
-verify emitted artifacts. For service identities and access controls, see the
-[security overview](../security.md).
+Cowabunga, build crew. Check the actual artifact protections. Developers and
+release maintainers, let's check the hardening receipts. This reference explains
+the Rust, MSVC, and native RPC protections applied to both executables, their
+limits, and how to verify emitted artifacts. For service identities and access
+controls, see the [security overview](../security.md).
 
 On this page:
 
@@ -23,11 +24,13 @@ includes `rust-src` for rebuilding the standard library.
 
 Compiler instrumentation and executable metadata make certain attacks harder or
 terminate the process when checks fail. They do not replace authentication,
-ACLs, or correct handling of untrusted packets.
+ACLs, or correct handling of untrusted packets. Gnarly inputs still need
+validation, dude.
 
 ## Rust compiler options
 
-The compiler and Cargo profiles provide these protections:
+Get the Rust side ready to kick shell against invalid behavior. Here's the
+compiler and Cargo protection lineup, buddy:
 
 | Setting | Security benefit and scope |
 | --- | --- |
@@ -47,7 +50,8 @@ target keeps host build scripts and procedural macros on default host settings.
 
 ## MSVC linker options
 
-Rust passes these options through `-C link-arg=...` to the MSVC linker:
+Give the linker settings the Donatello treatment, dude. Rust passes these
+options through `-C link-arg=...` to the MSVC linker:
 
 | Option | Security benefit and scope |
 | --- | --- |
@@ -68,9 +72,10 @@ deployment setting.
 
 ## Diagnostics, lint policy, and security limits
 
-AddressSanitizer (ASan) adds runtime memory-error detection to test builds, and
-strict lints make their configured violations fail the relevant checks. These
-settings control diagnostics and code checks:
+Bodacious diagnostic settings still have a defined scope. AddressSanitizer
+(ASan) adds runtime memory-error detection to test builds, and strict lints make
+their configured violations fail the relevant checks. These settings control the
+diagnostic vibe check and code checks:
 
 | Setting | Benefit and limitation |
 | --- | --- |
@@ -89,8 +94,10 @@ those files have a separate compiler configuration.
 
 ## Native RPC compiler options
 
-Native stack-buffer, control-flow, and additional compiler checks complement the
-Rust settings. The native build has its own compiler configuration.
+The native bridge needs its own ninja training. Native code needs its own
+guardrails, no cap. Native stack-buffer, control-flow, and additional compiler
+checks complement the Rust settings. The native build has its own compiler
+configuration.
 
 [rpc/build.rs](../../rpc/build.rs) runs the Windows SDK MIDL compiler with
 `/env x64 /robust /Oicf /app_config`. It generates separate client and server
@@ -125,14 +132,14 @@ safe Rust's guarantees.
 
 ## Native C exception policy
 
-Both RPC clients use `RpcTryExcept` with a shared wrapper around Microsoft's
-`RpcExceptionFilter`. Recoverable RPC exceptions become error codes inside C.
-Documented fatal classes, including access violations, stack overflow, and stack
-buffer overrun, continue outside that handler. The bridge never resumes
-execution after those faults or installs catch-all SEH around Rust server
-managers. The generated NDR stubs and RPC runtime own server-side marshaling
-exceptions. See [Microsoft's exception
-filter](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcexceptionfilter).
+Turtle power includes knowing which faults remain fatal. Both RPC clients use
+`RpcTryExcept` with a shared wrapper around Microsoft's `RpcExceptionFilter`.
+Recoverable RPC exceptions become error codes inside C. Hold up: documented
+fatal classes, including access violations, stack overflow, and stack buffer
+overrun, continue outside that handler. The bridge never resumes execution after
+those faults or installs catch-all SEH around Rust server managers. The
+generated NDR stubs and RPC runtime own server-side marshaling exceptions. See
+[Microsoft's exception filter](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcexceptionfilter).
 
 The Rust/native FFI boundary forbids cross-language unwinding in both
 directions. The Rust callbacks use non-unwinding `extern "C"`/`extern "system"`
@@ -155,18 +162,20 @@ does not instrument MSVC-built objects.
 
 ## Test-profile differences
 
-The `test-release` alias overrides panic handling to `unwind` for the test
-graph. It tests release optimizations but does not reproduce production's abort
-strategy. The `asan` alias adds sanitizer instrumentation to tests, including
-the rebuilt standard library, and retains the other target hardening settings.
+Keep the test and production settings straight, turtle crew. The `test-release`
+alias overrides panic handling to `unwind` for the test graph. It tests release
+optimizations but does not reproduce production's abort strategy. The `asan`
+alias adds sanitizer instrumentation to tests, including the rebuilt standard
+library, and retains the other target hardening settings.
 
 Cargo's nightly `profile-rustflags` feature adds release-only `/DEBUG:NONE`
 alongside the shared target flags, preserving development and ASan debug output.
 
 ## Verification
 
-Recorded reviews link successful checks to their revisions. Executable tests
-inspect what the build emits.
+Pizza time follows artifact inspection and recorded checks. Cowabunga comes
+after the build receipts, for sure. Recorded reviews link successful checks to
+their revisions. Executable tests inspect what the build emits.
 
 [tests/windows_hardening.rs](../../tests/windows_hardening.rs) checks both
 executable images for architecture, relocations, ASLR/NX/CFG flags, CFG tables,

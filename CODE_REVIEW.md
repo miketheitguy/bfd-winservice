@@ -1,15 +1,22 @@
 # Correctness reviews
 
-This record is for Rust maintainers reviewing dated findings and validation limits. For fresh installation instructions and settings, see [Set up a BFD session](docs/setup.md) and the [configuration reference](docs/configuration.md).
+Cowabunga, review crew. Keep the evidence tied to its revision. Rust
+maintainers, here's the review history with the receipts attached. Use this
+record to check dated findings and validation limits, dude. For fresh
+installation instructions and settings, see
+[Set up a BFD session](docs/setup.md) and the
+[configuration reference](docs/configuration.md).
 
-These are revision-specific receipts: each entry preserves the behavior, test
-counts, and limits recorded at that time. A passing check in one entry does not
-validate later changes. Use the [validation guide](RUST_SKILLS_VALIDATION.md)
-and [contributor guide](CONTRIBUTING.md) for the implemented API and commands.
+No cap: these receipts belong to specific revisions. Each entry preserves the
+behavior, test counts, and limits recorded at that time. A passing check in one
+entry does not validate later changes. Use the
+[validation guide](RUST_SKILLS_VALIDATION.md) and
+[contributor guide](CONTRIBUTING.md) for the implemented API and commands.
 
 ## Find a review
 
-Use these links to locate the dated evidence for a topic:
+Pick the historical mission, turtle crew. Pick a topic and cruise to its dated
+evidence:
 
 | Topic | Review entries |
 | --- | --- |
@@ -22,7 +29,8 @@ Use these links to locate the dated evidence for a topic:
 
 ## Read superseded behavior
 
-These later changes supersede descriptions in older entries:
+Donatello would check what changed after an older review. History vibe check:
+these later changes supersede descriptions in older entries:
 
 | Older description | Implemented behavior and reference |
 | --- | --- |
@@ -35,12 +43,13 @@ These later changes supersede descriptions in older entries:
 
 ## Native C exception handling — 2026-10-16
 
-Reviewed the handwritten C bridge, MIDL managers/allocators, generated-stub build
-settings, and asynchronous cleanup against Microsoft's RPC exception and
-cancellation guidance. Client SEH uses one shared `RpcExceptionFilter` policy;
-fatal native fault classes are not converted to transport errors. No new SEH
-handler wraps Rust server managers. The bind wrappers and uncertain-ownership
-handling share common implementations.
+Turtle power means reading this as a dated review receipt. Reviewed the
+handwritten C bridge, MIDL managers/allocators, generated-stub build settings,
+and asynchronous cleanup against Microsoft's RPC exception and cancellation
+guidance. Client SEH uses one shared `RpcExceptionFilter` policy; fatal native
+fault classes are not converted to transport errors. No new SEH handler wraps
+Rust server managers. The bind wrappers and uncertain-ownership handling share
+common implementations.
 
 Enabled `/W4 /WX` for all native C and `/analyze` for handwritten translation
 units. Static analysis found missing MIDL allocation callback annotations; the
@@ -68,13 +77,15 @@ only. No installed service or live RRAS operation was changed or exercised.
 
 ## BGP control RPC migration — 2026-10-16
 
+Follow the recorded interface migration before calling the old design tubular.
 BGP control uses `BgpControl` 1.0 at `ncalrpc:BfdWinService.Bgp.v1` in place of
-the named pipe. Shared RPC security helpers supply WINNT packet privacy, static Identify
-credentials, V5 conditional server descriptors, protected service-SID interface
-ACLs, per-call local/private authentication checks, and Authz user/group checks.
-The broker additionally checks any restricting-SID list for BFD's service SID.
-No RPC caller token is attached to a provider thread. Runtime management is
-denied in both service processes, and control registration precedes SCM Running.
+the named pipe. Shared RPC security helpers supply WINNT packet privacy, static
+Identify credentials, V5 conditional server descriptors, protected service-SID
+interface ACLs, per-call local/private authentication checks, and Authz
+user/group checks. The broker additionally checks any restricting-SID list for
+BFD's service SID. No RPC caller token is attached to a provider thread. Runtime
+management is denied in both service processes, and control registration
+precedes SCM Running.
 
 A fixed MIDL contract, one admission permit, and a one-slot queue preserve
 serialized, fixed-target provider operations. Native cancellation retains storage
@@ -108,12 +119,13 @@ rerun.
 
 ## RPC status rejection recovery — 2026-10-15
 
-Cleanly rejected status data clears the cache and retries automatically.
-Both checked Rust conversion failures and recoverable native marshaling
-errors discard the entire reply and clear prior cached status to `Unavailable`.
-The same worker retries after 1, 2, 4, 8, 16, then 30 seconds; a valid reply resets
-the delay. Rejected-data errors and ordinary failures have independent
-one-minute reporting limits that successful replies do not reset.
+Check the recovery policy recorded for this mission, ninja crew. Cleanly
+rejected status data clears the cache and retries automatically. Both checked
+Rust conversion failures and recoverable native marshaling errors discard the
+entire reply and clear prior cached status to `Unavailable`. The same worker
+retries after 1, 2, 4, 8, 16, then 30 seconds; a valid reply resets the delay.
+Rejected-data errors and ordinary failures have independent one-minute reporting
+limits that successful replies do not reset.
 
 Only a stuck native worker retains the until-restart quarantine. Stop interrupts
 even the longest backoff wait, while pending native storage remains owned.
@@ -175,7 +187,8 @@ remains a separate MSI check and was not run locally.
 
 ## Local RPC security review — 2026-10-15
 
-This entry records the earlier connection-only implementation. The
+Heads up, buddy: this entry records the earlier connection-only implementation.
+The
 [session-status implementation](#rpc-session-status-implementation--2026-10-15)
 supersedes its isolated-child design and cleanup policy.
 
@@ -365,7 +378,7 @@ documents are linked in this record.
 
 ### Documentation change log
 
-The documentation changes follow these skill rules:
+The documentation changes follow this skill-rule lineup:
 
 | Change | Rule ID and name | Reason |
 | --- | --- | --- |
@@ -431,7 +444,7 @@ Applied `technical-documentation` to the affected event references.
 row is corrected, with no remaining blocking descriptions. The complete
 revised reference is in [Logs and events](docs/logging.md).
 
-The documentation changes follow these skill rules:
+The documentation changes follow this skill-rule lineup:
 
 | Change | Rule ID and name | Reason |
 | --- | --- | --- |
@@ -487,7 +500,7 @@ bounded shutdown behavior. The complete revised text is in the linked guides.
 
 ### Documentation change log
 
-The documentation changes follow these skill rules:
+The documentation changes follow this skill-rule lineup:
 
 | Change | Rule ID and name | Reason |
 | --- | --- | --- |
@@ -575,7 +588,10 @@ No full Miri rerun, live SCM installation/start/stop, manifest installation/Even
 
 ## Historical review — 2026-10-05
 
-The following findings, compatibility notes, and checks describe the revision before ETW and registry configuration were added. They are retained as a record of that review.
+Like, total flashback, turtle crew: these findings, compatibility notes, and
+checks describe the revision before ETW and registry configuration were added.
+They remain the record of that review; a fresh validation flex needs fresh
+checks.
 
 Reviewed all service source modules and tests, Cargo configuration, and operational documentation. Applied the relevant ownership, borrowing, memory layout, FFI, concurrency, error handling, and numeric rules from the local Rust skill. The earlier 265-rule assessment is preserved as a [historical guideline matrix](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md); this review concentrates on defects and their fixes. [The current validation guide](RUST_SKILLS_VALIDATION.md) describes the API guarantees and links to that snapshot.
 

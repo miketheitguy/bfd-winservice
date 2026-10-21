@@ -1,13 +1,16 @@
 # Documentation
 
-For Windows administrators and service maintainers, this index groups the guides
-by task. Start with the [project quick start](../README.md#quick-start) for a first
-installation, then use the references for configuration, operation, or development.
-Dated review records describe the checks performed on their recorded revisions.
+Cowabunga, Windows admins and service maintainers! Like, here's your trail map.
+This index groups the guides by task, so you can find your line and cruise.
+Start with the [project quick start](../README.md#quick-start) for a first
+installation, then use the references for configuration, operation, or
+development. Dated review records describe the checks performed on their
+recorded revisions.
 
 ## Install and operate the service
 
-Choose the guide for your operational task:
+Cowabunga, deployment crew. Pick the mission that fits your setup. Pick the
+guide for the job you're about to tackle, dude:
 
 | Task | Guide |
 | --- | --- |
@@ -25,7 +28,8 @@ lifecycle, protocol state, and broker telemetry.
 
 ## Understand the architecture and security
 
-Use these references to trace a boundary or implementation contract:
+Think like Donatello: follow the connections and check the boundaries. For the
+architecture deep dive, these references bring the receipts:
 
 | Question | Reference |
 | --- | --- |
@@ -40,7 +44,8 @@ references provide additional implementation detail.
 
 ## Build and validate changes
 
-Use these guides for development and implementation checks:
+Turtle power needs build and test receipts, dude. Build something rad with these
+development and implementation guides:
 
 | Task | Guide |
 | --- | --- |
@@ -51,7 +56,8 @@ Use these guides for development and implementation checks:
 
 ## Review evidence and repository instructions
 
-These records and instructions have distinct purposes:
+Even heroes in a half-shell check the dates on their evidence. History check, no
+cap: these records and instructions serve different jobs:
 
 | Document | Purpose |
 | --- | --- |
@@ -61,4 +67,5 @@ These records and instructions have distinct purposes:
 | [AGENTS instructions](../AGENTS.md) and [CLAUDE instructions](../CLAUDE.md) | Repository-specific instructions for coding agents |
 
 Use the current guides for commands and configuration. Keep historical results
-tied to their dates and revisions when assessing validation evidence.
+tied to their dates and revisions when assessing validation evidence. Old test
+results don't earn a fresh victory lap.

@@ -1,9 +1,13 @@
 # Control a Windows BGP peer
 
-This guide is for Windows Server network administrators connecting Bidirectional Forwarding Detection (BFD) state changes to a configured Border Gateway Protocol (BGP) peer. Provision the BFD session using [Set up a BFD session](setup.md) first.
+Cowabunga, BGP crew. Connect the state changes with care. Windows Server network
+admins, let's connect Bidirectional Forwarding Detection (BFD) state changes to
+your configured Border Gateway Protocol (BGP) peer. First, get the BFD session
+dialed in with [Set up a BFD session](setup.md).
 
 The BGP vibe check is separate from BFD readiness: `Up` requests a Start, but
-provider errors can leave the BGP peer stopped. Verify the peer and event logs.
+provider errors can leave the BGP peer stopped. No victory lap yet, dude: verify
+the peer and event logs.
 
 Use [Configure the peer](#configure-the-peer) and [Verify state changes and
 actions](#verify-state-changes-and-actions) for setup. For operational details,
@@ -12,7 +16,8 @@ and [Service identities and authorization](#service-identities-and-authorization
 
 ## Before you begin
 
-The peer must already exist on a Windows Server with Remote Access/BGP configured.
+Get the mission prerequisites lined up, turtle crew. Preflight check, buddy: the
+peer must already exist on a Windows Server with Remote Access/BGP configured.
 Install the MSI: BGP control requires the installed service identities and is
 unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
 native MI query is started. The broker still starts as a service dependency and
@@ -35,6 +40,7 @@ session telemetry without performing a provider operation. See
 
 ## Configure the peer
 
+Channel Donatello and double-check the target configuration. Time to lock in.
 Configure the existing peer in PowerShell as Administrator, then restart both
 services to load the target.
 
@@ -68,8 +74,9 @@ default. Both names must contain a non-whitespace character.
 
 ### 3. Restart both services
 
-After changing `BgpPeerName` or `BgpRoutingDomain`, restart **both** services.
-Apply the configuration with a coordinated restart:
+Keep the turtle team in sync for the restart. After changing `BgpPeerName` or
+`BgpRoutingDomain`, restart **both** services. Apply the configuration with a
+coordinated restart:
 
 ```powershell
 Stop-Service BfdWinService
@@ -87,7 +94,8 @@ later broker results to confirm the configured target is usable.
 
 ## Verify state changes and actions
 
-Watch the BFD logs and BGP peer status. The worker applies these actions:
+Bodacious results need both state and provider receipts. Check the receipts in
+the BFD logs and BGP peer status. The worker applies these actions:
 
 | BFD condition | BGP action |
 | --- | --- |
@@ -99,7 +107,10 @@ Watch the BFD logs and BGP peer status. The worker applies these actions:
 | Fatal (non-transient) receive/wait error that returns through engine cleanup | Enter local AdminDown; if BFD's latest action was a Stop, attempt a Start; no negotiated announcement grace |
 | Crash or abrupt process termination | No cleanup action; the broker leaves BGP unchanged on disconnection |
 
-A running BGP peer continues during the initial BFD handshake. A stopped peer waits for BFD to reach Up. Failed or ambiguous status checks never trigger a speculative Start. Init does not cancel a previously queued Stop.
+A running BGP peer cruises through the initial BFD handshake. A stopped peer
+waits for BFD to reach Up. Failed or ambiguous status checks never trigger a
+speculative Start; guessing would be, like, majorly bogus. Init does not cancel
+a previously queued Stop.
 
 On the installed server, inspect BFD transitions and broker results:
 
@@ -121,8 +132,10 @@ Compare the actual peer state with the action table after each transition.
 
 ### Administrative disablement and failures
 
-Stopping BFD is administrative, not a path failure, so it never stops BGP. Local
-AdminDown, set only when the service stops, never stops the peer. Following
+Ninja discipline means keeping an administrative stop distinct from a path
+failure. Stopping BFD is administrative, not a path failure, so it never stops
+BGP. Local AdminDown, set only when the service stops, never stops the peer.
+Following
 [RFC 5882 section 3.2](https://www.rfc-editor.org/rfc/rfc5882.html#section-3.2),
 a session that goes Down because the peer signalled AdminDown also leaves BGP
 running, so stopping BFD at either end of the session keeps BGP running. BGP
@@ -143,7 +156,12 @@ changes the peer merely because the RPC caller disconnects or because the broker
 
 ## Worker retries and broker recovery
 
-A dedicated worker handles provider calls while BFD continues running. Failed actions retry after one second unless replaced by a newer action or shutdown. At most a Stop/Start pair remains queued; Down discards queued Starts. An already issued call finishes before the next action runs, unless shutdown queues a newer final action, which cancels it.
+Keep the retry story totally tubular, including its limits. A dedicated worker
+handles provider calls while BFD continues running. Failed actions retry after
+one second unless replaced by a newer action or shutdown. At most a Stop/Start
+pair remains queued; Down discards queued Starts. An already issued call
+finishes before the next action runs, unless shutdown queues a newer final
+action, which cancels it.
 
 SCM restarts a crashed broker after five seconds; once it restarts, the BFD
 worker reconciles the latest requested action. A normal broker Stop does not trigger automatic restart.
@@ -175,7 +193,10 @@ apply to both processes.
 
 ### Provider timeouts and final cleanup
 
-Each Management Infrastructure (MI) operation requests a five-second timeout, which is **not a hard shutdown deadline** ([timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)).
+No pizza break until you understand the cleanup ownership, dude. Each Management
+Infrastructure (MI) operation requests a five-second timeout, which is **not a
+hard shutdown deadline**
+([timeout semantics](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_operationoptions_settimeout)).
 
 Shutdown never queues a Stop. The latest queued action still runs, such as a Start that withdraws BFD's Stop or one queued by a recent Up. When an action is queued, an older in-flight call is cancelled, and each call of the final action runs within 20 seconds, including any wait for the broker to finish the cancelled call. If the final action fails, it is recorded as event 3; because the stop was requested, the SCM exit code stays `0` and recovery doesn't restart BFD. Final calls are not retried indefinitely.
 
@@ -183,30 +204,32 @@ If the broker's cleanup still runs 60 seconds after a Stop request, or BFD's sti
 
 ### Windows shutdown
 
-BFD accepts the SCM preshutdown notification instead of the shutdown notification.
-During Windows shutdown it announces AdminDown and completes any final BGP action
-while the broker, which stops in the later shutdown phase, is still running.
-The installer sets the service's preshutdown timeout to 125 seconds, covering
-the maximum 60-second announcement period, 60 seconds of cleanup, and final
-logs. `MaxShutdownAnnounceMs` defaults to 30 seconds and limits shutdown delay
-from a peer advertising very long timers. Truncating a Detection Time produces
-a warning because the peer might classify the administrative stop as a failure.
+Turtle power includes an orderly exit during Windows shutdown. BFD accepts the
+SCM preshutdown notification instead of the shutdown notification. During
+Windows shutdown it announces AdminDown and completes any final BGP action while
+the broker, which stops in the later shutdown phase, is still running. The
+installer sets the service's preshutdown timeout to 125 seconds, covering the
+maximum 60-second announcement period, 60 seconds of cleanup, and final logs.
+`MaxShutdownAnnounceMs` defaults to 30 seconds and limits shutdown delay from a
+peer advertising very long timers. Truncating a Detection Time produces a
+warning because the peer might classify the administrative stop as a failure.
 
 ## Service identities and authorization
 
-`BfdWinService` handles UDP as **LocalService**. `BfdBgpBroker` runs as
-**LocalSystem** and hosts the native Management Infrastructure (MI) client.
-BFD uses restricted service SID type `3`; the broker keeps unrestricted type `1`.
-The BFD service SID is an enabled normal group and a restricting SID, so the
-RPC interface's explicit service-SID grant supports its restricted identity.
-The broker's private COM initialization supports native MI and grants local
-execute rights only to SYSTEM, with packet integrity. It sets strong unmarshaling
-and disables COM exception handling before opening MI. Outgoing proxies
-default to identification; the local MI destination explicitly requests
-impersonation so Windows providers can use the broker's LocalSystem identity.
-RRAS management requires administrative access; the broker retains that access
-while the packet-processing service does not.
-See [Microsoft's router management requirements](https://learn.microsoft.com/en-us/windows/win32/rras/understanding-router-management-functions).
+Check the service identities before anyone gets to kick shell. `BfdWinService`
+handles UDP as **LocalService**. `BfdBgpBroker` runs as **LocalSystem** and
+hosts the native Management Infrastructure (MI) client. BFD uses restricted
+service SID type `3`; the broker keeps unrestricted type `1`. The BFD service
+SID is an enabled normal group and a restricting SID, so the RPC interface's
+explicit service-SID grant supports its restricted identity. The broker's
+private COM initialization supports native MI and grants local execute rights
+only to SYSTEM, with packet integrity. It sets strong unmarshaling and disables
+COM exception handling before opening MI. Outgoing proxies default to
+identification; the local MI destination explicitly requests impersonation so
+Windows providers can use the broker's LocalSystem identity. RRAS management
+requires administrative access; the broker retains that access while the
+packet-processing service does not. See
+[Microsoft's router management requirements](https://learn.microsoft.com/en-us/windows/win32/rras/understanding-router-management-functions).
 
 The `BgpControl` version `1.0` interface at `BfdWinService.Bgp.v1` uses
 `ncalrpc`. BFD initiates every call on this control interface; the broker
@@ -224,10 +247,11 @@ impersonating the caller. Remote, anonymous, unrelated LocalService, and
 ordinary administrator callers are rejected. Runtime management is denied.
 See [RPC authentication](rpc-authentication.md#bgp-control-over-local-rpc).
 
-The MSI separately protects service control: authenticated users can query
-service status, while SYSTEM and elevated Administrators can Start/Stop or
-reconfigure services. SCM permissions do not authorize BGP RPC requests.
-Event/file log reads remain available under the existing log permissions.
+Different permissions lane, dude: the MSI separately protects service control.
+Authenticated users can query service status, while SYSTEM and elevated
+Administrators can Start/Stop or reconfigure services. SCM permissions do not
+authorize BGP RPC requests. Event/file log reads remain available under the
+existing log permissions.
 
 The MIDL contract accepts a connection check and only Get, Start, and Stop provider
 operations. Requests contain no peer name, routing domain, path, command, or
@@ -240,7 +264,8 @@ BGP control connection check. The independent broker-to-BFD telemetry monitor st
 Native fixtures cover restricted-token authorization, server identity,
 cancellation, and serialized dispatch. The MSI harness tests rejection of an
 unrelated RPC caller and broker recovery. It does not mutate a live RRAS peer;
-verify configured BGP behavior on your target server.
+verify configured BGP behavior on your target server before the pizza party
+victory lap.
 
 <details>
 <summary>Native provider details</summary>

@@ -1,10 +1,11 @@
 # BFD packet authentication
 
-For Windows administrators and developers, this reference explains how
-Bidirectional Forwarding Detection (BFD) and Seamless BFD (S-BFD) validate
+Cowabunga, packet crew. Check the shared-key policy alongside the path. Windows
+admins and developers, let's check the packet receipts. This reference explains
+how Bidirectional Forwarding Detection (BFD) and Seamless BFD (S-BFD) validate
 remote packets, what each authentication mode proves, and how keys are
-protected. Private service RPC uses a separate [local authentication
-policy](local-rpc.md).
+protected. Private service RPC uses a separate
+[local authentication policy](local-rpc.md).
 
 See the [security overview](../security.md) for the full boundary map. On this
 page:
@@ -16,8 +17,10 @@ page:
 
 ## Packet and path validation
 
-The firewall and packet validators check the configured path before a packet can
-influence peer state; configured wire authentication adds the shared-key check.
+Ninja discipline checks the packet before trusting its observations. Before a
+packet gets to influence peer state, dude, the firewall and packet validators
+check the configured path. Configured wire authentication adds the shared-key
+check.
 
 `[AUTH A-fw]` represents Windows kernel UDP firewall filtering through the four
 installed program-specific allow rules. `[AUTH A]` represents the application's
@@ -31,12 +34,13 @@ role-specific rules. These path checks alone do not authenticate the peer.
 
 ## Authentication modes
 
-`Auth` defaults to `none`. When enabled, both peers must use the same
-authentication type, key ID, and secret. The receiver checks the authentication
-section and compares the password or computed keyed digest using constant-time
-equality. Authentication failures do not refresh detection or update accepted
-session state. The sender adds the configured authentication to outgoing
-packets.
+Turtle power starts with matching authentication settings on both peers. Like,
+hello, turtle crew: `Auth` defaults to `none`. When enabled, both peers must use
+the same authentication type, key ID, and secret. The receiver checks the
+authentication section and compares the password or computed keyed digest using
+constant-time equality. Authentication failures do not refresh detection or
+update accepted session state. The sender adds the configured authentication to
+outgoing packets.
 
 Classical multihop sessions that control BGP require `meticulous-md5` or
 `meticulous-sha1` and a valid key. Startup rejects other modes even when a minimum
@@ -60,19 +64,21 @@ Windows or certificate identity for each peer.
 
 ## S-BFD replay checks
 
-S-BFD initiators require keyed replies to match an unconsumed, unexpired
-outstanding probe. Reflectors verify the configured authentication and copy a
-keyed request's sequence into the response without maintaining a per-peer
-receive window. These behaviors differ from a classical BFD session's replay
-checks.
+Give replay correlation the Donatello treatment, dude. Replay vibe check: S-BFD
+initiators require keyed replies to match an unconsumed, unexpired outstanding
+probe. Reflectors verify the configured authentication and copy a keyed
+request's sequence into the response without maintaining a per-peer receive
+window. These behaviors differ from a classical BFD session's replay checks.
 
 ## Key configuration and storage
 
-Configure exactly one of `AuthKey` (ASCII) and `AuthKeyHex` (binary key encoded
-as hexadecimal) when authentication is enabled. Password/MD5 keys are 1-16
-bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is 0-255. One key is active at a
-time; restart after changing authentication settings. Keys are stored in
-Parameters under its protected ACL, without application-level encryption. Logs
-and configuration errors omit key values. See [Configure
-authentication](../configuration.md#authentication) for the settings and an
-example.
+Keep the key setup totally tubular and the storage permissions explicit. Keep
+the key setup dialed in: configure exactly one of `AuthKey` (ASCII) and
+`AuthKeyHex` (binary key encoded as hexadecimal) when authentication is enabled.
+Password/MD5 keys are 1-16 bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is
+0-255. One key is active at a time; restart after changing authentication
+settings. Keys are stored in Parameters under its protected ACL, without
+application-level encryption. No cap: that ACL matters. Logs and configuration
+errors omit key values. See
+[Configure authentication](../configuration.md#authentication) for the settings
+and an example.
