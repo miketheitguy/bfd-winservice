@@ -125,10 +125,12 @@ robust NDR checks. These C compiler options are separate from the Rust flags.
 See Microsoft's [MSVC security
 checks](https://learn.microsoft.com/en-us/cpp/build/reference/sdl-enable-additional-security-checks?view=msvc-170).
 
-The native compile step does not pass `/Zi` or an AddressSanitizer option.
-`cargo asan` instruments Rust and the rebuilt Rust standard library; it does not
-instrument these C translation units. Native stubs and wrappers remain outside
-safe Rust's guarantees.
+Ordinary native builds omit `/Zi` and AddressSanitizer. When the Rust target
+enables address sanitization, the native build adds `/fsanitize=address /Zi`
+to maintained C files and generated MIDL stubs. `scripts/Test-Asan.ps1` verifies
+the active Cargo build configuration and emitted native ASan hooks before
+running the sanitized tests. Native stubs and wrappers remain outside safe
+Rust's guarantees.
 
 ## Native C exception policy
 
@@ -157,8 +159,9 @@ SDK's SAL allocation contracts. All native C compiles with `/W4 /WX`;
 handwritten C also passes MSVC `/analyze`. The [native SEH
 regression](../../src/local_rpc/tests/seh.rs) raises recoverable exceptions
 entirely inside C and checks the fatal filter without raising fatal faults.
-Static analysis and these tests supplement native ownership review; Rust ASan
-does not instrument MSVC-built objects.
+Static analysis and these tests supplement native ownership review. Native
+ASan coverage comes from the explicit MSVC compiler option; Rust's sanitizer
+option alone does not instrument separately compiled C.
 
 ## Test-profile differences
 
@@ -167,6 +170,10 @@ alias overrides panic handling to `unwind` for the test graph. It tests release
 optimizations but does not reproduce production's abort strategy. The `asan`
 alias adds sanitizer instrumentation to tests, including the rebuilt standard
 library, and retains the other target hardening settings.
+The native build follows the target's sanitizer setting. CI runs this graph in
+the separate `asan` job and uploads diagnostic logs only. Release publication
+requires successful sanitizer and production jobs for the same source revision.
+The production MSI always uses the ordinary release graph from `build-msi`.
 
 Cargo's nightly `profile-rustflags` feature adds release-only `/DEBUG:NONE`
 alongside the shared target flags, preserving development and ASan debug output.
@@ -181,6 +188,7 @@ their revisions. Executable tests inspect what the build emits.
 executable images for architecture, relocations, ASLR/NX/CFG flags, CFG tables,
 security-cookie metadata, EH continuation data, CET compatibility, and
 profile-specific debug output. These checks verify emitted metadata. A
+normal release image must also import no ASan runtime. A
 security-cookie address alone does not prove every function has stack-protector
 instrumentation, and a CET flag does not prove that the host enforces shadow
 stacks.

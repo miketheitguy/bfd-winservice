@@ -9,8 +9,20 @@ use windows_sys::Win32::{
 };
 
 extern "C" {
+    fn bfd_rpc_test_native_asan_enabled() -> u32;
     fn bfd_rpc_test_exception_filter(code: u32) -> i32;
     fn bfd_rpc_test_raise(code: u32) -> u32;
+}
+
+#[test]
+fn native_sanitizer_matches_the_rust_target_configuration() {
+    let expected = match env!("BFD_NATIVE_ASAN") {
+        "0" => 0,
+        "1" => 1,
+        _ => panic!("invalid native sanitizer build configuration"),
+    };
+    // SAFETY: the test-only native function returns a compile-time constant.
+    assert_eq!(unsafe { bfd_rpc_test_native_asan_enabled() }, expected);
 }
 
 #[test]

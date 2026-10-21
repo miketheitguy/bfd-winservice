@@ -236,7 +236,7 @@ The following table distinguishes Rust settings from native C settings:
 | `/sdl` | Enabled for native C. Rust uses ownership and initialization checks, restricted unsafe boundaries, stack protection, and strict Clippy; these checks aren't identical to MSVC SDL analysis. |
 | `/analyze` | Enabled for handwritten C, including the bridge, allocators, and native SEH tests, with analysis of external headers disabled. Generated MIDL translation units use `/W4 /WX` without static analysis. |
 | `/ZH:SHA_256` | Rust uses SHA-256 source checksums. The native build does not enable this option. `/ZH:SHA_SHA256` isn't a valid MSVC spelling. |
-| `/Zi` | Rust emits full debug information in development and ASan builds. Native C does not receive `/Zi`; release builds disable Rust symbols and linker PDB output. |
+| `/Zi` | Native C receives `/Zi` during ASan builds only. Rust emits full debug information in development and ASan builds; release builds disable Rust symbols and linker PDB output. |
 
 See Microsoft's
 [`/sdl` reference](https://learn.microsoft.com/en-us/cpp/build/reference/sdl-enable-additional-security-checks?view=msvc-170),
@@ -306,6 +306,8 @@ testing. The repository's `cargo asan` alias enables `-Z sanitizer=address`,
 preserves the Windows hardening flags, rebuilds the standard library, and writes
 to `target/asan`. It also passes the sanitizer flag to `rustdoc` for
 documentation tests. Its dedicated profile uses unwinding for the test harness.
+The native build detects the target's `CARGO_CFG_SANITIZE=address` setting and
+adds `/fsanitize=address /Zi` to maintained RPC C files and generated MIDL stubs.
 
 The sanitizer is enabled only by this alias. Rust documents ASan for testing
 and fuzzing because its instrumentation adds runtime overhead. Cargo uses
@@ -322,30 +324,42 @@ also sets the explicit Windows target and installs `rust-src` through
 its Rust code; ASan can work with an uninstrumented standard library, but that
 reduces coverage. See [Cargo's build-std configuration](https://doc.rust-lang.org/cargo/reference/unstable.html#build-std).
 
-Use **x64 Developer PowerShell** with the MSVC AddressSanitizer component
-installed. Verify that the runtime DLL is beside the selected compiler:
+Install the Visual Studio C++ Build Tools with the AddressSanitizer component.
+From the repository root, run the test wrapper:
 
 ```powershell
-$msvcBin = Split-Path (Get-Command cl.exe -CommandType Application).Source
-Test-Path (Join-Path $msvcBin 'clang_rt.asan_dynamic-x86_64.dll')
+.\scripts\Test-Asan.ps1
 ```
 
-Confirm the output is `True` and that this directory is on `PATH`. Then run
-the sanitized tests:
+The wrapper initializes the selected x64 MSVC environment, verifies the runtime
+DLL beside that compiler, and builds the sanitized test graph. It checks the
+active Cargo build record and emitted ASan hooks in the native RPC client before
+running tests. Build records, native instrumentation evidence, and test output
+are written under `target/asan`. Confirm that the wrapper reports verified
+native instrumentation and that the tests finish without an ASan report.
+
+For a focused check, pass Cargo arguments to the wrapper:
 
 ```powershell
-cargo asan
+.\scripts\Test-Asan.ps1 -CargoArguments @('--lib', 'packet::tests')
 ```
 
-Confirm that all default tests pass without an ASan report. A missing ASan
-runtime DLL prevents the test executables from starting. The installed nightly
+For direct `cargo asan` use, first run `scripts/Initialize-Asan.ps1` in the same
+PowerShell process. It initializes compiler and SDK variables only, without
+printing the captured process environment. Set `BFD_VCVARS64_PATH` to select a
+custom installation; otherwise it locates the latest x64 C++ toolset with
+`vswhere.exe`. A missing ASan runtime fails setup. The installed nightly
 must support `address` for `x86_64-pc-windows-msvc`; check target support
 again after a toolchain update.
 
 ASan is a [testing tool](https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/sanitizer.html#addresssanitizer).
 Distribute the normal release executable. ASan tests don't instrument Windows
-system DLLs, the prebuilt MSVC runtime, or the native RPC C objects. The native
-build does not pass MSVC's `/fsanitize=address` option.
+system DLLs or the prebuilt MSVC runtime. The separate `asan` CI job tests the
+same source revision and tag version as `build-msi`; it uploads diagnostics
+only. Release publication requires both jobs to succeed. The production job
+builds its own ordinary release executables, checks that they import no ASan
+runtime, and validates the MSI independently. Sanitizer flags and binaries do
+not pass between these jobs.
 
 ## Use the Rust configuration and error APIs
 
@@ -663,6 +677,10 @@ advisory database with `cargo audit`, then checks version stamping, Rust
 formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
 `rust-toolchain.toml`. The auditor is built with stable Rust outside the
 repository, so the repository's build-std configuration doesn't apply to it.
+In parallel, the `asan` job runs `scripts/Test-Asan.ps1` on a separate Windows
+runner, including native instrumentation verification and the default sanitized
+test suite. It retains diagnostic logs and build records without uploading
+instrumented executables.
 
 Every run packages and tests an MSI. For a tag, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
@@ -672,18 +690,22 @@ stamped version. Branch and pull-request builds use the version in `Cargo.toml`.
 The workflow validates production executable hardening before
 testing installation. Pull-request and branch runs upload validated artifacts
 and installer logs with a read-only repository token. Release publication
-requires a version tag and runs in a separate job with `contents: write`.
+requires a version tag, successful `asan` and `build-msi` jobs, and runs in a
+separate job with `contents: write`.
 No signing or release credentials are available to pull-request validation.
 To enforce validation before merging, configure branch protection to require
-the `build-msi` check. Pushes to other branches can be checked by manual dispatch.
+both `asan` and `build-msi`. Pushes to other branches can be checked by manual dispatch.
 
 The workflow explicitly passes `-AcceptWixEula` for MSI builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.
 
-Linting, tests, and production builds all use the release profile. Linting and
-tests enable unwinding for the test harness; the production build uses
+In `build-msi`, linting, optimized tests, and production builds use the release
+profile. Linting and tests enable unwinding for the test harness; the production
+build uses
 `panic = "abort"`. The final hardening check reuses the compiled release test
 executable so it doesn't rebuild the packaged service or its matching PDB.
+The separate ASan job uses its development-derived profile and isolated output
+directory; its artifacts never supply the MSI payload.
 
 The installation test runs only on a GitHub-hosted runner. It checks fresh
 installation, actual service configuration, registry types, firewall rules,
@@ -736,7 +758,7 @@ including when a test fails.
 Pizza time comes after the release checks, dude. Pushing a version tag or
 manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
-the build, hardening, and installation checks pass. The release attaches the
+the sanitizer, build, hardening, and installation checks pass. The release attaches the
 MSI, its SHA-256 checksum, with generated release notes. The release title
 includes the version tag, such as `BFD Windows Service v1.2.0`.
 

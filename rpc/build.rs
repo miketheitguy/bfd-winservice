@@ -30,6 +30,14 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
         println!("cargo:rerun-if-env-changed={variable}");
     }
     let environment = compiler_environment()?;
+    // Cargo fingerprints target compiler options; this cfg is supplied by
+    // Cargo rather than an ambient environment variable to watch separately.
+    let address_sanitizer = std::env::var("CARGO_CFG_SANITIZE")
+        .is_ok_and(|value| value.split(',').any(|sanitizer| sanitizer == "address"));
+    println!(
+        "cargo:rustc-env=BFD_NATIVE_ASAN={}",
+        u8::from(address_sanitizer)
+    );
     let midl = super::sdk_tool("midl.exe", "BFD_MIDL_PATH")?;
     let sources = root.join("rpc");
     for (contract, client_prefix, server_prefix) in [
@@ -92,6 +100,11 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
                 "/WX",
                 "/D_WIN32_WINNT=0x0602",
             ]);
+        if address_sanitizer {
+            // Match the Rust target's test instrumentation, including generated
+            // stubs. Ordinary release builds never select these native options.
+            command.args(["/fsanitize=address", "/Zi"]);
+        }
         // Analyze the maintained bridge; generated MIDL code has its own
         // validation patterns and remains checked by /W4 /WX and /robust.
         if source.starts_with(&sources) {

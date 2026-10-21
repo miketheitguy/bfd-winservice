@@ -47,7 +47,7 @@ The bundled `test-release` alias uses `--locked --release --config 'profile.rele
 
 The `asan` profile inherits dev and uses `panic = "unwind"`. Its alias uses `--locked --profile asan --target-dir target/asan`, adds `-Z sanitizer=address` through the target `rustflags`, and sets matching target `rustdocflags` for documentation tests. Preserve the other target flags: Cargo target settings take precedence over `build.rustflags`, and command-line configuration arrays merge with file arrays. Check the actual invocation for precedence conflicts, including `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, target-specific environment overrides, and duplicate options.
 
-Rust ASan covers instrumented Rust and the rebuilt standard library. It does not instrument the existing C bridge or system DLLs. Use the matching toolchain's sanitizer runtime when running tests; do not hardcode a developer's Visual Studio version or add an untrusted directory to PATH. Native ASan requires its own deliberate compatible build and test policy.
+Rust ASan covers instrumented Rust and the rebuilt standard library. BFD's native build separately selects MSVC `/fsanitize=address /Zi` when the target's sanitizer configuration includes `address`. Its test wrapper verifies emitted native hooks and uses the runtime beside the selected x64 compiler. Windows DLLs and the prebuilt CRT remain uninstrumented. Do not hardcode a developer's Visual Studio version or add an untrusted directory to PATH. CI sanitizer tests use a separate job and output directory; publication waits for that job and the independently validated ordinary production MSI. Production executable checks reject ASan runtime imports.
 
 ## Verification evidence
 

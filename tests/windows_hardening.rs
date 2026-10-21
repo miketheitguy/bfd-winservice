@@ -130,12 +130,39 @@ fn assert_executable(executable: &std::path::Path) {
             "PDB container"
         );
     } else {
+        assert_no_sanitizer_imports(&image, directories, sections, section_count);
         assert!(!pdb_path.exists(), "release builds must not generate PDBs");
         assert!(
             (0..debug_size / 28).all(|index| dword(&image, debug + index * 28 + 12) != 2),
             "release executables must not reference CodeView debug symbols"
         );
     }
+}
+
+fn assert_no_sanitizer_imports(image: &[u8], directories: usize, sections: usize, count: usize) {
+    let import_rva = dword(image, directories + 8);
+    if import_rva == 0 {
+        return;
+    }
+    let imports = file_offset(image, sections, count, import_rva);
+    let size = usize::try_from(dword(image, directories + 12)).expect("import directory size");
+    for index in 0..size / 20 {
+        let name_rva = dword(image, imports + index * 20 + 12);
+        if name_rva == 0 {
+            return;
+        }
+        let name = file_offset(image, sections, count, name_rva);
+        let length = image[name..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .expect("terminated imported DLL name");
+        let dll = String::from_utf8_lossy(&image[name..name + length]).to_ascii_lowercase();
+        assert!(
+            !dll.contains("asan"),
+            "production executable must not import an ASan runtime: {dll}"
+        );
+    }
+    panic!("import directory must have a terminating descriptor");
 }
 
 fn word(image: &[u8], offset: usize) -> u16 {

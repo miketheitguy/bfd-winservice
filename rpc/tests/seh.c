@@ -2,6 +2,15 @@
  * entry point references this object or raises synthetic exceptions. */
 #include "exception_policy.h"
 
+unsigned long bfd_rpc_test_native_asan_enabled(void)
+{
+#if defined(__SANITIZE_ADDRESS__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 int bfd_rpc_test_exception_filter(unsigned long code)
 {
     return bfd_rpc_exception_filter(code);

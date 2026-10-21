@@ -27,7 +27,7 @@ Add `/analyze /analyze:external-` for maintained C. Analyze project code while e
 
 Remove ambient `CL` and `_CL_` from the **compiler subprocess** so options cannot override language mode or disable checks. Inspect response files, toolchain wrappers, and effective arguments too. Apply only necessary compiler setup values such as PATH, INCLUDE, LIB, and LIBPATH from a trusted selected Visual Studio installation; do not print a captured full environment or mutate the parent process environment unnecessarily.
 
-C SEH does not require `/EHsc`. This baseline does not pass `/EHa`, `/Zi`, `/ZH:SHA_256`, or a native AddressSanitizer option. Do not claim native debug checksums or native sanitizer coverage merely because another language's build enables them.
+C SEH does not require `/EHsc`. Ordinary builds do not pass `/EHa`, `/Zi`, `/ZH:SHA_256`, or a native AddressSanitizer option. In BFD's isolated ASan test graph, the target's `CARGO_CFG_SANITIZE=address` setting adds `/fsanitize=address /Zi` to maintained and generated C. Verify emitted native instrumentation and the matching selected MSVC runtime before running tests. Keep sanitizer artifacts out of production packaging. Do not claim native sanitizer coverage from Rust flags alone.
 
 ## MIDL and archive
 
