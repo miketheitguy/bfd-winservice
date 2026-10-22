@@ -44,6 +44,10 @@ its operations, and checked conversion validates returned status. An
 authenticated source can still lie or withhold replies. Telemetry failures
 never request BGP actions; the packet engine owns that policy.
 
+Both RPC directions require the expected account, an enabled non-deny-only
+service SID, and that SID in any nonempty caller restricting list. See the
+[identity matrix](rpc-authentication.md#bgp-control-over-local-rpc) for the roles.
+
 For remote UDP, [packet authentication](security/packet-authentication.md) is
 separate from path validation and firewall filtering. Classical multihop BGP
 control requires meticulous keyed SHA-1 authentication.

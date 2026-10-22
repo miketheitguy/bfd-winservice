@@ -100,9 +100,10 @@ worker inside its existing process; it launches no helper. Keep this path in its
 own lane, dude, separate from the BGP control RPC interface and COM/MI provider
 worker. The BGP interface in `src/bgp/ipc.rs` shares the telemetry interface's
 binding, registration, and Authz helpers, with server/caller identities
-reversed. Preserve its additional restricting-SID check for restricted BFD
-callers. Its bounded queue sends work to the serialized provider worker; RPC
-callbacks never execute MI operations. The contracts are `rpc/bfd_local.idl` and
+reversed. Both channels also require their expected service SID in any nonempty
+caller restricting list, including for write-restricted tokens. Its bounded
+control queue sends work to the serialized provider worker; RPC callbacks never
+execute MI operations. The contracts are `rpc/bfd_local.idl` and
 `rpc/bgp_control.idl`.
 
 Preserve the conditional server identity policy, exact caller account and

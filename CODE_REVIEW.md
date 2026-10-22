@@ -20,7 +20,7 @@ evidence:
 
 | Topic | Review entries |
 | --- | --- |
-| Private local RPC | [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
+| Private local RPC | [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
 | Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
 | Service reliability and security | [Reliability follow-up](#reliability-follow-up--2026-10-09) and [reliability/security review](#reliability-and-security-review--2026-10-09) |
 | Deployment and observability | [MSI packaging](#msi-packaging-review--2026-10-08) and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
@@ -40,6 +40,44 @@ these later changes supersede descriptions in older entries:
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
+
+## RPC restricting-SID alignment — 2026-10-22
+
+Cowabunga, identity crew. Both RPC directions now use the same stronger caller
+guard. Review baseline: `f323c54`. Both already required the exact account and
+enabled, non-deny-only service group. Only BGP control additionally checked the
+expected service SID in a nonempty caller restricting list.
+
+A new native telemetry regression reproduced the difference: an own-account
+write-restricted caller with the expected normal group but a different restricting
+group received status successfully. The test uses existing World and Authenticated
+Users groups, never installed service SIDs. The same test passes after the shared
+guard rejects the missing restricting SID. Positive cases verify matching restricted
+callers, unrestricted recovery, and rejection of deny-only normal groups.
+
+The common guard now queries and validates restricting SIDs on both channels.
+Empty lists permit an otherwise authorized unrestricted caller; nonempty lists
+must contain the expected service SID. The callback and manager independently
+use that guard. Native interface ACLs remain an additional gate. See the
+[identity matrix](docs/rpc-authentication.md#bgp-control-over-local-rpc) and
+[native authorization flow](docs/security/local-rpc.md#per-call-authorization-and-cleanup).
+
+The broker retains its normal SYSTEM account and unrestricted service SID; BFD
+retains LocalService and its restricted service SID. Wire contracts, privilege
+allowlists, and installed ACLs retain their existing policy. Production still
+uses Authz without impersonation. The shared test-only reduced-token helper has
+a thread-bound restoration guard; identity buffers and RPC contexts retain their
+existing bounded storage and ownership.
+
+Validation: the full optimized suite passed. The ASan library run passed 213
+tests with 11 ignored provider/installed-service checks and child entry points;
+the wrapper verified emitted ASan hooks in the native RPC client. Strict
+all-target Clippy, formatting, and API documentation checks passed. Native
+RPC/MI coexistence tests and production-image hardening checks also passed.
+Fixtures verify the policy independently of actual SCM-issued service tokens;
+installed-service checks remain separate CI evidence. The authentication
+Draw.io page, embedded editable PNG, Mermaid view, and concrete channel profile
+describe the matching policy.
 
 ## Native C exception handling — 2026-10-16
 

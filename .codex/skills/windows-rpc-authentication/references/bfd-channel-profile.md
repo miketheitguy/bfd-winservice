@@ -6,10 +6,10 @@ These names, account assignments, record sizes, and timing values describe bfd-w
 
 | Initiator to receiver | Endpoint and operations | Client identity required by server | Server identity pinned by client |
 | --- | --- | --- | --- |
-| Broker telemetry worker to BFD | `BfdWinService.Local.v2`; `BfdLocal` 2.0, `GetSessionStatusV1` only | LocalSystem (`S-1-5-18`) AND enabled `NT SERVICE\BfdBgpBroker` SID | LocalService (`S-1-5-19`) AND enabled `NT SERVICE\BfdWinService` SID |
+| Broker telemetry worker to BFD | `BfdWinService.Local.v2`; `BfdLocal` 2.0, `GetSessionStatusV1` only | LocalSystem (`S-1-5-18`) AND enabled `NT SERVICE\BfdBgpBroker` SID, plus required membership when a restricting list exists | LocalService (`S-1-5-19`) AND enabled `NT SERVICE\BfdWinService` SID |
 | BFD control worker to broker | `BfdWinService.Bgp.v1`; liveness/Get/Start/Stop | LocalService AND enabled `NT SERVICE\BfdWinService` SID, plus required membership when a restricting list exists | LocalSystem AND enabled `NT SERVICE\BfdBgpBroker` SID |
 
-Both transports are `ncalrpc`. Both apply the same binding authentication and protected registration policy; each substitutes the appropriate roles. The BFD process has a restricted service SID; the broker's service SID is unrestricted. Neither channel initiates calls in its reverse direction, and neither has remote callbacks. Responses travel within the initiated call.
+Both transports are `ncalrpc`. Both apply the same binding authentication and protected registration policy; each substitutes the appropriate roles. Both channels also require the expected caller service SID in any nonempty restricting list, including WRITE_RESTRICTED tokens; an unrestricted caller still needs the exact account and enabled service group. The BFD process has a restricted service SID; the broker's service SID is unrestricted. Neither channel initiates calls in its reverse direction, and neither has remote callbacks. Responses travel within the initiated call.
 
 The session-status contract uses a fixed 336-byte x64 native record. The BGP result is a fixed 16-byte record containing a 64-bit server instance nonce and 32-bit provider status and Boolean value. BGP opcodes are range-bounded `0..3`; Boolean results are `0..1`. The control request carries no BGP peer/target, path, command, or secret. The broker selects the fixed target from protected configuration.
 

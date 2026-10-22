@@ -1,7 +1,8 @@
 //! Native replacement-server regression. The replacement keeps the real account
-//! but disables an existing group; it never acquires a service SID or privilege.
+//! and narrows its own existing groups; it never acquires a service SID or privilege.
 
 use super::*;
+use crate::local_rpc::test_support::{restricted_token, OwnIdentity};
 use std::{
     ffi::OsString,
     mem::size_of,
@@ -247,4 +248,45 @@ fn fixed_policy_denies_same_account_replacement_with_its_group_disabled() {
         5
     );
     replacement.stop().unwrap();
+}
+
+#[test]
+fn native_write_restricted_status_caller_requires_its_group_in_both_lists() {
+    const WORLD: &str = "S-1-1-0";
+    let user = current_user();
+    for expected_group in [AUTHENTICATED_USERS, WORLD] {
+        let fixture = RpcFixture::start_policy(&user, expected_group, 0, 0);
+        let token = restricted_token(WORLD, false);
+        {
+            let _identity = OwnIdentity::enter(&token);
+            // Pin the same server policy throughout. The caller has both AU
+            // and World enabled, but only World in its write-restricting list.
+            let result = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS);
+            if expected_group == WORLD {
+                result.unwrap();
+            } else {
+                assert!(
+                    matches!(result, Err(SessionStatusQueryError::Rpc(ref error))
+                        if error.kind() == io::ErrorKind::PermissionDenied),
+                    "caller missing its expected restricting SID was accepted: {result:?}"
+                );
+            }
+        }
+        // An unrestricted authorized caller still succeeds after rejection.
+        query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+        fixture.stop();
+    }
+}
+
+#[test]
+fn native_status_denies_a_deny_only_caller_group() {
+    let user = current_user();
+    let fixture = RpcFixture::start(&user);
+    let token = restricted_token(AUTHENTICATED_USERS, true);
+    {
+        let _identity = OwnIdentity::enter(&token);
+        assert!(query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).is_err());
+    }
+    query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    fixture.stop();
 }

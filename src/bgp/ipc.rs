@@ -154,8 +154,7 @@ fn authorize_call(binding: *const c_void) -> u32 {
     let Some(policy) = POLICY.get() else {
         return ERROR_ACCESS_DENIED;
     };
-    if local_rpc::identity::authorize_restricted_call(binding, &policy.user, &policy.group).is_err()
-    {
+    if local_rpc::identity::authorize_call(binding, &policy.user, &policy.group).is_err() {
         ERROR_ACCESS_DENIED
     } else {
         RPC_S_OK as u32

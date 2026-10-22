@@ -4,11 +4,14 @@
 //! and the BFD service SID through the RPC runtime's server security descriptor.
 //! The server admits only the broker service SID and checks SYSTEM plus that SID
 //! on every call, without impersonating the broker or enabling privileges.
+//! A restricted caller must also carry that SID in its restricting list.
 #![allow(unsafe_code)]
 
 pub(crate) mod identity;
 pub(crate) mod monitor;
 mod status;
+#[cfg(all(test, not(miri)))]
+pub(crate) mod test_support;
 pub use monitor::{cached_bfd_session_status, BrokerStatus};
 pub use status::{SessionStatus, SessionStatusQueryError};
 

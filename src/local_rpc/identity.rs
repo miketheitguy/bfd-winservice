@@ -31,32 +31,13 @@ const SE_GROUP_ENABLED: u32 = 0x0000_0004;
 const SE_GROUP_USE_FOR_DENY_ONLY: u32 = 0x0000_0010;
 const MAX_IDENTITY_BYTES: usize = 1024 * 1024;
 
-/// Checks the current call's native transport, authentication, account and group.
-/// The RPC interface descriptor independently applies Windows ACL semantics,
-/// including the caller's restricting SIDs. This check establishes identity.
+/// Checks transport, authentication, exact account and enabled service group.
+/// A nonempty restricting-SID list must also contain the expected service group,
+/// including for write-restricted callers. The interface ACL remains independent.
 pub(crate) fn authorize_call(
     binding: *const c_void,
     expected_user: &str,
     expected_group: &str,
-) -> io::Result<()> {
-    authorize_identity(binding, expected_user, expected_group, false)
-}
-
-// BGP retains its additional restricted-client rule, including WRITE_RESTRICTED
-// tokens. The telemetry broker caller uses the unrestricted-service policy.
-pub(crate) fn authorize_restricted_call(
-    binding: *const c_void,
-    expected_user: &str,
-    expected_group: &str,
-) -> io::Result<()> {
-    authorize_identity(binding, expected_user, expected_group, true)
-}
-
-fn authorize_identity(
-    binding: *const c_void,
-    expected_user: &str,
-    expected_group: &str,
-    check_restricting: bool,
 ) -> io::Result<()> {
     let mut attributes = RPC_CALL_ATTRIBUTES_V2_W {
         Version: 2,
@@ -107,9 +88,10 @@ fn authorize_identity(
     if !user_info.user_matches(&user)? || !group_info.enabled_group(&group)? {
         return Err(denied());
     }
-    if check_restricting
-        && !IdentityInfo::query(&context, AuthzContextInfoRestrictedSids)?
-            .matches_group(&group, false, true)?
+    // Empty means unrestricted. Restricted SID attributes do not replace the
+    // enabled, non-deny-only normal service-group check above.
+    if !IdentityInfo::query(&context, AuthzContextInfoRestrictedSids)?
+        .matches_group(&group, false, true)?
     {
         return Err(denied());
     }
@@ -418,6 +400,38 @@ mod tests {
             assert!(!group(attributes).enabled_group(&expected).unwrap());
         }
         assert!(!group(SE_GROUP_ENABLED).enabled_group(&unrelated).unwrap());
+    }
+
+    #[test]
+    fn restricting_identity_accepts_unrestricted_or_matching_service_group() {
+        let expected = SidAllocation::parse("S-1-1-0").unwrap();
+        let unrelated = SidAllocation::parse("S-1-5-11").unwrap();
+        // Native TOKEN_GROUPS may contain only the zero count for this class.
+        let unrestricted = initialized_info(size_of::<u32>());
+        assert!(unrestricted.matches_group(&expected, false, true).unwrap());
+        // Restricting entries can have zero attributes. Enabled membership is
+        // separately required from AuthzContextInfoGroupsSids.
+        let restricted = group(0);
+        assert!(restricted.matches_group(&expected, false, true).unwrap());
+        assert!(!restricted.matches_group(&unrelated, false, true).unwrap());
+        assert!(!restricted.enabled_group(&expected).unwrap());
+    }
+
+    #[test]
+    fn restricting_identity_rejects_malformed_counts_and_sid_pointers() {
+        let expected = SidAllocation::parse("S-1-1-0").unwrap();
+        for length in 0..size_of::<u32>() {
+            assert_invalid(initialized_info(length).matches_group(&expected, false, true));
+        }
+        for count in [1_u32, u32::MAX] {
+            let mut info = initialized_info(size_of::<u32>());
+            bytes(&mut info).copy_from_slice(&count.to_ne_bytes());
+            assert_invalid(info.matches_group(&expected, false, true));
+        }
+        let mut info = group(0);
+        let start = offset_of!(TOKEN_GROUPS, Groups);
+        bytes(&mut info)[start..start + size_of::<SID_AND_ATTRIBUTES>()].fill(0);
+        assert_invalid(info.matches_group(&expected, false, true));
     }
 
     #[test]

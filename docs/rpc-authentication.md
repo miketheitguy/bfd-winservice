@@ -29,7 +29,7 @@ applies these requirements:
 | Interface DACL | Broker service SID | BFD service SID |
 | Exact caller user | LocalSystem | LocalService |
 | Enabled, non-deny-only caller group | Broker service SID | BFD service SID |
-| Restricted caller check | Native interface ACL semantics | Also require BFD SID in any nonempty restricting list |
+| Restricted caller check | Also require broker SID in any nonempty restricting list | Also require BFD SID in any nonempty restricting list |
 
 Authenticated users, local administrators, and domain administrators have no
 direct access to either private interface. Neither DACL grants access to
@@ -49,7 +49,7 @@ actions through the broker's bounded control queue. The broker invokes the
 Windows provider for its protected configured target.
 
 The diagram follows the telemetry direction. BGP control uses the same gates
-with the identities reversed, plus the restricted-caller check in the table.
+with the identities reversed, including the restricted-caller check in the table.
 
 ## RPC authentication flow
 
@@ -116,7 +116,7 @@ flowchart RL
         auth_start["<b>Verify BFD token; deny management</b><br/>LocalService + enabled BFD service SID<br/>Verify restricting entries before opening RPC"]:::bfd
         auth_acl["<b>[F] Register endpoint and interface</b><br/>Explicit broker-SID endpoint / interface ACLs<br/>WINNT; local-only / secure-only / no-cache<br/>Windows checks the interface ACL first"]:::gate
         auth_attributes["<b>[F] Check actual call attributes</b><br/>LRPC + local + WINNT + packet privacy<br/>Reject null sessions and query failures"]:::gate
-        auth_authz["<b>[F] Authorize the authenticated caller</b><br/>RpcGetAuthorizationContextForClient(FALSE)<br/>Validate buffers before comparing SIDs<br/>Exact SYSTEM + enabled, non-deny-only broker SID<br/>Release context; never impersonate"]:::gate
+        auth_authz["<b>[F] Authorize the authenticated caller</b><br/>RpcGetAuthorizationContextForClient(FALSE)<br/>Validate buffers before comparing SIDs<br/>Exact SYSTEM + enabled, non-deny-only broker SID<br/>If restricted: broker SID also in restricting list<br/>Release context; never impersonate"]:::gate
         auth_manager["<b>Manager repeats authorization</b><br/>Repeat attributes and Authz identity checks<br/>Four nonblocking admission permits<br/>Copy one immutable snapshot"]:::bfd
         auth_management["<b>Separate runtime management surface</b><br/>Deny enumeration, queries, and listener control<br/>Broker COM / MI policy stays independent"]:::note
     end
@@ -179,6 +179,9 @@ lifetime. See [binding and server setup](security/local-rpc.md#binding-and-serve
 Windows checks the protected interface ACL before the security callback. The
 callback validates local transport and authentication; both callback and manager
 require the exact authenticated account and enabled, non-deny-only service SID.
+If the restricting-SID list is nonempty, it must also contain that service SID,
+including for write-restricted callers. An unrestricted caller still needs the
+exact account and enabled service SID. Both channels use the same guard, dude.
 Authz queries do this without impersonating the caller. Runtime management is
 denied separately. See [per-call authorization](security/local-rpc.md#per-call-authorization-and-cleanup).
 

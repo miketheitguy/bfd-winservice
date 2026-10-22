@@ -267,6 +267,7 @@ Windows interface ACL passes
   AuthzGetInformationFromContext
     AuthzContextInfoUserSid    -> TOKEN_USER
     AuthzContextInfoGroupsSids -> TOKEN_GROUPS
+    AuthzContextInfoRestrictedSids -> TOKEN_GROUPS
           |
           v
   Validate native buffer lengths, group entries, and SID bounds
@@ -275,6 +276,7 @@ Windows interface ACL passes
   EqualSid: user == SYSTEM
   EqualSid: group == broker service SID
     group enabled; not SE_GROUP_USE_FOR_DENY_ONLY
+  Nonempty restricting list -> also require broker service SID
           |
           +-- query / bounds / identity failure --+
           |                                     |
@@ -303,12 +305,17 @@ not call `RpcImpersonateClient` or require added `SeImpersonatePrivilege`. See
 Microsoft's [authorization-context
 contract](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcgetauthorizationcontextforclient).
 
-`AuthzGetInformationFromContext` retrieves `AuthzContextInfoUserSid` and
-`AuthzContextInfoGroupsSids`. `EqualSid` compares the account with SYSTEM and
-the service group with `NT SERVICE\BfdBgpBroker`; the group must have
+`AuthzGetInformationFromContext` retrieves `AuthzContextInfoUserSid`,
+`AuthzContextInfoGroupsSids`, and `AuthzContextInfoRestrictedSids`. `EqualSid`
+compares the account with SYSTEM and the service group with
+`NT SERVICE\BfdBgpBroker`; the group must have
 `SE_GROUP_ENABLED` and lack `SE_GROUP_USE_FOR_DENY_ONLY`. A same-account process
-without that group fails. These explicit identity comparisons supplement the
-runtime ACL check; they do not reimplement restricted-token access checking. See
+without that group fails. A nonempty restricting list must also contain the
+broker service SID. The same guard enforces the corresponding BFD SID for BGP
+control callers. Empty restricting lists remain valid for authorized unrestricted
+callers. This extra identity gate applies to write-restricted tokens even when
+native read access would pass; it supplements Windows ACL checks. See the
+[write-restriction semantics](service-isolation.md#installed-service-tokens) and
 Microsoft's [Authz
 query](https://learn.microsoft.com/en-us/windows/win32/api/authz/nf-authz-authzgetinformationfromcontext),
 [information
