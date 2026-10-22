@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "bfd-winservice"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "arc-swap",
  "assert_cmd",
