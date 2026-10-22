@@ -18,7 +18,7 @@ and [Service identities and authorization](#service-identities-and-authorization
 
 Get the mission prerequisites lined up, turtle crew. Preflight check, buddy: the
 peer must already exist on a Windows Server with Remote Access/BGP configured.
-Install the MSI: BGP control requires the installed service identities and is
+Install the setup bundle: BGP control requires the installed service identities and is
 unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
 native MI query is started. The broker still starts as a service dependency and
 answers a read-only startup connection check when BGP control is configured.

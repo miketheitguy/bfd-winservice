@@ -4,9 +4,11 @@ Cowabunga, install crew. Get the session ready for action. Windows systems
 admins, let's get this setup rolling. Use this guide for a fresh Bidirectional
 Forwarding Detection (BFD) Windows service installation or a foreground console
 session. The service monitors one configured local/peer pair. Use
-[Install with an MSI](#install-with-an-msi) for the package produced by GitHub
-Actions. Loose files support foreground console execution; SCM operation
-requires the MSI to provision both services and their security settings.
+[Install with the offline setup bundle](#install-with-the-offline-setup-bundle)
+for the package produced by GitHub Actions. It installs the native Microsoft
+Visual C++ prerequisite and the service. Loose files support foreground
+console execution; SCM operation requires the bundle to provision both services
+and their security settings.
 
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
@@ -16,12 +18,12 @@ reports `Up` after it establishes peer communication.
 
 Choose the path for your deployment:
 
-- For Windows services, [install the MSI](#install-with-an-msi), then
+- For Windows services, [install the setup bundle](#install-with-the-offline-setup-bundle), then
   [configure and verify the service](#configure-and-verify-the-windows-service).
 - For foreground execution, [prepare loose files](#prepare-installation-files)
   if needed, then
   [run in a console](#run-in-a-console).
-- For removal, use the [MSI uninstall procedure](#remove-an-msi-installation) or
+- For removal, use the [setup bundle uninstall procedure](#remove-a-setup-bundle-installation) or
   the [legacy manual removal procedure](#remove-a-legacy-manual-installation).
 
 ## Before you begin
@@ -29,7 +31,7 @@ Choose the path for your deployment:
 Gather the gear before the ninja mission starts. Before you send it, line up
 these prerequisites:
 
-- Obtain the x64 MSI from
+- Obtain the x64 setup bundle and its `.sha256` file from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
   or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files from your
   service maintainer for console execution.
@@ -40,8 +42,8 @@ these prerequisites:
 - Choose distinct unicast `Local` and `Peer` IP literals of the same address
   family. Configure the remote peer with these addresses reversed.
 - Allow the [required network traffic](protocol.md). The service doesn't create
-  firewall rules or discover peers. The MSI installs the rules described in
-  [MSI firewall rules](#msi-firewall-rules).
+  firewall rules or discover peers. The bundle installs the rules described in
+  [Installed firewall rules](#installed-firewall-rules).
 
 Get your bearings: find the interface that owns your local address:
 
@@ -53,78 +55,93 @@ Get-NetIPAddress |
 Find your local address in the output and use its nonzero interface index for
 the default single-hop session.
 
-## Install with an MSI
+## Install with the offline setup bundle
 
-Kick shell with the installer while keeping its privilege requirements clear.
-Installation, repair, and removal require administrator privileges. The MSI
-requests elevation for its per-machine installation and rejects installation
-sessions without the required privileges. Run command-line installation from
-**PowerShell as Administrator**.
-
-### 1. Install the package
-
-Download `BfdWinService-VERSION-x64.msi` and its `.sha256` file from the version's
-**Assets** on
+Download `BfdWinService-VERSION-x64-setup.exe` and its `.sha256` file from the
+version's **Assets** on
 [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
-`VERSION` is the release tag without its leading `v`. Tagged builds also provide
-the `BfdWinService-x64-COMMIT_SHA` Actions artifact; `COMMIT_SHA` identifies the
-source commit. Pull requests, pushes to `main`, and manual branch runs also
-produce validated Actions artifacts; release publication requires a version tag.
-In **PowerShell as Administrator**, install
-the MSI after checking the downloaded checksum:
+`VERSION` is the release tag without its leading `v`. The bundle embeds
+Microsoft's unmodified x64 Visual C++ Redistributable `14.51.36247.0` and the
+service package; installation doesn't require an internet connection, .NET,
+or WiX. An installed runtime of that version or newer is detected and retained.
+See [runtime provenance](../installer/redist/README.md) for the download source,
+checksum, signature verification, and Microsoft license terms.
+
+In **PowerShell as Administrator**, check the checksum and install:
 
 ```powershell
-$msi = (Resolve-Path 'MSI_PATH').Path
-$expectedHash = (Get-Content -LiteralPath "$msi.sha256" -Raw).Split()[0]
-$actualHash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash
-if ($actualHash -ne $expectedHash) {
-    throw 'MSI SHA-256 checksum mismatch'
+$setup = (Resolve-Path 'SETUP_PATH').Path
+$expectedHash = (Get-Content -LiteralPath "$setup.sha256" -Raw).Split()[0]
+if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -ne $expectedHash) {
+    throw 'Setup SHA-256 checksum mismatch'
 }
-$log = Join-Path $env:TEMP 'BfdWinService-install.log'
-$arguments = @(
-    '/i', ('"' + $msi + '"'), '/qn', '/norestart',
-    '/L*v', ('"' + $log + '"')
-)
-$result = Start-Process -FilePath msiexec.exe -ArgumentList $arguments `
-    -WindowStyle Hidden -Wait -PassThru
+$log = Join-Path $env:TEMP 'BfdWinService-setup.log'
+$result = Start-Process -FilePath $setup -ArgumentList @(
+    '/install', '/quiet', '/norestart', '/log', ('"' + $log + '"')
+) -WindowStyle Hidden -Wait -PassThru
 if ($result.ExitCode -notin @(0, 3010)) {
-    throw "MSI installation failed; inspect $log"
+    throw "Setup failed; inspect $log"
 }
-Get-Service BfdWinService | Select-Object Name, Status, StartType
-Get-WinEvent -ListProvider 'BFD-Service'
-Get-WinEvent -ListLog 'BFD-Service/Operational'
+Get-Service BfdWinService, BfdBgpBroker | Select-Object Name, Status, StartType
 ```
 
-Replace `MSI_PATH` with the local `.msi` path, such as
-`C:\Temp\BfdWinService-1.1.0-x64.msi`. Keep its matching `.msi.sha256` file in the
-same folder. Successful installation reports a **Stopped**,
-**Automatic** service, which `Get-Service` also reports for delayed start, and the
-registered provider/channel. Exit code `3010`
-means installation succeeded and Windows requests a restart.
+Replace `SETUP_PATH` with the downloaded `.exe` path. Keep its matching
+`.exe.sha256` file in the same folder. Exit code `0` indicates success; `3010`
+indicates success with a restart required. The command suppresses automatic
+restarts. Both services remain stopped so you can
+[configure and start the session](#configure-and-start-the-installed-session) before
+restarting Windows. The setup log and adjacent package logs record failures.
 
-### 2. Configure and start the session
+Run the setup executable without arguments for an interactive installation.
+For repair, use the same command with `/repair` instead of `/install`.
+For an upgrade from an earlier MSI installation, run the setup bundle and then
+verify your retained registry settings before starting the services. Deployment
+automation must use the setup executable and its switches; a standalone MSI
+isn't distributed.
+
+## Remove a setup bundle installation
+
+In **PowerShell as Administrator**, run the setup executable with `/uninstall`:
+
+```powershell
+$result = Start-Process -FilePath 'SETUP_PATH' -ArgumentList @(
+    '/uninstall', '/quiet', '/norestart'
+) -WindowStyle Hidden -Wait -PassThru
+if ($result.ExitCode -notin @(0, 3010)) {
+    throw "Setup removal failed with exit code $($result.ExitCode)"
+}
+```
+
+Replace `SETUP_PATH` with the local setup executable path. You can also remove
+**BFD Windows Service** through Windows installed-app settings. Removal
+uninstalls the BFD service package and retains the shared Microsoft runtime for other
+applications. A failed BFD installation also retains a successfully installed
+runtime. Generated service logs remain available after removal. Confirm that
+`Get-Service BfdWinService,BfdBgpBroker` no longer finds either service.
+
+## Configure and start the installed session
 
 Turtle power starts with preflight, buddy. Like, for sure, complete these steps
 before the first start:
 
 1. [Configure the session](#2-configure-the-session), including the required
-   addresses and interface index. The MSI already provisions logging defaults.
+   addresses and interface index. The bundle already provisions logging defaults.
 2. [Start the service](#4-start-the-service) and
    [verify startup](#5-verify-startup).
 3. Configure the remote peer and [verify peer communication](#6-verify-peer-communication).
 
-The MSI registers the manifest automatically. Use the session and logging
+The bundle registers the manifest automatically. Use the session and logging
 references to configure authentication, multihop, S-BFD, or file output.
 
 ### Installed resources and security settings
 
-Donatello would inspect the full installation inventory, dude. The MSI installs
+Donatello would inspect the full installation inventory, dude. The bundle installs
 the following resources for all users:
 
 - Both executables, the manifest, and logging script in
   `C:\Program Files\BfdWinService`.
 - The `BfdWinService` service with display name **BFD Windows Service**,
-  the LocalService account, and **Automatic (Delayed Start)** startup. The MSI
+  the LocalService account, and **Automatic (Delayed Start)** startup. The bundle
   leaves it stopped; configure it before starting the service or restarting
   Windows. Delayed start runs after boot-time services, when interface addresses
   are more likely to be assigned.
@@ -156,7 +173,7 @@ the following resources for all users:
   with message and resource paths pointing to the installed executable.
 - The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
   `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
-  Windows layout. The MSI path uses the machine's ProgramData location. The
+  Windows layout. The installer uses the machine's ProgramData location. The
   executable fallback and logging script use the literal `C:\ProgramData` path.
 - The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
   Only the BFD service SID receives Modify access; shared LocalService processes
@@ -170,7 +187,7 @@ the following resources for all users:
   on the broker. See [Monitor service status and BFD events](monitoring.md) for
   lifecycle queries and event-log monitoring.
 
-### MSI firewall rules
+### Installed firewall rules
 
 Keep the network entrance totally tubular and check the actual rules. Four rules
 allow UDP for the installed executable on Domain, Private, and Public profiles.
@@ -201,23 +218,10 @@ Get-NetFirewallRule |
 Firewall vibe check: confirm that the four rules are enabled. To inspect ports,
 pipe the matching rules to `Get-NetFirewallPortFilter`.
 
-### Remove an MSI installation
-
-In Windows **Installed apps** or **Programs and Features**, select
-**BFD Windows Service** and choose **Uninstall**. Windows Installer stops BFD and
-the broker, removes both service registrations and installed files, unregisters the event
-manifest, and removes its four firewall rules. User-generated log files remain.
-It removes the ProgramData folder only when the folder is empty.
-
-Confirm that `Get-Service BfdWinService,BfdBgpBroker` no longer finds the services and that
-the provider and firewall-rule queries no longer find the installed entries.
-Use Windows Installer to remove an MSI installation so its ownership records
-remain consistent.
-
 ## Prepare installation files
 
 Pack the console gear before the pizza run. For a console-only deployment, copy
-the supplied files to a permanent folder. If the MSI already installed them,
+the supplied files to a permanent folder. If the bundle already installed them,
 you're set; skip this section:
 
 ```powershell
@@ -238,7 +242,7 @@ such as `C:\Temp\BfdWinService`. Adjust `$installDirectory` if your organization
 uses another location.
 
 PowerShell displays the destination folder and the two copied filenames.
-These files support console execution. Use the MSI for service execution;
+These files support console execution. Use the bundle for service execution;
 copying files doesn't create services, service identities, or access policies.
 
 <a id="install-the-windows-service"></a>
@@ -247,9 +251,9 @@ copying files doesn't create services, service identities, or access policies.
 
 ### 1. Install the services
 
-If you haven't installed the package, follow [Install with an MSI](#install-with-an-msi)
+If you haven't installed the package, follow [Install with the offline setup bundle](#install-with-the-offline-setup-bundle)
 to create both services with their accounts, service SIDs, dependencies, and
-protected ACLs. If the MSI is already installed, continue with the installed paths
+protected ACLs. If the bundle is already installed, continue with the installed paths
 in this step.
 The installer migrates an existing built-in service account to LocalService and
 restores its previous account/SID settings if the transaction rolls back. Custom
@@ -260,7 +264,7 @@ ETW delivery, and file writes. Follow this guide to verify your deployment too.
 BFD's service-mode startup checks the LocalService account, its enabled service
 group, and the BFD SID plus write-restricted marker in the restricting list
 before loading configuration, creating sockets, or registering its local RPC interface.
-Use the MSI to provision both services. With `BgpPeerName` configured, BFD startup
+Use the bundle to provision both services. With `BgpPeerName` configured, BFD startup
 also requires an authenticated connection to the broker's BGP control RPC interface.
 
 Set the installed paths for the remaining commands:
@@ -272,7 +276,7 @@ $exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
 
 All session settings belong in the BFD Parameters registry key. Automatic
 (Delayed Start) starts BFD and its broker dependency shortly after Windows starts;
-finish configuration before starting the service. The MSI already registers the
+finish configuration before starting the service. The bundle already registers the
 event manifest.
 
 ### 2. Configure the session
@@ -301,7 +305,7 @@ Replace the following before running the commands:
 - `PEER_IP`: the remote peer's address, of the same address family.
 - `INTERFACE_INDEX`: the index from `Get-NetIPAddress`, such as `12`.
 
-The registry commands display the keys and values they create. The MSI already
+The registry commands display the keys and values they create. The bundle already
 provisions logging defaults. For a loose-file console deployment, initialize
 those defaults with the supplied script:
 
@@ -327,7 +331,7 @@ For authentication, multihop, or other settings, see the
 
 ### 3. Verify the Operational log
 
-Check the log receipts before shouting Cowabunga. The MSI registers the Event
+Check the log receipts before shouting Cowabunga. The bundle registers the Event
 Tracing for Windows (ETW) manifest. Confirm that the provider and channel are
 available:
 
@@ -337,7 +341,7 @@ Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
 The queries display the `BFD-Service` provider and its Operational channel. If
-either is missing, that's a setup bummer: repair the MSI installation before
+either is missing, that's a setup bummer: repair the bundle installation before
 starting BFD. Starting the executable doesn't install the manifest.
 
 ### 4. Start the service
@@ -437,7 +441,7 @@ See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
 
 Take the session on a foreground mission, turtle crew. Console execution reads
 the same Parameters registry values as service execution. Run it as
-Administrator when using the MSI-protected key. Console mode does not authorize
+Administrator when using the installer-protected key. Console mode does not authorize
 BGP operations; leave `BgpPeerName` and `BgpRoutingDomain` unset for foreground
 execution.
 
@@ -447,7 +451,7 @@ ports.
 
 ### 1. Configure the registry values
 
-Set `$installDirectory` to the MSI installation folder or the folder from
+Set `$installDirectory` to the bundle installation folder or the folder from
 [Prepare installation files](#prepare-installation-files). Run the commands in
 [Configure the session](#2-configure-the-session) to provision the local/peer
 addresses, interface index, and default logging settings.
@@ -503,8 +507,8 @@ This shell redirection is separate from the `LogToFile` setting.
 
 ## Remove a legacy manual installation
 
-Wrap up the old mission before the next pizza break. For an MSI installation,
-use [Remove an MSI installation](#remove-an-msi-installation). The following
+Wrap up the old mission before the next pizza break. For a bundle installation,
+use [Remove a setup bundle installation](#remove-a-setup-bundle-installation). The following
 procedure removes services from a legacy manual installation.
 
 Use **PowerShell as Administrator** with the installed manifest path.
@@ -550,4 +554,4 @@ if (Get-Service BfdBgpBroker -ErrorAction SilentlyContinue) {
 The command reports successful deletion. After SCM completes deletion,
 `Get-Service BfdWinService` no longer finds the service.
 
-For another fresh installation, return to [Install with an MSI](#install-with-an-msi).
+For another fresh installation, return to [Install with the offline setup bundle](#install-with-the-offline-setup-bundle).

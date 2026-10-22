@@ -103,7 +103,7 @@ process-lifetime and runs once before the first oracle invocation.
 
 ## GitHub Actions
 
-The [Build Windows MSI workflow](../.github/workflows/build-msi.yml) runs a
+The [Build Windows bundle workflow](../.github/workflows/build-msi.yml) runs a
 separate `fuzz` job on pull requests, pushes to `main`, version tags, and manual
 dispatch. The job audits the fuzz lockfile, checks formatting and Clippy, runs
 the harness regression tests, and runs all three ASan targets with

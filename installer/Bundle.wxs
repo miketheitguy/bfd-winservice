@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Bundle Name="BFD Windows Service" Manufacturer="BFD Windows Service"
+          Version="$(var.ProductVersion)" UpgradeCode="5ACAD16B-3A58-45B2-923A-CAB627AF62FA"
+          Compressed="yes">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense"
+          LicenseUrl="https://aka.ms/VCRedistLicense" ShowVersion="yes"
+          SuppressOptionsUI="yes" />
+    </BootstrapperApplication>
+    <bal:Condition Message="BFD Windows Service requires x64 Windows 10 or Windows Server 2016 or later."
+        Condition="WixBundleInstalled OR (VersionNT &gt;= v10.0 AND (NativeMachine = 34404 OR (VersionNT64 AND NOT NativeMachine)))" />
+    <!-- Use the native 64-bit runtime registration, including Installed=1;
+         never downgrade an equal or newer shared runtime. -->
+    <Variable Name="VcRuntimeVersion" Type="version" Value="0.0.0.0" />
+    <Variable Name="VcRuntimeInstalled" Type="numeric" Value="0" />
+    <util:RegistrySearch Id="FindVcRuntimeVersion" Variable="VcRuntimeVersion"
+        Root="HKLM" Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+        Value="Version" Result="value" Bitness="always64" />
+    <util:RegistrySearch Id="FindVcRuntimeInstalled" Variable="VcRuntimeInstalled"
+        Root="HKLM" Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+        Value="Installed" Result="value" Bitness="always64" />
+    <Chain>
+      <!-- Microsoft's signed EXE remains byte-for-byte unchanged. Permanent
+           keeps the shared runtime on uninstall and on BFD installation failure. -->
+      <ExePackage Id="VcRedistX64" SourceFile="$(var.RepositoryRoot)\installer\redist\VC_redist.x64.exe"
+          DetectCondition="VcRuntimeInstalled = 1 AND VcRuntimeVersion &gt;= v$(var.VcRedistVersion)"
+          InstallArguments="/install /quiet /norestart"
+          PerMachine="yes" Permanent="yes" Vital="yes" Compressed="yes">
+        <ExitCode Value="0" Behavior="success" />
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+      </ExePackage>
+      <MsiPackage Id="BfdServiceMsi" SourceFile="$(var.MsiPath)"
+          Vital="yes" Compressed="yes" Visible="no" />
+    </Chain>
+  </Bundle>
+</Wix>

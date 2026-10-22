@@ -1,4 +1,4 @@
-name: Build Windows MSI
+name: Build Windows bundle
 
 on:
   pull_request:
@@ -195,38 +195,48 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'In-process RPC/MI identity isolation failed.' }
           cargo test-release --lib bgp::ipc::tests::native_bgp_rpc_and_provider_security_coexist -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { throw 'BGP RPC/MI security coexistence failed.' }
-      - name: Build hardened release executable and MSI
-        run: ./scripts/Build-Msi.ps1 -AcceptWixEula
+      - name: Build hardened executables and offline setup bundle
+        run: ./scripts/Build-Bundle.ps1 -AcceptWixEula
       - name: Verify production executable hardening
         run: |
           $env:BFD_HARDENING_EXE = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/bfd-winservice.exe').Path
           & $env:BFD_HARDENING_TEST_EXE
           if ($LASTEXITCODE -ne 0) { throw 'Release executable hardening validation failed.' }
-      - name: Test MSI rollback, installation, and removal
+      - name: Test embedded MSI rollback, installation, and removal
         env:
           BFD_RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $msi = @(Get-ChildItem -LiteralPath target/installer -Filter '*.msi')
-          if ($msi.Count -ne 1) { throw 'Expected one MSI artifact.' }
-          ./scripts/Test-MsiRollback.ps1 -Path $msi[0].FullName
-          ./scripts/Test-MsiInstall.ps1 -Path $msi[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
-      - name: Upload MSI and checksum
+          $msi = "target/bundle-build/$env:BFD_RELEASE_VERSION/BfdWinService-$env:BFD_RELEASE_VERSION-x64.msi"
+          if (-not (Test-Path -LiteralPath $msi)) { throw 'Expected the private bundle MSI payload.' }
+          ./scripts/Test-MsiRollback.ps1 -Path $msi
+          ./scripts/Test-MsiInstall.ps1 -Path $msi -ExpectedVersion $env:BFD_RELEASE_VERSION
+      - name: Test setup prerequisite, repair, and removal
+        env:
+          BFD_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $setup = @(Get-ChildItem -LiteralPath target/installer -Filter '*-setup.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one setup bundle.' }
+          ./scripts/Test-BundleInstall.ps1 -Path $setup[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
+      - name: Upload setup bundle and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: BfdWinService-x64-${{ github.sha }}
           if-no-files-found: error
           retention-days: 30
           path: |
-            target/installer/*.msi
-            target/installer/*.msi.sha256
+            target/installer/*-setup.exe
+            target/installer/*-setup.exe.sha256
       - name: Upload installer test logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: MSI-test-logs-${{ github.sha }}
+          name: Installer-test-logs-${{ github.sha }}
           if-no-files-found: ignore
           retention-days: 14
-          path: target/installer/*.log
+          path: |
+            target/installer/*.log
+            target/installer/bundle-install-validation.json
+            target/bundle-build/**/*.log
 
   publish-release:
     needs: [asan, fuzz, build-msi]
@@ -239,7 +249,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - name: Download validated MSI and checksum
+      - name: Download validated setup bundle and checksum
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: BfdWinService-x64-${{ github.sha }}
@@ -258,20 +268,22 @@ jobs:
           }
           $version = $env:RELEASE_VERSION
           if ($tag -cne "v$version") { throw 'Release tag does not match the validated package version.' }
-          $msi = "release-assets/BfdWinService-$version-x64.msi"
+          $setup = "release-assets/BfdWinService-$version-x64-setup.exe"
           $assets = @(
-            $msi,
-            "$msi.sha256"
+            $setup,
+            "$setup.sha256"
           )
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
               throw "Release asset not found: $asset"
             }
           }
-          $checksum = (Get-Content -LiteralPath "$msi.sha256" -Raw).Trim()
-          $expectedChecksum = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($checksum -cne "$expectedChecksum  $(Split-Path $msi -Leaf)") {
-            throw 'Release MSI checksum does not match its checksum file.'
+          foreach ($installer in @($setup)) {
+            $checksum = (Get-Content -LiteralPath "$installer.sha256" -Raw).Trim()
+            $expectedChecksum = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($checksum -cne "$expectedChecksum  $(Split-Path $installer -Leaf)") {
+              throw "Release installer checksum mismatch: $installer"
+            }
           }
           $releaseJson = & gh release view $tag --json isDraft,assets 2>$null
           if ($LASTEXITCODE -ne 0) {

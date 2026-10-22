@@ -21,7 +21,7 @@ After completing [Before you begin](#before-you-begin), choose
 Get the ninja gear together before sending probes. Before you send probes, get
 these prerequisites dialed in, buddy:
 
-- Install the [MSI package](setup.md#install-with-an-msi) for service execution,
+- Install the [setup bundle](setup.md#install-with-the-offline-setup-bundle) for service execution,
   or prepare supplied loose files for console execution using
   [Prepare installation files](setup.md#prepare-installation-files).
 - Open **PowerShell as Administrator**. These examples use
@@ -35,7 +35,7 @@ these prerequisites dialed in, buddy:
 - Stop an existing `BfdWinService` before changing its role or startup settings.
   Remove values that are invalid for the selected role before starting it.
 
-For Windows service execution, the MSI creates the service and registers the
+For Windows service execution, the bundle creates the service and registers the
 Operational log. Configure one of the roles in this guide before starting the
 service. Each process runs one role. Supplied loose files use
 [`--console`](setup.md#run-in-a-console); copying them doesn't provision the
@@ -53,7 +53,7 @@ settings:
 The script displays the default folder and registry objects, then prints
 `LogFilePath` and `LogToFile=0`. It creates the folder without writing
 `trace.log`. Running it resets the path and disables file output; omit it when
-retaining existing settings. The MSI already provisions the defaults.
+retaining existing settings. The bundle already provisions the defaults.
 
 ## Configure an initiator
 

@@ -1,3 +1,10 @@
+# Release versioning
+
+When preparing a release, use the
+[version selection policy](CONTRIBUTING.md#choose-a-release-version) to judge
+whether the complete change set warrants a patch, minor, or major increment.
+Explain the compatibility and functionality impact in the release notes.
+
 # Code Review Standards
 Cowabunga, review crew! Like, dude, bring the receipts and kick shell by
 checking the gnarly ownership edges. Turtle power means giving every P0/P1

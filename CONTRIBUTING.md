@@ -22,7 +22,7 @@ procedures and references, buddy:
 | Inspect build protections and production artifacts | [Build security](#build-security) |
 | Change library APIs or broker boundaries | [Configuration and error APIs](#use-the-rust-configuration-and-error-apis), [broker management security](#initialize-broker-management-security), and [local RPC maintenance](#maintain-the-private-local-rpc-interface) |
 | Update the communication diagrams | [Update the security diagrams](#update-the-security-diagrams) |
-| Prepare loose files or an MSI | [Prepare installation files](#prepare-installation-files) or [Build an MSI](#build-an-msi) |
+| Prepare loose files or installers | [Prepare installation files](#prepare-installation-files) or [Build the offline setup bundle](#build-the-offline-setup-bundle) |
 | Build or publish a tagged release | [GitHub Actions](#build-with-github-actions) and [Publish a GitHub release](#publish-a-github-release) |
 | Submit a tested change | [Submit a change](#submit-a-change) |
 
@@ -561,7 +561,7 @@ Deliver the folder's contents with the [setup guide](docs/setup.md).
 Administrators don't need Rust, the MSVC toolchain, or the Windows SDK to
 follow that guide.
 
-Loose files support console execution. Use the MSI for SCM execution: it
+Loose files support console execution. Use the setup bundle for SCM execution: it
 provisions the LocalService BFD process, Automatic (Delayed Start) LocalSystem broker, enabled
 service SIDs, service dependency, and scoped registry/file/log ACLs. Native MI
 code is confined to `src/bgp_broker/mi.rs`; the BFD worker uses `src/bgp/ipc.rs`.
@@ -570,35 +570,41 @@ from protected configuration. Protocol, authorization, reconnect, disconnect
 cleanup, and overlapped-I/O cancellation tests use temporary pipes and fake
 provider operations, with no service installation or BGP changes.
 
-## Build an MSI
+## Build the offline setup bundle
 
 Cowabunga, packaging crew. Check the prerequisites before building. Install the
 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or a later SDK.
 WiX 7 requires explicit acceptance of its
 [Open Source Maintenance Fee EULA](https://docs.firegiant.com/wix/osmf/). Hold
 up, buddy: review the terms and any applicable maintenance fee before accepting
-them. The build script accepts the EULA by default. To build an MSI, run from
+them. The build script accepts the EULA by default. To build the bundle, run from
 the repository root:
 
 ```powershell
-.\scripts\Build-Msi.ps1
+.\scripts\Build-Bundle.ps1
 ```
 
 The script builds both hardened x64 production executables with Cargo's locked
-dependencies, restores WiX and its extensions, compiles the MSI, validates its
-tables (including per-machine scope and required administrator privileges), and
-writes a SHA-256 checksum. Successful output ends with the MSI path.
+dependencies, verifies the vendored Microsoft runtime's signature and checksum,
+and restores WiX and its extensions. It compiles one private MSI payload and validates its tables,
+including per-machine scope and required administrator privileges. It then builds
+the offline setup bundle, extracts it to verify the embedded packages and runtime
+detection policy, and writes the bundle's SHA-256 checksum. Successful output
+ends with the setup path. The internal MSI and WiX intermediate files stay in
+`target\bundle-build\VERSION` for validation; no standalone MSI or MSI checksum
+is generated in the distribution directory. The build removes standalone output
+files left there by the previous packaging script.
 For a local build, the package version comes from `Cargo.toml` and must contain
 three numeric fields within Windows Installer's `255.255.65535` version limits.
 To reproduce a tagged release locally, stamp its version before building:
 
 ```powershell
 .\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0'
-.\scripts\Build-Msi.ps1
+.\scripts\Build-Bundle.ps1
 ```
 
-The stamping script updates only the `bfd-winservice` version in `Cargo.toml`
-and `Cargo.lock`; dependency versions remain locked. It rejects malformed tags,
+The stamping script updates only the `bfd-winservice` version in `Cargo.toml`,
+`Cargo.lock`, and `fuzz/Cargo.lock`; dependency versions remain locked. It rejects malformed tags,
 prerelease or build metadata, leading zeros, and versions beyond MSI limits.
 Before packaging, the script checks the executable's `--version` output and
 Windows file and product versions against the Cargo version. It also checks the
@@ -612,8 +618,8 @@ Output files appear in `target\installer`:
 
 | File | Purpose |
 | --- | --- |
-| `BfdWinService-VERSION-x64.msi` | Installer with embedded payload cabinet |
-| `BfdWinService-VERSION-x64.msi.sha256` | SHA-256 checksum of that MSI |
+| `BfdWinService-VERSION-x64-setup.exe` | Offline bundle: native Microsoft runtime installer, then BFD MSI |
+| `BfdWinService-VERSION-x64-setup.exe.sha256` | SHA-256 checksum of that setup bundle |
 
 `VERSION` is the build's package version, such as `1.2.0`. Release builds
 disable Rust PDBs for both services and WiX symbols with `-pdbtype none`.
@@ -626,11 +632,24 @@ The script's `AcceptWixEula` switch defaults to true and passes
 without recording per-user acceptance.
 
 The [.NET tool manifest](.config/dotnet-tools.json) pins WiX `7.0.0`; the script
-restores `WixToolset.Util.wixext` and `WixToolset.Firewall.wixext` at the same
+restores `WixToolset.Util.wixext`, `WixToolset.Firewall.wixext`, and
+`WixToolset.BootstrapperApplications.wixext` at the same
 version into the ignored `.wix` cache and loads those exact versions for the
 build. Administrators don't need .NET or WiX
-to install the resulting MSI. The package is unsigned; signing isn't configured
-in this workflow.
+to install the setup bundle. The internal BFD MSI and outer setup executable
+are unsigned; signing isn't configured in this workflow. The embedded Microsoft
+installer retains its valid Microsoft Authenticode signature.
+
+The [bundle definition](installer/Bundle.wxs) embeds the unmodified x64
+Visual C++ Redistributable from [installer/redist](installer/redist/README.md)
+before the MSI. Registry detection skips an installed runtime of the pinned
+version or newer. The native installer runs with `/install /quiet /norestart`;
+failures stop the chain, and exit code `3010` requests a restart without forcing
+one. The shared runtime remains installed after BFD removal or rollback.
+Update the binary, provenance metadata, checksum, and documented runtime version
+together when refreshing the prerequisite. `scripts/Test-VcRedist.ps1` verifies
+the pin, and `scripts/Test-Bundle.ps1` verifies that the final bundle contains
+the exact verified Microsoft installer and validated internal MSI.
 
 The [package definition](installer/Package.wxs) uses the `v4` XML schema
 namespace, which WiX 7 retains, and uses
@@ -656,12 +675,12 @@ WiX documents limitations in the native MSI service-configuration action; these
 settings therefore use explicit SCM calls instead of `MsiServiceConfig` authoring.
 See [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/wxs/serviceconfig/).
 The installed service is Automatic (Delayed Start) and remains stopped for address configuration.
-See [MSI installation](docs/setup.md#install-with-an-msi).
+See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle).
 
 ### Build with GitHub Actions
 
 Send the build through its training session before calling it bodacious. The
-[Build Windows MSI workflow](.github/workflows/build-msi.yml) runs on pull
+[Build Windows bundle workflow](.github/workflows/build-msi.yml) runs on pull
 requests, pushes to `main`, and version tags matching `v*`. It also supports
 manual dispatch from a tag or branch. It audits `Cargo.lock` against the RustSec
 advisory database with `cargo audit`, then checks version stamping, Rust
@@ -681,11 +700,11 @@ uses the pinned cargo-fuzz driver and the repository's Rust toolchain on its own
 `windows-2025` runner. See the [fuzz harness guide](fuzz/README.md#github-actions)
 for the target scope and diagnostic artifact contents.
 
-Every run packages and tests an MSI. For a tag, the workflow
+Every run builds and tests the offline setup bundle and its internal MSI. For a tag, the workflow
 removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
 service package entries in `Cargo.toml`, `Cargo.lock`, and `fuzz/Cargo.lock` in
 the runner's checkout. The separate fuzz package keeps its own version.
-The executable, MSI, artifact filenames, and installation checks use that
+The executables, MSI, setup bundle, artifact filenames, and installation checks use that
 stamped version. Branch and pull-request builds use the version in `Cargo.toml`.
 The workflow validates production executable hardening before
 testing installation. Pull-request and branch runs upload validated artifacts
@@ -697,7 +716,7 @@ To enforce validation before merging, configure branch protection to require
 `asan`, `fuzz`, and `build-msi`. Pushes to other branches can be checked by
 manual dispatch.
 
-The workflow explicitly passes `-AcceptWixEula` for MSI builds, accepting
+The workflow explicitly passes `-AcceptWixEula` for bundle builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.
 
 In `build-msi`, linting, optimized tests, and production builds use the release
@@ -738,11 +757,19 @@ value is seeded only on a stopped test service on the disposable runner; the tes
 never starts that fixture. It
 runs only on a disposable GitHub-hosted runner.
 
+After MSI validation and removal, `Test-BundleInstall.ps1` installs the setup
+bundle and checks runtime availability, both service accounts and executable
+versions, repeated installation, repair, and removal that retains the shared
+runtime. It verifies that maintenance skips an equal or newer runtime. On hosted
+runners, the preinstalled runtime might already satisfy the prerequisite. The
+script also supports explicit `-DisposableVm` testing on the provisioned
+`BFD-WS2025` Hyper-V guest; testing from an absent runtime was validated there.
+
 To inspect the package without installing it, run:
 
 ```powershell
 .\scripts\Test-Msi.ps1 `
-    -Path '.\target\installer\BfdWinService-1.2.0-x64.msi'
+    -Path '.\target\bundle-build\1.2.0\BfdWinService-1.2.0-x64.msi'
 ```
 
 Adjust the filename for the package version. Confirm that validation reports
@@ -750,7 +777,7 @@ the x64 package's elevation requirement, service, payload, registry defaults,
 firewall rules, and manifest lifecycle.
 
 After a successful tag build, download the `BfdWinService-x64-COMMIT_SHA`
-artifact. It contains the MSI and its checksum.
+artifact. It contains only the offline setup bundle and its checksum.
 `COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
 including when a test fails.
 
@@ -760,14 +787,59 @@ Pizza time comes after the release checks, dude. Pushing a version tag or
 manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the sanitizer, fuzz, build, hardening, and installation checks pass. The release
-attaches the MSI, its SHA-256 checksum, with generated release notes. The release title
+attaches the offline setup bundle and its SHA-256 checksum, with generated
+release notes. Explain the version choice and compatibility impact in those notes.
+The release title
 includes the version tag, such as `BFD Windows Service v1.2.0`.
 
-Use the GitHub tag as the release version source. The first stable release is
-`v1.0.0`; increase the minor version for each subsequent release, such as
-`v1.1.0` and `v1.2.0`, with patch version `0`. The executable's `--version`
-output, Windows file and product version strings, MSI `ProductVersion`, and
-installed-app `DisplayVersion` use the numeric part of the tag, such as `1.2.0`.
+#### Choose a release version
+
+Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) to choose
+the next version. Start from the latest published release on the intended
+release line and review the complete set of changes since that release.
+As the maintainer or release agent, choose the increment based on compatibility
+and functionality, and explain the decision in the release notes.
+
+The public contract includes supported command-line options, registry settings,
+service behavior, BFD interoperability, public Rust APIs, supported Windows
+versions, and installation and upgrade behavior. Choose the highest required
+increment for changes to that contract:
+
+| Change | Increment | Example from `v1.10.0` |
+| --- | --- | --- |
+| Compatible bug fixes | Patch | `v1.10.1` |
+| Compatible functionality or a public API deprecation | Minor; reset patch to zero | `v1.11.0` |
+| Incompatible public contract changes | Major; reset minor and patch to zero | `v2.0.0` |
+
+Use a patch release for fixes such as correcting status-publication timestamp
+ordering without changing supported interfaces. Use a minor release for an
+optional protocol role or configuration capability that preserves existing
+deployments. Adding an optional offline setup bundle while retaining the
+standalone MSI would be compatible functionality. Switching to bundle-only
+distribution removes the documented standalone MSI deployment contract, so it
+requires a major release, such as `v2.0.0` after `v1.10.0`. Existing installations
+can upgrade through the bundle; deployment scripts must switch from `msiexec`
+to the setup executable and its switches. Describe that migration in release notes.
+Substantial internal functionality or improvements can also
+justify a minor release; explain the benefit and verify compatibility.
+Documentation, test, refactoring, dependency, or security labels alone don't
+determine the increment. A bug-fix-only release uses a patch increment regardless
+of the size of the fix.
+
+Version private RPC interfaces separately from the product. Check any supported
+mixed-version behavior before treating an internal change as compatible.
+Keep published tags and assets unchanged; apply this policy to subsequent
+releases.
+
+#### Tag and publish the release
+
+Use a GitHub tag in the form `vMAJOR.MINOR.PATCH` as the release version source.
+The MSI workflow accepts three numeric components without leading zeros,
+prerelease identifiers, or build metadata. MSI limits the major and minor
+components to 255 and the patch component to 65535.
+The executable's `--version` output, Windows file and product version strings,
+MSI `ProductVersion`, and installed-app `DisplayVersion` use the numeric part
+of the tag, such as `1.2.0`.
 Windows numeric file and product versions
 append a fourth field of `0`, such as `1.2.0.0`. You do not need to commit a
 matching Cargo version before releasing: the workflow stamps all three Cargo files
@@ -776,8 +848,9 @@ compilation.
 
 To release a tested commit:
 
-1. Choose the next version tag, for example `v1.2.0`. Keep the existing tag when
-   retrying a release.
+1. Choose the next version tag using [Choose a release version](#choose-a-release-version).
+   The commands use `v1.2.0` as an example. Keep the existing tag when retrying
+   a release from the same commit.
 2. Commit the tested release changes. Confirm that the commit contains the
    release workflow.
 3. Create the version tag from that commit, for example:
@@ -792,9 +865,9 @@ To release a tested commit:
    git push origin v1.2.0
    ```
 
-5. Wait for **Build Windows MSI** to succeed, then open the repository's
+5. Wait for **Build Windows bundle** to succeed, then open the repository's
    **Releases** page. Confirm that the version's **Assets** include
-   `BfdWinService-1.2.0-x64.msi` and its `.sha256` file.
+   only `BfdWinService-1.2.0-x64-setup.exe` and its `.sha256` file.
 
 Replace `1.2.0` with the chosen tag version. Only the release job receives
 `contents: write`; the build job retains read-only repository access. Rerunning

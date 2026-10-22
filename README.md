@@ -33,11 +33,11 @@ setup together:
 
 - 64-bit Windows 10 or later, or Windows Server 2016 or later, on an
   x64 processor.
-- An x64 MSI from
+- The x64 offline setup bundle (`BfdWinService-VERSION-x64-setup.exe`) from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
   or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files supplied
   by your service maintainer for console execution.
-- Administrator PowerShell access to install the MSI and configure registry settings.
+- Administrator PowerShell access to install the service and configure registry settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
   configure. See [network requirements](docs/protocol.md).
 
@@ -49,12 +49,14 @@ lock in: use **PowerShell as Administrator** for installation and configuration.
 ### 1. Install the service
 
 Kick shell with the package, dude. Follow
-[Install with an MSI](docs/setup.md#install-with-an-msi) to install the files
-and Automatic (Delayed Start) services, register the Operational provider, and
-create firewall rules. The service remains stopped for configuration.
+[Install with the offline setup bundle](docs/setup.md#install-with-the-offline-setup-bundle)
+to install Microsoft's native x64 Visual C++ runtime and the service.
+The bundle installs the files and Automatic (Delayed Start) services,
+registers the Operational provider, and
+creates firewall rules. The service remains stopped for configuration.
 
 Supplied loose files support [foreground console execution](docs/setup.md#run-in-a-console).
-Use the MSI for service execution and BGP management.
+Use the setup bundle for service execution and BGP management.
 
 ### 2. Configure a fresh installation
 

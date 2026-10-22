@@ -39,7 +39,7 @@ these later changes supersede descriptions in older entries:
 | Stop always stops BGP, or AdminDown never changes BGP. | Local or peer AdminDown releases a Stop issued by BFD by queuing Start; it leaves other peers untouched. See [BGP behavior](docs/bgp.md). |
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
-| One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [MSI installation](docs/setup.md#install-with-an-msi) and [security boundaries](docs/security.md). |
+| One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
 
 ## Native C exception handling — 2026-10-16
 
@@ -341,7 +341,7 @@ injection in the native UDP tests.
 
 Added the [Build Windows MSI workflow](.github/workflows/build-msi.yml),
 [WiX package](installer/Package.wxs), and
-[local build script](scripts/Build-Msi.ps1). The x64, per-machine MSI installs
+[local build script](scripts/Build-Bundle.ps1). The x64, per-machine MSI installs
 the documented Automatic LocalSystem service without starting it, registers
 the event manifest with installed resource paths, creates the ProgramData
 folder, and provisions the single-hop/file-logging defaults. Operators provision
@@ -367,8 +367,8 @@ GitHub-hosted runner and exercises install, rendered ETW delivery, configured
 service execution, file logging, repair, and uninstall. That test and the
 complete GitHub workflow haven't been executed in this local session. Target
 service, Event Log, and firewall configuration weren't changed locally. The
-package is unsigned. See [Build an MSI](CONTRIBUTING.md#build-an-msi) and
-[Install with an MSI](docs/setup.md#install-with-an-msi).
+package is unsigned. See [Build the offline setup bundle](CONTRIBUTING.md#build-the-offline-setup-bundle) and
+[Install with the offline setup bundle](docs/setup.md#install-with-the-offline-setup-bundle).
 
 Applied the `technical-documentation` skill to the setup, README, network,
 and build references. **Score: 9/10 → 10/10** for the changed documentation

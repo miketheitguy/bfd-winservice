@@ -46,7 +46,7 @@ initiators use a stable source port in 49152–65535. Reflectors reply from port
 control port through a separate receive socket; an S-BFD initiator receives
 replies on its own source socket. Configure firewall rules for the chosen
 transport. The service doesn't create them; the
-[MSI installs executable-specific rules](setup.md#msi-firewall-rules) for all
+[bundle installs executable-specific rules](setup.md#installed-firewall-rules) for all
 supported roles. Manual installations need equivalent firewall provisioning.
 
 ## Control packet format
