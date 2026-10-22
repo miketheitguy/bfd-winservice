@@ -270,6 +270,10 @@ broker crash, and log writes through the BFD service SID.
 Startup fixtures start BFD with BGP configured while the broker is stopped,
 stop the broker without stopping BFD, and start the broker while BFD is stopped.
 Repair fixtures seed the former broker dependency and require its removal.
+Upgrade validation checks BFD dependencies separately from the service policy
+that must stay unchanged: failed upgrades restore the published dependency
+list, while successful upgrades and repairs leave BFD independent. Broker
+dependencies and the remaining service policy retain exact comparisons.
 `Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
 copy to exercise fresh-install and existing LocalSystem-account rollback, including
 the delayed-start and non-crash recovery flags. Separate fixtures cover an absent
