@@ -119,6 +119,12 @@ silently changing the toolchain for the check.
 
 ## Interpret test scope
 
+Native UDP fixtures choose available source ports in 49152–65535, skipping
+address-in-use and access-denied binds. Avoid fixed high source ports: Windows
+runners can reserve them or hold exclusive wildcard binds. Keep protocol
+destination ports fixed. The explicit `SourcePort` case probes its own loopback
+address and releases that socket immediately before opening the engine.
+
 Native S-BFD tests additionally check IPv4/IPv6 sockets, source-port reflection,
 return-route lookup, concurrent initiators, anycast response sources, and the
 maintenance retry minimum. They use loopback endpoints and don't establish

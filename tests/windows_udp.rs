@@ -302,7 +302,7 @@ fn windows_ipv4_metadata_and_single_hop_ttl_are_checked() {
     let mut options = options("127.0.0.10", "127.0.0.11", "single-hop");
     options.interface_index = Some(loopback_interface(&options));
     let transport = Transport::open(&options).unwrap();
-    let peer = UdpSocket::bind("127.0.0.11:55001").unwrap();
+    let peer = bfd_sender("127.0.0.11");
     peer.set_ttl(255).unwrap();
     peer.send_to(&[0; 24], "127.0.0.10:3784").unwrap();
     let packet = receive(&transport);
@@ -346,18 +346,23 @@ fn windows_ipv6_hop_limit_and_destination_metadata_are_available() {
 #[test]
 fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
     let mut options = options("127.0.0.20", "127.0.0.21", "multihop");
-    options.source_port = Some(55003);
     let peer = UdpSocket::bind("127.0.0.21:4784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-    let sender = UdpSocket::bind("127.0.0.21:55004").unwrap();
+    let sender = bfd_sender("127.0.0.21");
     // Multihop must accept packets with a TTL below 255.
     sender.set_ttl(64).unwrap();
+    // Keep explicit SourcePort coverage without assuming a runner port is free.
+    // Other fixtures use different local addresses; release immediately before open.
+    let source_probe = bfd_sender("127.0.0.20");
+    let source_port = source_probe.local_addr().unwrap().port();
+    options.source_port = Some(source_port);
+    drop(source_probe);
     let mut engine = RunningEngine::start(options);
     assert_eq!(engine.state.current(), Some(State::Down));
     let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
     let mut buffer = [0; 512];
     let (length, source) = peer.recv_from(&mut buffer).unwrap();
-    assert_eq!(source.port(), 55003);
+    assert_eq!(source.port(), source_port);
     assert_eq!(
         ControlPacket::decode(&buffer[..length]).unwrap().state,
         State::Down
@@ -449,7 +454,6 @@ fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
 #[test]
 fn state_notifications_are_authenticated_without_periodic_traffic_or_extra_polls() {
     let mut options = options("127.0.0.36", "127.0.0.37", "multihop");
-    options.source_port = Some(55016);
     options.auth = AuthType::MeticulousSha1;
     options.auth_key = Some("secret".into());
     let log = test_log("state-notification");
@@ -562,7 +566,6 @@ fn state_notifications_are_authenticated_without_periodic_traffic_or_extra_polls
 fn peer_diagnostics_and_states_are_logged_without_local_state_changes() {
     let log_file = test_log("peer-diagnostics");
     let mut options = options("127.0.0.100", "127.0.0.101", "multihop");
-    options.source_port = Some(55100);
     options.log_to_file = true;
     options.log_file_path = log_file.path().to_path_buf();
     let peer = UdpSocket::bind("127.0.0.101:4784").unwrap();
@@ -645,8 +648,7 @@ fn peer_diagnostics_and_states_are_logged_without_local_state_changes() {
 
 #[test]
 fn normal_shutdown_announces_admin_down_for_the_detection_period() {
-    let mut options = options("127.0.0.90", "127.0.0.91", "multihop");
-    options.source_port = Some(55090);
+    let options = options("127.0.0.90", "127.0.0.91", "multihop");
     let peer = UdpSocket::bind("127.0.0.91:4784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
     let sender = bfd_sender("127.0.0.91");
@@ -685,8 +687,7 @@ fn normal_shutdown_announces_admin_down_for_the_detection_period() {
 
 #[test]
 fn shutdown_announces_for_the_peers_detection_time_within_the_configured_limit() {
-    let mut options = options("127.0.0.92", "127.0.0.93", "multihop");
-    options.source_port = Some(55092);
+    let options = options("127.0.0.92", "127.0.0.93", "multihop");
     let peer = UdpSocket::bind("127.0.0.93:4784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
     let sender = bfd_sender("127.0.0.93");
@@ -730,7 +731,6 @@ fn shutdown_announces_for_the_peers_detection_time_within_the_configured_limit()
 #[test]
 fn shutdown_limits_slow_peer_announcements_and_logs_the_tradeoff() {
     let mut options = options("127.0.0.114", "127.0.0.115", "multihop");
-    options.source_port = Some(55114);
     options.max_shutdown_announce_ms = 200;
     let trace = test_log("shutdown-limit");
     options.log_to_file = true;

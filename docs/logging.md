@@ -165,13 +165,31 @@ Viewer, open **Applications and Services Logs → BFD-Service → Operational**.
 provider uses one Operational channel. State events and diagnostic events are
 separate records, with independent severity levels.
 
-### BGP broker and RPC telemetry events
+### BGP control, broker, and RPC telemetry events
 
 Turtle power means telling provider results from telemetry results. The BGP
 broker uses this channel for event **300** (Information: readiness and
 management results) and **301** (Error: startup, authorization, or provider
 failure). These messages include the configured peer and operation when
 available.
+
+The BFD process reports its own control-call failures even when the broker is
+stopped and file logging is disabled. These client events carry separate
+`PeerName`, `RequestedMethod`, and `Detail` fields:
+
+| ID | Level | Meaning |
+| --- | --- | --- |
+| 302 | Error | A requested BGP action failed, including its status query or RPC connection. |
+| 303 | Information | After a failure, an action completes successfully and at least one functional RPC call succeeded. |
+
+Event 302 appears immediately on the first failure, then at most once per minute
+while requests keep failing. Retries still run on their normal schedule, with
+each failure available in the optional file log. Event 303 appears once on
+recovery; a new failure after recovery is reported immediately. A Start skipped
+before any RPC because a newer BFD action superseded it is not a recovery.
+Recovery does not establish BGP or route readiness: verify the peer and routes.
+File output mirrors these events when enabled. Keys and packet payloads are
+never included.
 
 Use these telemetry messages to distinguish completed failures from a stalled
 native call:
