@@ -3,12 +3,13 @@
 function Assert-BfdFirewallRules {
     param([Parameter(Mandatory)][object[]]$Rules)
     $expected = @{
-        ControlInbound = @('3784,4784,7784','49152-65535','1','17','1')
+        ControlInbound = @('3784,4784','49152-65535','1','17','1')
+        SbfdRequestInbound = @('7784','1-7783,7785-65535','1','17','1')
         SbfdReplyInbound = @('49152-65535','7784','1','17','1')
         ProbeOutbound = @('49152-65535','3784,4784,7784','2','17','1')
-        SbfdReplyOutbound = @('7784','49152-65535','2','17','1')
+        SbfdReplyOutbound = @('7784','1-7783,7785-65535','2','17','1')
     }
-    if ($Rules.Count -ne $expected.Count) { throw 'Expected exactly four BFD UDP allow rules.' }
+    if ($Rules.Count -ne $expected.Count) { throw 'Expected exactly five BFD UDP allow rules.' }
     foreach ($id in $expected.Keys) {
         $matches = @($Rules | Where-Object Id -CEQ $id)
         if ($matches.Count -ne 1) { throw "Missing or duplicate firewall rule: $id" }

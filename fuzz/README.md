@@ -16,6 +16,7 @@ The targets check these properties:
 | --- | --- |
 | `packet` | Arbitrary decoding and authentication never panic. Accepted input satisfies independent header and authentication constraints and round-trips through every supported authentication mode. |
 | `session` | Rejected input preserves observable state. Explicitly malformed version, discriminator, and length cases are rejected. A session receiving arbitrary packets stays equivalent to a reference session that skips rejected packets. |
+| `initiator` | Stateful S-BFD exchanges model outstanding keyed probes, loss, delayed replies, replay, timing updates, Poll/Final, and maintenance while requiring rejection to preserve state. |
 | `reflector` | Reflection is stateless and deterministic. Accepted requests satisfy the S-BFD constraints; replies authenticate, reverse the discriminators, acknowledge Poll, and preserve the keyed request sequence. |
 
 Authentication stays enabled. Authentication test bytes are derived from public
@@ -26,7 +27,7 @@ derivation to reach authenticated paths and preserve reproducible replay. These
 public values provide no secrecy and must not be used as deployment keys. The
 wrapper uses `--no-cfg-fuzzing` to retain normal conditional compilation.
 Packet and reflector inputs are limited to 256 bytes.
-A session input is limited to 2,049 bytes and processes at most 32 actions. The
+A classical session or initiator input is limited to 2,049 bytes and processes at most 32 actions. The
 targets use no sockets, service control, registry configuration, RPC operations,
 or BGP provider calls. Transport metadata and native RPC unmarshaling need
 separate fuzz targets.
@@ -106,7 +107,7 @@ process-lifetime and runs once before the first oracle invocation.
 The [Build Windows bundle workflow](../.github/workflows/build-msi.yml) runs a
 separate `fuzz` job on pull requests, pushes to `main`, version tags, and manual
 dispatch. The job audits the fuzz lockfile, checks formatting and Clippy, runs
-the harness regression tests, and runs all three ASan targets with
+the harness regression tests, and runs all four ASan targets with
 `-Seconds 15 -Runs 10000`. Each campaign stops at whichever budget it reaches
 first, after compilation. Release publication requires successful `asan`,
 `fuzz`, and `build-msi` jobs for the same workflow run.
@@ -187,3 +188,25 @@ Actions `4` through `7` must be rejected without changing observable session
 state. A final partial frame is accepted when it contains both control bytes.
 Generated traffic keeps structural fields valid so mutations can explore state
 transitions while raw reception covers rejection.
+
+
+## Initiator input format
+
+The `initiator` target uses the same selector, 64-byte frames, 10-millisecond
+time advances, and 32-action limit as `session`. Its action values differ:
+
+| Value | Action |
+| --- | --- |
+| `0` | Receive arbitrary response bytes. |
+| `1` | Transmit a probe and immediately receive its valid reflected response. |
+| `2` | Expire the session and clear expired probe tracking. |
+| `3` | Apply nonzero TX/RX timing and detection-multiplier updates from the frame. |
+| `4` | Transmit a probe whose response is lost. |
+| `5` | Deliver a retained response, including delayed or already consumed replies. |
+| `6` | Reject a signed unissued sequence and wrong discriminator, then accept the valid response. |
+| `7` | Toggle reflector maintenance from the payload's low bit and exchange a probe. |
+
+An independent bounded queue requires every accepted keyed response to match
+an unconsumed, unexpired transmitted probe. The public packet API treats
+generation as transmission; failed native sends and sequence wraparound remain
+covered by focused crate regressions rather than this fuzz target.

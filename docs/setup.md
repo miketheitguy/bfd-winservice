@@ -34,7 +34,9 @@ these prerequisites:
 - Obtain the x64 setup bundle and its `.sha256` file from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
   or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files from your
-  service maintainer for console execution.
+  service maintainer for console execution, plus the matching Microsoft
+  `VC_redist.x64.exe` and checksum. Loose execution requires the x64 Visual C++
+  runtime `14.51.36247.0` or newer, just like the bundle.
 - Use 64-bit Windows 10 or later, or Windows Server 2016 or later,
   on an x64 processor.
 - Open **PowerShell as Administrator**. Use the same
@@ -182,14 +184,14 @@ the following resources for all users:
   suitable service-SID grants as well as ordinary write permission. Installed
   code remains writable only by
   SYSTEM and administrators.
-- Four executable-specific UDP allow rules for classical and Seamless BFD.
+- Five executable-specific UDP allow rules for classical and Seamless BFD.
 - The broker's `RpcSs` service dependency for native MI. The BFD service depends
   on the broker. See [Monitor service status and BFD events](monitoring.md) for
   lifecycle queries and event-log monitoring.
 
 ### Installed firewall rules
 
-Keep the network entrance totally tubular and check the actual rules. Four rules
+Keep the network entrance totally tubular and check the actual rules. Five rules
 allow UDP for the installed executable on Domain, Private, and Public profiles.
 Remote addresses are unrestricted so multihop, anycast, and point-to-point
 configurations can use their configured peers. The rules have these protocol and
@@ -197,13 +199,16 @@ port restrictions:
 
 | Rule | Protocol / action | Direction | Local ports | Remote ports |
 | --- | --- | --- | --- | --- |
-| `BfdWinService - control inbound` | UDP / allow | Inbound | 3784, 4784, 7784 | 49152–65535 |
+| `BfdWinService - control inbound` | UDP / allow | Inbound | 3784, 4784 | 49152–65535 |
+| `BfdWinService - S-BFD requests inbound` | UDP / allow | Inbound | 7784 | 1–7783, 7785–65535 |
 | `BfdWinService - S-BFD replies inbound` | UDP / allow | Inbound | 49152–65535 | 7784 |
 | `BfdWinService - probes outbound` | UDP / allow | Outbound | 49152–65535 | 3784, 4784, 7784 |
-| `BfdWinService - S-BFD replies outbound` | UDP / allow | Outbound | 7784 | 49152–65535 |
+| `BfdWinService - S-BFD replies outbound` | UDP / allow | Outbound | 7784 | 1–7783, 7785–65535 |
 
 The high-port inbound rule is required for S-BFD initiators because replies
-return to their source port. No BFD Echo rule is installed. Network firewalls
+return to their source port. Reflectors accept requests from any nonzero source
+port except 7784 and reply to that same port; their separate rules preserve
+the classical dynamic-source-port restriction. No BFD Echo rule is installed. Network firewalls
 and organizational policy still control effective access. The private local RPC
 interface uses `ncalrpc` and needs no network firewall rule.
 
@@ -215,14 +220,51 @@ Get-NetFirewallRule |
     Select-Object DisplayName, Direction, Enabled, Profile
 ```
 
-Firewall vibe check: confirm that the four rules are enabled. To inspect ports,
+Firewall vibe check: confirm that the five rules are enabled. To inspect ports,
 pipe the matching rules to `Get-NetFirewallPortFilter`.
 
 ## Prepare installation files
 
 Pack the console gear before the pizza run. For a console-only deployment, copy
 the supplied files to a permanent folder. If the bundle already installed them,
-you're set; skip this section:
+you're set; skip this section. Before launching a loose executable, verify and
+install the supplied Microsoft runtime from the deployment folder:
+
+```powershell
+$deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
+$runtime = Join-Path $deploymentDirectory 'VC_redist.x64.exe'
+$expectedHash = (Get-Content -LiteralPath "$runtime.sha256" -Raw).Split()[0]
+if ((Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash -ne $expectedHash) {
+    throw 'Visual C++ runtime SHA-256 checksum mismatch'
+}
+$signature = Get-AuthenticodeSignature -LiteralPath $runtime
+if ($signature.Status -ne 'Valid' -or
+    $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+    throw 'The runtime must have a valid Microsoft signature'
+}
+$runtimeKey = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
+$installed = Get-ItemProperty -LiteralPath $runtimeKey -ErrorAction SilentlyContinue
+if ($null -eq $installed -or $installed.Installed -ne 1 -or
+    [version]$installed.Version.TrimStart('v','V') -lt [version]'14.51.36247.0') {
+    $result = Start-Process -FilePath $runtime -ArgumentList @(
+        '/install', '/quiet', '/norestart'
+    ) -WindowStyle Hidden -Wait -PassThru
+    if ($result.ExitCode -notin @(0, 3010)) {
+        throw "Visual C++ runtime installation failed: $($result.ExitCode)"
+    }
+    $installed = Get-ItemProperty -LiteralPath $runtimeKey
+}
+if ($installed.Installed -ne 1 -or
+    [version]$installed.Version.TrimStart('v','V') -lt [version]'14.51.36247.0') {
+    throw 'Install the x64 Visual C++ runtime 14.51.36247.0 or newer'
+}
+```
+
+Replace `DEPLOYMENT_DIRECTORY` with the supplied folder, such as
+`C:\Temp\BfdWinService`. Exit code `3010` requires a restart before use; the
+command suppresses automatic restarts. An equal or newer runtime can be retained
+after checking its installed version. See [runtime provenance](../installer/redist/README.md)
+for the pinned installer and license. Then copy the console files:
 
 ```powershell
 $deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path

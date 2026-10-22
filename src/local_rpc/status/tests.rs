@@ -183,3 +183,33 @@ fn utc_conversion_preserves_times_without_clock_order_assumptions() {
         assert!(time.duration_since(decoded).unwrap() < Duration::from_nanos(100));
     }
 }
+
+#[test]
+fn captured_endpoints_preserve_link_local_scope_only() {
+    for (local, peer) in [
+        ("fe80::1", "fe80::2"),
+        ("2001:db8::1", "2001:db8::2"),
+        ("192.0.2.1", "192.0.2.2"),
+    ] {
+        let mut options = Options::new(local.parse().unwrap(), peer.parse().unwrap());
+        options.interface_index = Some(17);
+        let options = options.into_validated().unwrap();
+        let session = Session::from_config(options.clone());
+        let now = Instant::now();
+        let telemetry = StatusTelemetry::new(now, SystemTime::now(), &options);
+        let publisher = StatusPublisher::new(
+            telemetry.snapshot(&session, &options, options.timing(), 52000),
+            0,
+            now,
+        );
+        let wire =
+            WireStatus::capture(&publisher.observer().snapshot().unwrap(), Instant::now()).unwrap();
+        let status = SessionStatus::try_from(wire).unwrap();
+        assert_eq!(status.local_address, options.address(options.local, 52000));
+        assert_eq!(
+            status.peer_address,
+            Some(options.address(options.peer, options.control_port()))
+        );
+        assert_eq!(status.interface_index.unwrap().get(), 17);
+    }
+}

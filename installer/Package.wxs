@@ -61,9 +61,13 @@
           <ServiceControl Id="ControlBfdService" Name="BfdWinService"
                           Stop="both" Remove="uninstall" Wait="yes" />
           <firewall:FirewallException Id="ControlInbound" Name="BfdWinService - control inbound"
-                    Description="Classical BFD and S-BFD reflector requests."
-                    File="ServiceExe" Protocol="udp" Port="3784,4784,7784" Action="allow" Enabled="yes"
+                    Description="Classical BFD control packets."
+                    File="ServiceExe" Protocol="udp" Port="3784,4784" Action="allow" Enabled="yes"
                     RemotePort="49152-65535" Profile="all" Scope="any" IgnoreFailure="no" />
+          <firewall:FirewallException Id="SbfdRequestInbound" Name="BfdWinService - S-BFD requests inbound"
+                    Description="S-BFD reflector requests from supported initiator source ports."
+                    File="ServiceExe" Protocol="udp" Port="7784" Action="allow" Enabled="yes"
+                    RemotePort="1-7783,7785-65535" Profile="all" Scope="any" IgnoreFailure="no" />
           <firewall:FirewallException Id="SbfdReplyInbound" Name="BfdWinService - S-BFD replies inbound"
                     Description="S-BFD responses to the initiator source port."
                     File="ServiceExe" Protocol="udp" Port="49152-65535" Action="allow" Enabled="yes"
@@ -76,7 +80,7 @@
           <firewall:FirewallException Id="SbfdReplyOutbound" Name="BfdWinService - S-BFD replies outbound"
                     Description="S-BFD reflector responses to initiators."
                     File="ServiceExe" Protocol="udp" Port="7784" Action="allow" Enabled="yes"
-                    RemotePort="49152-65535" Outbound="yes"
+                    RemotePort="1-7783,7785-65535" Outbound="yes"
                     Profile="all" Scope="any" IgnoreFailure="no" />
         </Component>
         <Component Id="BrokerComponent" Bitness="always64">
@@ -84,7 +88,7 @@
             <PermissionEx Id="BrokerExeSecurity" Sddl="$(var.FileSecurity)" />
           </File>
           <ServiceInstall Id="InstallBgpBroker" Name="BfdBgpBroker" DisplayName="BFD BGP Management Broker"
-                          Description="Controls the configured BGP peer through an authenticated local pipe."
+                          Description="Controls the configured BGP peer through authenticated local RPC."
                           Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Vital="yes">
             <ServiceDependency Id="RpcSs" />
             <PermissionEx Id="BrokerServiceSecurity" Sddl="$(var.ServiceSecurity)" />

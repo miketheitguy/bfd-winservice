@@ -21,6 +21,7 @@ Each target covers a specific boundary:
 | --- | --- | --- |
 | `packet` | `ControlPacket::decode` and `AuthConfig::verify` | Accepted input satisfies separate assertions for header fields, declared length, authentication mode, key ID, password, and keyed sequence bounds. Decoded headers round-trip through every supported authentication mode. |
 | `session` | Classical `Session::receive`, `expire`, and `set_timing` | Rejected reception preserves an observable state snapshot. A reference session skips rejected inputs and must match the tested session after subsequent actions. Packets with an invalid version, wrong receiver discriminator, zero sender discriminator, or truncation must be rejected. |
+| `initiator` | S-BFD `Session::packet_at`, `receive`, `expire`, and `set_timing`, with `Reflector::respond` | Every accepted keyed response must match an unconsumed, unexpired probe in an independent bounded model. Rejections preserve snapshots; signed unissued sequences and wrong discriminators cannot consume valid probes. Loss, delayed/replayed replies, Poll/Final timing changes, and maintenance are interleaved. |
 | `reflector` | `Reflector::respond`, with ordinary and administrative-down configuration | Repeated calls are deterministic and preserve reflector state. Accepted requests satisfy the reflector discriminator, Demand, state, interval, and authentication constraints. Replies reverse discriminators, acknowledge Poll with Final, authenticate, and echo keyed request sequences. |
 
 The session snapshot includes state, diagnostics, discriminators, remote state,
@@ -28,8 +29,11 @@ polling, communication status, transmit/detection timing, the detection deadline
 and transmit eligibility. Internal authentication tracking is not read directly;
 subsequent traffic compares the behavior of the two sessions. The session target
 uses classical multihop configuration. Its timing-update action checks the
-classical rejection path; it does not exercise S-BFD initiator timing negotiation
-or outstanding-probe replay correlation.
+classical rejection path. The separate `initiator` target exercises live S-BFD
+timing negotiation and outstanding-probe correlation. Its public packet API
+commits generation as transmission; native failed-send commitment and sequence
+wraparound use focused crate regressions. A 32-action campaign cannot span the
+complete 32-bit sequence space.
 
 Successful decoding alone does not establish authentication or permission to
 change session state. Arbitrary bytes can form a valid packet, especially under
@@ -70,7 +74,7 @@ buffer's size limit.
 The [PowerShell wrapper](../../scripts/Test-Fuzz.ps1) bounds each target run by
 both an input-count budget and a time budget after compilation. It configures a
 five-second input timeout and a 2 GiB resident-memory limit. Packet and reflector
-inputs are limited to 256 bytes. Session inputs are limited to 2,049 bytes: one
+inputs are limited to 256 bytes. Classical session and initiator inputs are limited to 2,049 bytes: one
 authentication selector and up to 32 frames of 64 bytes. The oracles also limit
 packet processing to 256 bytes and session processing to 32 actions.
 
@@ -148,6 +152,7 @@ Use these files when changing a target or reviewing its assumptions:
 | File | Responsibility |
 | --- | --- |
 | [fuzz/src/lib.rs](../../fuzz/src/lib.rs) | Oracles, state snapshots, bounds, synthetic configuration, and deterministic seed cases |
+| [fuzz/src/initiator.rs](../../fuzz/src/initiator.rs) | Stateful S-BFD oracle and independent outstanding-probe model |
 | [fuzz/src/mutators.rs](../../fuzz/src/mutators.rs) | Structured packet and action-frame mutations, plus byte-mutator fallback |
 | [fuzz/fuzz_targets](../../fuzz/fuzz_targets) | libFuzzer target and custom-mutator entry points |
 | [fuzz/src/msvc_coverage.rs](../../fuzz/src/msvc_coverage.rs) | Once-only MSVC sanitizer-coverage registration |

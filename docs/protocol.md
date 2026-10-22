@@ -153,11 +153,19 @@ The session handles interval changes and state notifications as follows:
 
 ### Socket recovery
 
-A rough network day is a bummer, turtle crew; check the recovery policy. An
-adapter reset or removed route is a bummer, but these transient network faults
-don't stop the engine. Socket use pauses with a 10–250 millisecond backoff while
-protocol timers continue, so an unusable path still expires detection. Other
-socket errors end the engine; SCM then restarts the service.
+A rough network day is a bummer, turtle crew; check the recovery policy. A
+transient receive or readiness-wait fault, such as an adapter reset or removed
+route, pauses socket use with a 10–250 millisecond backoff while protocol timers
+continue. An unusable path still expires detection. Event 4 warns about this
+recovery at most once a minute. Other receive/wait errors end the engine; SCM
+then restarts the service.
+
+Send failures follow a separate policy: they update send-error telemetry and
+produce text diagnostics at most once per second, then return to the normal
+protocol schedule. They do not enter the receive/wait backoff, emit Event 4,
+or terminate the engine. Failed sends do not commit authentication sequences,
+Poll changes, or outstanding S-BFD probe tracking. Detection still expires
+without valid replies.
 
 ## Supported modes and limits
 

@@ -50,7 +50,7 @@ development and implementation guides:
 | Task | Guide |
 | --- | --- |
 | Build, test, prepare deployment files, update diagrams, or contribute changes | [Contribute to BFD Windows service](../CONTRIBUTING.md) |
-| Fuzz packet acceptance and rejection, classical sessions, or S-BFD reflection | [Fuzz harness guide](../fuzz/README.md) and [security scope](security/fuzzing.md) |
+| Fuzz packet acceptance and rejection, classical sessions, or stateful S-BFD initiation and reflection | [Fuzz harness guide](../fuzz/README.md) and [security scope](security/fuzzing.md) |
 | Find RFC 5880, RFC 7419, and RFC 7880 requirements and their test coverage | [RFC conformance tests](rfc-conformance.md) |
 | Review the RFC 5880 behavior matrix and implementation limits | [RFC 5880 conformance](rfc5880-conformance.md) |
 | Find API review guidance, ownership boundaries, and validation commands | [Rust skills validation](../RUST_SKILLS_VALIDATION.md) |
@@ -63,6 +63,8 @@ cap: these records and instructions serve different jobs:
 | Document | Purpose |
 | --- | --- |
 | [Dated correctness reviews](../CODE_REVIEW.md) | Recorded review findings, checks, revisions, and limits |
+| [Code, tests, and documentation alignment audit](alignment-audit-2026-10-21.md) | Findings, fixes, release validation, and remaining coverage limits |
+| [v2.0.1 release notes](releases/2.0.1.md) | Patch compatibility rationale and corrected deployment behavior |
 | [Documentation audit](documentation-audit.md) | Documentation findings, corrections, review coverage, and validation scope |
 | [Archived Rust skills audit](archive/RUST_SKILLS_VALIDATION_2026-10-01.md) | Historical findings retained with their original evidence and supersession warning |
 | [AGENTS instructions](../AGENTS.md) and [CLAUDE instructions](../CLAUDE.md) | Repository-specific instructions for coding agents |

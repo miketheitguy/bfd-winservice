@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
     let root =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest directory")?);
-    rpc_build::build(&out, &root)?;
+    let native_toolset = rpc_build::build(&out, &root)?;
     let manifest = root.join("events/BFD-Service.man");
     run(Command::new(sdk_tool("mc.exe", "BFD_MC_PATH")?)
         .args(["-h", ".", "-r", "."])
@@ -56,6 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             format!(
                 "#define BFD_FILE_VERSION {major},{minor},{patch},0\n\
              #define BFD_VERSION_TEXT \"{version}\\0\"\n\
+             #define BFD_NATIVE_TOOLSET_TEXT \"Native MSVC toolset: {native_toolset}\\0\"\n\
              #define BFD_FILE_DESCRIPTION \"{description}\\0\"\n\
              #define BFD_INTERNAL_NAME \"{binary}\\0\"\n\
              #define BFD_ORIGINAL_FILENAME \"{binary}.exe\\0\"\n{}",

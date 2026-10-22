@@ -351,9 +351,12 @@ event 4 carries a text message in these cases:
   S-BFD initiator without keyed authentication; or a reflector without
   `AllowedPeers`.
 - When a transient network fault, such as an adapter reset, makes a socket
-  operation fail. The engine retries with a backoff of 10–250 milliseconds while
+  receive or readiness-wait operation fail. The engine retries with a backoff of 10–250 milliseconds while
   BFD timers continue, so an unusable path still expires the session. The warning
-  repeats at most once a minute; recovery is noted in the text log.
+  repeats at most once a minute; recovery is noted in the text log. Send errors
+  instead update telemetry and text output at most once per second and retain
+  the normal protocol schedule; they do not generate this warning. See
+  [socket recovery](protocol.md#socket-recovery).
 - When session events or S-BFD replies are suppressed. A reflector answers at
   most 1,000 requests per second from any one source address, which bounds the
   traffic that spoofed requests can reflect toward a victim.

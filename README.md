@@ -36,7 +36,9 @@ setup together:
 - The x64 offline setup bundle (`BfdWinService-VERSION-x64-setup.exe`) from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
   or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files supplied
-  by your service maintainer for console execution.
+  by your service maintainer for console execution. Loose executables also need
+  the native x64 Visual C++ runtime; follow the
+  [loose-file prerequisite procedure](docs/setup.md#prepare-installation-files).
 - Administrator PowerShell access to install the service and configure registry settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
   configure. See [network requirements](docs/protocol.md).

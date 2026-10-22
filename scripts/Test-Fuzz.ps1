@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('all','packet','session','reflector')][string]$Target = 'all',
+    [ValidateSet('all','packet','session','initiator','reflector')][string]$Target = 'all',
     [ValidateRange(1,86400)][int]$Seconds = 10,
     [ValidateRange(1,2147483647)][int]$Runs = 10000,
     [string]$FuzzTool,
@@ -85,13 +85,13 @@ try {
     # these affect this test-only C++ dependency, not maintained RPC C.
     # Maintained RPC C keeps its independent /W4 /WX policy in rpc/build.rs.
     $env:CXXFLAGS_x86_64_pc_windows_msvc = '/TP /EHsc /MD /GS /guard:cf /guard:ehcont /sdl /wd4146 /W4 /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_WARNINGS'
-    $targets = if ($Target -eq 'all') { @('packet','session','reflector') } else { @($Target) }
+    $targets = if ($Target -eq 'all') { @('packet','session','initiator','reflector') } else { @($Target) }
     foreach ($name in $targets) {
         $artifactDirectory = Join-Path $output "artifacts\$name"
         $null = New-Item -ItemType Directory -Path $artifactDirectory -Force
         $inputPath = if ($InputFile) { $InputFile } else { Join-Path $corpus $name }
         $runCount = if ($InputFile) { 1 } else { $Runs }
-        $maxLength = if ($name -eq 'session') { 1 + 32 * 64 } else { 256 }
+        $maxLength = if ($name -in @('session','initiator')) { 1 + 32 * 64 } else { 256 }
         $artifactPrefix = $artifactDirectory.Replace('\', '/') + '/'
         $engineArguments = @("-runs=$runCount", "-max_total_time=$Seconds", "-max_len=$maxLength",
             '-timeout=5', '-rss_limit_mb=2048', "-artifact_prefix=$artifactPrefix")

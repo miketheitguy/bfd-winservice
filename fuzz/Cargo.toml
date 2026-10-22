@@ -51,6 +51,14 @@ doc = false
 bench = false
 
 [[bin]]
+name = "initiator"
+path = "fuzz_targets/initiator.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "reflector"
 path = "fuzz_targets/reflector.rs"
 required-features = ["fuzzing"]

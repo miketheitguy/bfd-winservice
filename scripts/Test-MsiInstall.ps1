@@ -102,12 +102,13 @@ function Assert-ServicePolicy {
 function Assert-InstalledFirewall {
     $rules = @(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object DisplayName -Like 'BfdWinService - *')
     $expected = @{
-        'BfdWinService - control inbound' = @('UDP','Allow','Inbound','3784,4784,7784','49152-65535')
+        'BfdWinService - control inbound' = @('UDP','Allow','Inbound','3784,4784','49152-65535')
+        'BfdWinService - S-BFD requests inbound' = @('UDP','Allow','Inbound','7784','1-7783,7785-65535')
         'BfdWinService - S-BFD replies inbound' = @('UDP','Allow','Inbound','49152-65535','7784')
         'BfdWinService - probes outbound' = @('UDP','Allow','Outbound','49152-65535','3784,4784,7784')
-        'BfdWinService - S-BFD replies outbound' = @('UDP','Allow','Outbound','7784','49152-65535')
+        'BfdWinService - S-BFD replies outbound' = @('UDP','Allow','Outbound','7784','1-7783,7785-65535')
     }
-    Assert-Installed ($rules.Count -eq 4) 'Expected four installed BFD UDP allow rules.'
+    Assert-Installed ($rules.Count -eq 5) 'Expected five installed BFD UDP allow rules.'
     foreach ($name in $expected.Keys) {
         $matches = @($rules | Where-Object DisplayName -CEQ $name)
         Assert-Installed ($matches.Count -eq 1) "Missing or duplicate installed firewall rule: $name"
@@ -269,6 +270,23 @@ try {
     Start-Service BfdWinService
     Assert-PrivateRpcRejectsUnrelatedClient
     Stop-Service BfdWinService
+
+    # Exercise the installed reflector across both sides of the excluded port.
+    New-ItemProperty -Path $parameters -Name SessionType -PropertyType String -Value 'sbfd-reflector' -Force
+    New-ItemProperty -Path $parameters -Name Discriminator -PropertyType DWord -Value 99 -Force
+    Start-Service BfdWinService
+    $env:BFD_TEST_INSTALLED_REFLECTOR = '1'
+    try {
+        Push-Location (Split-Path $PSScriptRoot -Parent)
+        try {
+            cargo test-release --test windows_seamless installed_reflector_accepts_legal_source_port_boundaries -- --ignored --exact
+            Assert-Installed ($LASTEXITCODE -eq 0) 'Installed reflector source-port boundaries failed.'
+        } finally { Pop-Location }
+    } finally {
+        Remove-Item Env:BFD_TEST_INSTALLED_REFLECTOR
+        Stop-Service BfdWinService
+        Remove-ItemProperty -LiteralPath $parameters -Name SessionType,Discriminator
+    }
 
     $customLog = Join-Path $logDirectory 'custom.log'
     New-ItemProperty -Path $parameters -Name LogToFile -PropertyType DWord -Value 1 -Force

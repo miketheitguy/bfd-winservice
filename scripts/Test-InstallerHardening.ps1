@@ -19,6 +19,10 @@ $mutations = @(
     @('ControlInbound','IgnoreFailure','yes'),
     @('ControlInbound','Scope','localSubnet'),
     @('ControlInbound','Port','3784'),
+    @('SbfdRequestInbound','RemotePort','49152-65535'),
+    @('SbfdRequestInbound','RemotePort','1-65535'),
+    @('SbfdReplyOutbound','RemotePort','49152-65535'),
+    @('SbfdReplyOutbound','RemotePort','1-65535'),
     @('ControlBfdService','Start','install'),
     @('ControlBgpBroker','Start','install'),
     @('CommitServicePolicy','Execute','deferred'),
@@ -36,7 +40,7 @@ foreach ($mutation in $mutations) {
     try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
     if (-not $rejected) { throw "Unsafe installer hardening mutation was accepted: $($mutation -join ' ')" }
 }
-foreach ($id in @('ControlInbound','CommitServicePolicy')) {
+foreach ($id in @('ControlInbound','SbfdRequestInbound','CommitServicePolicy')) {
     $unsafe = $source.Clone()
     $node = $unsafe.SelectSingleNode('//*[@Id="' + $id + '"]')
     [void]$node.ParentNode.RemoveChild($node)
@@ -44,7 +48,7 @@ foreach ($id in @('ControlInbound','CommitServicePolicy')) {
     try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
     if (-not $rejected) { throw "Missing installer hardening setting was accepted: $id" }
 }
-# A fifth firewall rule must not silently restore a status-host TCP policy.
+# An extra firewall rule must not silently restore a status-host TCP policy.
 $unsafe = $source.Clone()
 $firewall = $unsafe.SelectSingleNode('//*[@Id="ControlInbound"]')
 $extra = $firewall.Clone()
@@ -77,4 +81,4 @@ $dependency.SetAttribute('Id', 'RpcSs')
 $rejected = $false
 try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
 if (-not $rejected) { throw 'A COM-era RpcSs dependency for BFD was accepted.' }
-Write-Output 'Validated exactly four UDP allow rules, no COM status registration, commit-only service policy, and 24 unsafe source mutations.'
+Write-Output 'Validated exactly five UDP allow rules, no COM status registration, commit-only service policy, and 29 unsafe source mutations.'

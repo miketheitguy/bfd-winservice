@@ -468,6 +468,15 @@ impl TryFrom<WireStatus> for SessionStatus {
 impl WireStatus {
     pub(super) fn capture(s: &StatusSnapshot, now: Instant) -> Result<Self> {
         let p = &s.publication;
+        let endpoint = |ip, port| match ip {
+            IpAddr::V6(ip) if ip.is_unicast_link_local() => SocketAddr::V6(SocketAddrV6::new(
+                ip,
+                port,
+                0,
+                s.interface_index.unwrap_or(0),
+            )),
+            ip => SocketAddr::new(ip, port),
+        };
         let age = |instant| {
             now.checked_duration_since(instant)
                 .ok_or_else(|| invalid("monotonic time"))
@@ -495,7 +504,7 @@ impl WireStatus {
             local_diag: u32::from(s.local_diagnostic as u8),
             local_disc: s.local_discriminator,
             control_port: u32::from(s.control_port),
-            local: SocketAddr::new(s.local_address, s.local_source_port).into(),
+            local: endpoint(s.local_address, s.local_source_port).into(),
             received: s.packets_received_accepted,
             sent: s.packets_sent_successfully,
             rejected: s.packets_rejected,
@@ -507,7 +516,7 @@ impl WireStatus {
         };
         if let Some(peer) = s.peer_address {
             w.fields |= PEER_ADDRESS;
-            w.peer = SocketAddr::new(peer, s.control_port).into();
+            w.peer = endpoint(peer, s.control_port).into();
         }
         if let Some(source) = s.last_accepted_source {
             w.fields |= SOURCE;

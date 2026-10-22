@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, io, path::Path, process::Command};
 #[cfg(windows)]
 use std::{env, path::PathBuf};
 
-pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
+pub(super) fn build(out: &Path, root: &Path) -> io::Result<String> {
     for file in [
         "rpc/build.rs",
         "rpc/bfd_local.idl",
@@ -30,6 +30,21 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
         println!("cargo:rerun-if-env-changed={variable}");
     }
     let environment = compiler_environment()?;
+    let toolset = environment
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("VCToolsVersion"))
+        .map(|(_, value)| value.trim())
+        .filter(|value| {
+            let parts: Vec<_> = value.split('.').collect();
+            (3..=4).contains(&parts.len())
+                && parts.iter().all(|part| {
+                    !part.is_empty()
+                        && part.bytes().all(|byte| byte.is_ascii_digit())
+                        && part.parse::<u32>().is_ok()
+                })
+        })
+        .ok_or_else(|| io::Error::other("MSVC setup supplied no valid VCToolsVersion"))?;
+    println!("cargo:rustc-env=BFD_NATIVE_TOOLSET={toolset}");
     // Cargo fingerprints target compiler options; this cfg is supplied by
     // Cargo rather than an ambient environment variable to watch separately.
     let address_sanitizer = std::env::var("CARGO_CFG_SANITIZE")
@@ -141,7 +156,7 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<()> {
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=bfd_local_rpc");
     println!("cargo:rustc-link-lib=Rpcrt4");
-    Ok(())
+    Ok(toolset.to_owned())
 }
 
 fn run_compiler(command: &mut Command) -> io::Result<()> {
@@ -164,6 +179,13 @@ fn compiler_environment() -> io::Result<BTreeMap<String, String>> {
     use std::os::windows::process::CommandExt;
 
     let script = vcvars64()?;
+    println!("cargo:rerun-if-changed={}", script.display());
+    if let Some(parent) = script.parent() {
+        let default_version = parent.join("Microsoft.VCToolsVersion.default.txt");
+        if default_version.is_file() {
+            println!("cargo:rerun-if-changed={}", default_version.display());
+        }
+    }
     let output = Command::new("cmd.exe")
         .args(["/d", "/u", "/s", "/c"])
         .raw_arg(format!("\"\"{}\" >nul && set\"", script.display()))
@@ -188,7 +210,7 @@ fn compiler_environment() -> io::Result<BTreeMap<String, String>> {
         .lines()
         .filter_map(|line| line.split_once('='))
         .filter(|(name, _)| {
-            ["PATH", "INCLUDE", "LIB", "LIBPATH"]
+            ["PATH", "INCLUDE", "LIB", "LIBPATH", "VCToolsVersion"]
                 .iter()
                 .any(|expected| name.eq_ignore_ascii_case(expected))
         })

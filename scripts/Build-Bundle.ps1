@@ -40,6 +40,7 @@ try {
         throw "Release executable not found: $executable"
     }
     foreach ($name in @('bfd-winservice','bfd-bgp-broker')) {
+        & (Join-Path $PSScriptRoot 'Test-NativeRuntime.ps1') -Path (Join-Path (Split-Path $executable -Parent) "$name.exe") -RuntimeVersion $vcRedist.FileVersion
         & (Join-Path $PSScriptRoot 'Test-ExecutableVersion.ps1') -Path (Join-Path (Split-Path $executable -Parent) "$name.exe") -ExpectedVersion $version -ExpectedName $name
     }
     & dotnet tool restore --tool-manifest .config/dotnet-tools.json

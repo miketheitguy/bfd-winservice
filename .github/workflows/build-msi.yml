@@ -162,6 +162,8 @@ jobs:
         run: ./scripts/Test-InstallerHardening.ps1
       - name: Check rollback privilege fixtures
         run: ./scripts/Test-RollbackPrivileges.ps1
+      - name: Check native compiler and runtime compatibility policy
+        run: ./scripts/Test-NativeRuntimePolicy.ps1
       - name: Check Rust formatting
         run: cargo fmt --check
       - name: Check Rust lints in release mode
@@ -217,6 +219,28 @@ jobs:
           $setup = @(Get-ChildItem -LiteralPath target/installer -Filter '*-setup.exe')
           if ($setup.Count -ne 1) { throw 'Expected one setup bundle.' }
           ./scripts/Test-BundleInstall.ps1 -Path $setup[0].FullName -ExpectedVersion $env:BFD_RELEASE_VERSION
+      - name: Test published-version upgrade and failed-upgrade rollback
+        env:
+          BFD_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          BFD_UPGRADE_BASELINE: '2.0.0'
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $baselineDirectory = 'target/upgrade-baseline'
+          New-Item -ItemType Directory -Path $baselineDirectory -Force | Out-Null
+          $baselineName = "BfdWinService-$env:BFD_UPGRADE_BASELINE-x64-setup.exe"
+          gh release download "v$env:BFD_UPGRADE_BASELINE" --pattern $baselineName `
+            --pattern "$baselineName.sha256" --dir $baselineDirectory
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the published upgrade baseline.' }
+          $previous = Join-Path $baselineDirectory $baselineName
+          $checksum = (Get-Content -LiteralPath "$previous.sha256" -Raw).Trim()
+          $hash = (Get-FileHash -LiteralPath $previous -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($checksum -cne "$hash  $baselineName") { throw 'Published baseline checksum mismatch.' }
+          $setup = "target/installer/BfdWinService-$env:BFD_RELEASE_VERSION-x64-setup.exe"
+          $msi = "target/bundle-build/$env:BFD_RELEASE_VERSION/BfdWinService-$env:BFD_RELEASE_VERSION-x64.msi"
+          ./scripts/Test-MsiUpgrade.ps1 -Path $setup -MsiPath $msi `
+            -ExpectedVersion $env:BFD_RELEASE_VERSION -PreviousPath $previous `
+            -PreviousVersion $env:BFD_UPGRADE_BASELINE
       - name: Upload setup bundle and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -236,6 +260,7 @@ jobs:
           path: |
             target/installer/*.log
             target/installer/bundle-install-validation.json
+            target/installer/upgrade-validation.json
             target/bundle-build/**/*.log
 
   publish-release:
@@ -249,6 +274,10 @@ jobs:
       run:
         shell: pwsh
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Download validated setup bundle and checksum
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
@@ -287,8 +316,10 @@ jobs:
           }
           $releaseJson = & gh release view $tag --json isDraft,assets 2>$null
           if ($LASTEXITCODE -ne 0) {
+            $notes = "docs/releases/$version.md"
+            if (-not (Test-Path -LiteralPath $notes -PathType Leaf)) { throw 'Release compatibility notes are missing.' }
             & gh release create $tag @assets --verify-tag `
-              --title "BFD Windows Service $tag" --generate-notes
+              --title "BFD Windows Service $tag" --notes-file $notes
             if ($LASTEXITCODE -ne 0) { throw 'GitHub release creation failed.' }
           } else {
             $release = $releaseJson | ConvertFrom-Json

@@ -411,8 +411,8 @@ loss. Do not call `flush` from the protocol timer loop. See
 
 ## Initialize broker management security
 
-The BFD service sends fixed-target BGP requests through the authenticated local
-pipe. See [Security, authentication, and build hardening](docs/security.md)
+The BFD service sends fixed-target BGP requests through authenticated Windows
+local RPC (`ncalrpc`). See [Security, authentication, and build hardening](docs/security.md)
 for caller and server identity checks, and [Monitor service status and BFD
 events](docs/monitoring.md) for lifecycle queries and event-log monitoring.
 
@@ -527,10 +527,21 @@ dialed in: give administrators these files from the same source revision:
 - `bfd-bgp-broker.exe`: the privileged BGP broker, installed by the MSI.
 - `BFD-Service.man`: the Event Log provider manifest.
 - `Initialize-Logging.ps1`: the script that provisions logging defaults.
+- `VC_redist.x64.exe` and its `.sha256` file: the verified native x64 runtime
+  prerequisite, required before loose executables can run.
 
-Copy them into a deployment folder:
+Copy them into a deployment folder. Verify the runtime pin and both executable
+toolset receipts before supplying loose files:
 
 ```powershell
+.\scripts\Test-VcRedist.ps1
+$runtimeVersion = (Get-Content 'installer/redist/VC_redist.x64.json' -Raw |
+    ConvertFrom-Json).FileVersion
+foreach ($name in @('bfd-winservice','bfd-bgp-broker')) {
+    .\scripts\Test-NativeRuntime.ps1 `
+        -Path "target/x86_64-pc-windows-msvc/release/$name.exe" `
+        -RuntimeVersion $runtimeVersion
+}
 $deploymentDirectory = Join-Path $PWD 'target\deployment'
 New-Item -ItemType Directory -Path $deploymentDirectory -Force
 Copy-Item `
@@ -543,6 +554,8 @@ Copy-Item -LiteralPath '.\events\BFD-Service.man' `
     -Destination $deploymentDirectory
 Copy-Item -LiteralPath '.\scripts\Initialize-Logging.ps1' `
     -Destination $deploymentDirectory
+Copy-Item -LiteralPath 'installer/redist/VC_redist.x64.exe',
+    'installer/redist/VC_redist.x64.exe.sha256' -Destination $deploymentDirectory
 Get-ChildItem -LiteralPath $deploymentDirectory | Select-Object Name
 ```
 
@@ -555,6 +568,8 @@ BFD-Service.man
 bfd-bgp-broker.exe
 bfd-winservice.exe
 Initialize-Logging.ps1
+VC_redist.x64.exe
+VC_redist.x64.exe.sha256
 ```
 
 Deliver the folder's contents with the [setup guide](docs/setup.md).
@@ -567,8 +582,8 @@ service SIDs, service dependency, and scoped registry/file/log ACLs. Native MI
 code is confined to `src/bgp_broker/mi.rs`; the BFD worker uses `src/bgp/ipc.rs`.
 Broker operations accept only fixed Get/Start/Stop frames and load their target
 from protected configuration. Protocol, authorization, reconnect, disconnect
-cleanup, and overlapped-I/O cancellation tests use temporary pipes and fake
-provider operations, with no service installation or BGP changes.
+cleanup, and asynchronous-call cancellation tests use isolated native `ncalrpc`
+endpoints and fake provider operations, with no service installation or BGP changes.
 
 ## Build the offline setup bundle
 
@@ -586,7 +601,8 @@ the repository root:
 
 The script builds both hardened x64 production executables with Cargo's locked
 dependencies, verifies the vendored Microsoft runtime's signature and checksum,
-and restores WiX and its extensions. It compiles one private MSI payload and validates its tables,
+checks both executables' embedded native MSVC toolset receipts against that
+runtime, and restores WiX and its extensions. It compiles one private MSI payload and validates its tables,
 including per-machine scope and required administrator privileges. It then builds
 the offline setup bundle, extracts it to verify the embedded packages and runtime
 detection policy, and writes the bundle's SHA-256 checksum. Successful output
@@ -650,6 +666,13 @@ Update the binary, provenance metadata, checksum, and documented runtime version
 together when refreshing the prerequisite. `scripts/Test-VcRedist.ps1` verifies
 the pin, and `scripts/Test-Bundle.ps1` verifies that the final bundle contains
 the exact verified Microsoft installer and validated internal MSI.
+The native build records the `vcvars64.bat` environment's `VCToolsVersion` in
+each executable's Windows Comments field. `Test-NativeRuntime.ps1` rejects
+missing receipts or a toolset newer than the bundled runtime, including with
+`-SkipBuild`. Refresh the runtime pin or select a compatible Visual Studio
+installation when that guard fails. `Test-NativeRuntimePolicy.ps1` checks version
+comparison boundaries. The build fingerprints the default-toolset selection file
+so a Visual Studio update triggers a fresh receipt and native compilation.
 
 The [package definition](installer/Package.wxs) uses the `v4` XML schema
 namespace, which WiX 7 retains, and uses
@@ -694,7 +717,7 @@ instrumented executables.
 
 The parallel `fuzz` job audits `fuzz/Cargo.lock`, checks harness formatting and
 Clippy, runs the harness regression tests, and invokes `scripts/Test-Fuzz.ps1`.
-Each of its three ASan campaigns stops after 15 seconds or 10,000 inputs,
+Each of its four ASan campaigns stops after 15 seconds or 10,000 inputs,
 whichever comes first; compilation is outside the campaign time budget. The job
 uses the pinned cargo-fuzz driver and the repository's Rust toolchain on its own
 `windows-2025` runner. See the [fuzz harness guide](fuzz/README.md#github-actions)
@@ -765,6 +788,19 @@ runners, the preinstalled runtime might already satisfy the prerequisite. The
 script also supports explicit `-DisposableVm` testing on the provisioned
 `BFD-WS2025` Hyper-V guest; testing from an absent runtime was validated there.
 
+`Test-MsiUpgrade.ps1` then installs the published `v2.0.0` bundle, provisions
+public authentication fixtures and custom log settings, and attempts an upgrade
+with a deferred failure after service-policy mutation. It requires restoration
+of the published executable bytes, old MSI registration, typed registry values,
+service accounts/SIDs/privileges/recovery/ACLs, and generated logs. A subsequent
+normal bundle upgrade and repair must retain those settings and start both
+services with mutual RPC authentication. The workflow verifies the downloaded
+baseline checksum before installation and retains `upgrade-validation.json`
+with installer logs. This does not establish upgrades from every older release.
+The installed-reflector loopback test separately covers legal source-port
+boundaries and rejection of 7784; the installed firewall filters are inspected
+independently because loopback traffic alone does not prove firewall enforcement.
+
 To inspect the package without installing it, run:
 
 ```powershell
@@ -787,8 +823,10 @@ Pizza time comes after the release checks, dude. Pushing a version tag or
 manually running the workflow on that tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the sanitizer, fuzz, build, hardening, and installation checks pass. The release
-attaches the offline setup bundle and its SHA-256 checksum, with generated
-release notes. Explain the version choice and compatibility impact in those notes.
+attaches the offline setup bundle and its SHA-256 checksum, using
+`docs/releases/VERSION.md` as the release notes. Add that file before tagging and
+explain the version choice and compatibility impact. Missing notes block a new
+release publication.
 The release title
 includes the version tag, such as `BFD Windows Service v1.2.0`.
 

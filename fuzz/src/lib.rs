@@ -1,6 +1,7 @@
 //! Bounded, socket-free fuzzing oracles for BFD's untrusted packet boundaries.
 #![deny(unsafe_code)]
 
+mod initiator;
 #[cfg(all(feature = "fuzzing", target_env = "msvc"))]
 #[allow(unsafe_code)]
 mod msvc_coverage;
@@ -27,6 +28,11 @@ const REFLECTOR_DISC: u32 = 42;
 const FRAME_LEN: usize = 64;
 const MAX_STEPS: usize = 32;
 const MAX_PACKET_INPUT: usize = 256;
+
+/// Checks stateful S-BFD probing, correlation, replay rejection, and live timing.
+pub fn check_initiator(data: &[u8]) {
+    initiator::check(data);
+}
 
 /// Registers MSVC sanitizer-coverage sections after the C++ runtime is ready.
 ///
@@ -408,6 +414,15 @@ pub fn check_reflector(data: &[u8]) {
 pub fn seed_cases() -> Vec<(&'static str, String, Vec<u8>)> {
     let mut cases = vec![];
     for (index, kind) in TYPES.into_iter().enumerate() {
+        let mut initiator = vec![u8::try_from(index).expect("four authentication modes")];
+        for action in [1, 3, 4, 5, 6, 7, 2] {
+            let mut frame = [0; FRAME_LEN];
+            frame[0] = action;
+            frame[1] = if action == 2 { 255 } else { 1 };
+            frame[2] = 1;
+            initiator.extend_from_slice(&frame);
+        }
+        cases.push(("initiator", format!("mode-{index}"), initiator));
         let packet = peer(State::Init);
         let auth = auth(kind, packet.my_discriminator);
         let packet = packet.encode(&auth, 100);
@@ -494,6 +509,7 @@ mod tests {
             match target {
                 "packet" => check_packet(&bytes),
                 "session" => check_session(&bytes),
+                "initiator" => check_initiator(&bytes),
                 "reflector" => check_reflector(&bytes),
                 _ => unreachable!("fixed seed target"),
             }

@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used)] // Test fixtures fail immediately on invalid setup.
 use bfd_winservice::{
     config::{Options, SessionType},
-    packet::{AuthType, State},
+    packet::{AuthType, ControlPacket, State},
     runtime::{Engine, Logger, StopSignal},
     seamless::Reflector,
     session::Session,
@@ -227,6 +227,59 @@ fn windows_filters_reject_disallowed_sources_ports_and_martian_addresses() {
     ] {
         request.source.set_ip(ip.parse::<IpAddr>().unwrap());
         assert!(request.validate(&options).is_err(), "{ip}");
+    }
+}
+
+/// The installer harness provisions this reflector on a disposable runner.
+/// Loopback checks the installed service's receive/reply path; the harness also
+/// inspects the installed firewall filters, which loopback alone cannot prove.
+#[test]
+#[ignore = "requires the disposable runner's installed reflector fixture"]
+fn installed_reflector_accepts_legal_source_port_boundaries() {
+    assert_eq!(
+        std::env::var("BFD_TEST_INSTALLED_REFLECTOR").as_deref(),
+        Ok("1")
+    );
+    let mut options = Options::reflector("127.0.0.240".parse().unwrap(), 99);
+    let auth = options.validate().unwrap();
+    let request = ControlPacket {
+        diagnostic: 0,
+        state: State::Down,
+        poll: false,
+        final_bit: false,
+        control_plane_independent: false,
+        demand: true,
+        detect_mult: 3,
+        my_discriminator: 7,
+        your_discriminator: 99,
+        desired_min_tx_us: 100_000,
+        required_min_rx_us: 0,
+        required_min_echo_rx_us: 0,
+    }
+    .encode(&auth, 0);
+    for port in [1, 7783, 7785, 40000, 52000, 65535, 7784] {
+        let client = UdpSocket::bind(("127.0.0.241", port)).unwrap();
+        client.set_ttl(255).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        client.send_to(&request, "127.0.0.240:7784").unwrap();
+        let mut buffer = [0; 256];
+        if port == 7784 {
+            let error = client.recv_from(&mut buffer).unwrap_err();
+            assert!(matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ));
+        } else {
+            let (length, source) = client.recv_from(&mut buffer).unwrap();
+            assert_eq!(source.to_string(), "127.0.0.240:7784");
+            let reply = ControlPacket::decode(&buffer[..length]).unwrap();
+            assert_eq!(reply.state, State::Up);
+            assert_eq!(reply.my_discriminator, 99);
+            assert_eq!(reply.your_discriminator, 7);
+            assert!(!reply.demand);
+        }
     }
 }
 
