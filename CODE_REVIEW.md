@@ -64,6 +64,11 @@ the request's sequence, and initiators track and consume MD5 probes just like
 SHA-1 probes. The configuration, security, RFC matrices, and fuzz input reference
 describe the restored mode and retain the RFC's MD5 interoperability caveat.
 
+For the source-backed compatibility and performance rationale, see
+[authentication performance and mode selection](docs/security/authentication-performance.md).
+It distinguishes generic router optimizations from this service's per-packet
+hashing and records the absence of comparative performance measurements.
+
 Extended existing tests for independent digest vectors, binary key boundaries,
 reserved bytes, replay windows, wraparound, corrupted packets, resynchronization,
 and native classical/S-BFD exchanges. Five-mode fuzz selectors and seeds keep

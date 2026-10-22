@@ -172,13 +172,11 @@ validation, even when `MinTtl` is set. TTL filtering limits accepted network
 paths; it does not authenticate a peer. Single-hop BGP without authentication logs a warning
 because it depends on a trusted link.
 
-`Auth=meticulous-md5` enables RFC 5880 wire type 3 for legacy interoperability.
+`Auth=meticulous-md5` enables RFC 5880 wire type 3.
 Non-meticulous `Auth=keyed-md5` and wire type 2 remain unsupported. Both peers
-must explicitly select the same mode; there is no automatic fallback. Prefer
-`meticulous-sha1` when both peers support it: RFC 5880 section 4.3 discourages
-MD5 authentication. Meticulous MD5 uses a 16-byte digest, advances its transmit
-sequence by one per successful send, and rejects repeated classical receive
-sequences.
+must explicitly select the same mode; there is no automatic fallback. For the
+restoration rationale, CPU tradeoffs, and appropriate deployment scenarios, see
+[authentication performance and mode selection](security/authentication-performance.md).
 
 ### Configure an authenticated multihop session
 

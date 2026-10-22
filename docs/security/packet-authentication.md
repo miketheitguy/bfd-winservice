@@ -12,6 +12,7 @@ page:
 
 - [Packet validation](#packet-and-path-validation)
 - [Authentication modes](#authentication-modes)
+- [Authentication performance and mode selection](authentication-performance.md)
 - [S-BFD replay checks](#s-bfd-replay-checks)
 - [Key configuration and storage](#key-configuration-and-storage)
 
@@ -54,7 +55,7 @@ The supported modes provide these checks:
 | --- | --- |
 | `none` | Protocol/path validation only. Traffic that passes those checks can influence the session and, where supported, its BGP actions without a shared-key check. Rejected for classical multihop BGP control. |
 | `simple-password` | Verifies the key ID and matching password. The password travels in cleartext; this mode has no authentication sequence protection. |
-| `meticulous-md5` | Uses the RFC-defined MD5 keyed digest and classical receive window, and rejects repeated sequences. Available for legacy interoperability; SHA-1 is preferred. |
+| `meticulous-md5` | Uses the RFC-defined MD5 keyed digest and classical receive window, and rejects repeated sequences. Available for peer compatibility and measured performance constraints. |
 | `keyed-sha1` | Verifies the key ID and the RFC-defined digest of the packet with the configured key. Classical BFD enforces a receive sequence window but permits repeated sequences within the protocol rules. |
 | `meticulous-sha1` | Uses the SHA-1 keyed digest and classical receive window, and rejects repeated sequences. |
 
@@ -65,6 +66,12 @@ The keyed modes follow BFD's MD5 or SHA-1 packet format; they are not HMAC or
 encryption. BFD authentication does not hide packet contents. A valid shared-key
 check establishes possession of the configured secret, rather than a distinct
 Windows or certificate identity for each peer.
+
+For why meticulous MD5 is available, how SHA-1 and meticulous SHA-1 differ in
+cost, and when MD5 may fit a deployment, see
+[authentication performance and mode selection](authentication-performance.md).
+That reference separates protocol requirements, this service's implementation,
+and performance claims that require measurements.
 
 ## S-BFD replay checks
 
