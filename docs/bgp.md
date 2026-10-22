@@ -26,9 +26,9 @@ services when you need BGP control or broker telemetry.
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
 
-For classical multihop BFD, configure `Auth=meticulous-sha1`
-and a valid matching key on both peers before enabling BGP control. Startup
-rejects other authentication modes even with `MinTtl` configured. See
+For classical multihop BFD, configure `Auth=meticulous-sha1` or
+`Auth=meticulous-md5` and a valid matching key on both peers before enabling BGP
+control. Startup rejects other authentication modes even with `MinTtl` configured. See
 [Configure authentication](configuration.md#authentication). Single-hop BGP
 without authentication warns that it relies on a trusted link.
 

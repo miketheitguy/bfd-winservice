@@ -135,83 +135,85 @@ fn peer_packet(state: State) -> ControlPacket {
 
 #[test]
 fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
-    let log = test_log("authentication");
-    let mut options = options("127.0.0.50", "127.0.0.51", "multihop");
-    options.passive = true;
-    options.auth = AuthType::MeticulousSha1;
-    options.auth_key_id = 9;
-    options.auth_key = Some("secret".to_owned());
-    options.log_file_path = log.path().to_path_buf();
-    options.log_to_file = true;
-    assert!(!options.verbose);
-    let auth = options.validate().unwrap();
-    let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
-    let peer = UdpSocket::bind("127.0.0.51:4784").unwrap();
-    peer.set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
-    let sender = bfd_sender("127.0.0.51");
-    let mut engine = RunningEngine::start(options);
-    let mut buffer = [0; 256];
+    for kind in [AuthType::MeticulousMd5, AuthType::MeticulousSha1] {
+        let log = test_log("authentication");
+        let mut options = options("127.0.0.50", "127.0.0.51", "multihop");
+        options.passive = true;
+        options.auth = kind;
+        options.auth_key_id = 9;
+        options.auth_key = Some("secret".to_owned());
+        options.log_file_path = log.path().to_path_buf();
+        options.log_to_file = true;
+        assert!(!options.verbose);
+        let auth = options.validate().unwrap();
+        let no_auth = AuthConfig::new(AuthType::None, 0, vec![]).unwrap();
+        let peer = UdpSocket::bind("127.0.0.51:4784").unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let sender = bfd_sender("127.0.0.51");
+        let mut engine = RunningEngine::start(options);
+        let mut buffer = [0; 256];
 
-    for state in [State::Down, State::Init, State::Up] {
-        let mut packet = peer_packet(state);
+        for state in [State::Down, State::Init, State::Up] {
+            let mut packet = peer_packet(state);
+            packet.poll = true;
+            sender
+                .send_to(&packet.encode(&no_auth, 0), "127.0.0.50:4784")
+                .unwrap();
+        }
+        // A passive session must not learn an unauthenticated peer or answer its Poll.
+        let error = peer.recv_from(&mut buffer).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut received_sequence = None;
+        for (sequence, remote, local) in [
+            (100, State::Down, State::Init),
+            (101, State::Init, State::Up),
+        ] {
+            let mut packet = peer_packet(remote);
+            packet.poll = true;
+            // Suppress periodic traffic so any later response must be a Final.
+            packet.required_min_rx_us = 0;
+            sender
+                .send_to(&packet.encode(&auth, sequence), "127.0.0.50:4784")
+                .unwrap();
+            let (length, _) = peer.recv_from(&mut buffer).unwrap();
+            received_sequence = auth.verify(&buffer[..length], received_sequence).unwrap();
+            let reply = ControlPacket::decode(&buffer[..length]).unwrap();
+            assert_eq!(reply.state, local);
+            assert_eq!(reply.your_discriminator, 99);
+            assert!(reply.final_bit);
+            assert!(!reply.poll);
+        }
+
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut packet = peer_packet(State::Down);
         packet.poll = true;
         sender
             .send_to(&packet.encode(&no_auth, 0), "127.0.0.50:4784")
             .unwrap();
+        // Also reject unauthenticated Polls after establishment, without enabling
+        // periodic traffic from their advertised receive interval.
+        let error = peer.recv_from(&mut buffer).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+        engine.stop();
+        let contents = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            contents.contains("authentication failed for packet from 127.0.0.51:"),
+            "{contents}"
+        );
+        assert!(contents.contains("authentication required"), "{contents}");
+        assert!(!contents.contains("secret"), "{contents}");
+        assert!(!contents.contains("discarded packet"), "{contents}");
     }
-    // A passive session must not learn an unauthenticated peer or answer its Poll.
-    let error = peer.recv_from(&mut buffer).unwrap_err();
-    assert!(matches!(
-        error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    ));
-
-    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let mut received_sequence = None;
-    for (sequence, remote, local) in [
-        (100, State::Down, State::Init),
-        (101, State::Init, State::Up),
-    ] {
-        let mut packet = peer_packet(remote);
-        packet.poll = true;
-        // Suppress periodic traffic so any later response must be a Final.
-        packet.required_min_rx_us = 0;
-        sender
-            .send_to(&packet.encode(&auth, sequence), "127.0.0.50:4784")
-            .unwrap();
-        let (length, _) = peer.recv_from(&mut buffer).unwrap();
-        received_sequence = auth.verify(&buffer[..length], received_sequence).unwrap();
-        let reply = ControlPacket::decode(&buffer[..length]).unwrap();
-        assert_eq!(reply.state, local);
-        assert_eq!(reply.your_discriminator, 99);
-        assert!(reply.final_bit);
-        assert!(!reply.poll);
-    }
-
-    peer.set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
-    let mut packet = peer_packet(State::Down);
-    packet.poll = true;
-    sender
-        .send_to(&packet.encode(&no_auth, 0), "127.0.0.50:4784")
-        .unwrap();
-    // Also reject unauthenticated Polls after establishment, without enabling
-    // periodic traffic from their advertised receive interval.
-    let error = peer.recv_from(&mut buffer).unwrap_err();
-    assert!(matches!(
-        error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    ));
-    engine.stop();
-    let contents = std::fs::read_to_string(log.path()).unwrap();
-    assert!(
-        contents.contains("authentication failed for packet from 127.0.0.51:"),
-        "{contents}"
-    );
-    assert!(contents.contains("authentication required"), "{contents}");
-    assert!(!contents.contains("secret"), "{contents}");
-    assert!(!contents.contains("discarded packet"), "{contents}");
 }
 
 #[test]

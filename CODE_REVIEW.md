@@ -22,7 +22,7 @@ evidence:
 | --- | --- |
 | Test maintenance | [Obsolete and duplicate test cleanup](#test-framework-cleanup--2026-10-22) |
 | Private local RPC | [BGP probe removal](#bgp-control-probe-removal--2026-10-22), [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
-| Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
+| Protocol requirements | [Meticulous MD5 restoration](#meticulous-keyed-md5--2026-10-22), [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09), and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
 | Service reliability and security | [Independent startup](#independent-service-startup--2026-10-22), [Reliability follow-up](#reliability-follow-up--2026-10-09), and [reliability/security review](#reliability-and-security-review--2026-10-09) |
 | Deployment and observability | [MSI packaging](#msi-packaging-review--2026-10-08) and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
 | Earlier Rust remediation | [rust-security remediation](#rust-security-remediation--2026-10-08), [rust-check remediation](#rust-check-remediation--2026-10-07), and [review before remediation](#review-before-remediation--2026-10-07) |
@@ -43,6 +43,42 @@ these later changes supersede descriptions in older entries:
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
+
+## Meticulous keyed MD5 — 2026-10-22
+
+Cowabunga, authentication crew. Review baseline: `bd38e9b`. Rechecked
+[RFC 5880 sections 4.3 and 6.7.3](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.7.3),
+verified errata 2530/7082, [RFC 5883 section 6](https://www.rfc-editor.org/rfc/rfc5883.html#section-6),
+and [RFC 7880 section 11](https://www.rfc-editor.org/rfc/rfc7880.html#section-11).
+Restored only meticulous MD5: `AuthType::MeticulousMd5`, `Auth=meticulous-md5`,
+and wire type 3. Non-meticulous MD5/type 2 stays rejected. Existing password and
+SHA-1 modes retain their behavior. Multihop BGP accepts either meticulous mode;
+TTL filtering still doesn't replace authentication.
+
+The 48-byte packet carries a 24-byte authentication section and a 16-byte
+digest. Validated keys remain immutable and bounded to 1–16 bytes. The shared
+codec retains constant-time comparison, declared-length hashing, key padding,
+and secret wiping. Transmission advances by one only after a successful send;
+receive tracking commits only after digest verification. S-BFD reflectors keep
+the request's sequence, and initiators track and consume MD5 probes just like
+SHA-1 probes. The configuration, security, RFC matrices, and fuzz input reference
+describe the restored mode and retain the RFC's MD5 interoperability caveat.
+
+Extended existing tests for independent digest vectors, binary key boundaries,
+reserved bytes, replay windows, wraparound, corrupted packets, resynchronization,
+and native classical/S-BFD exchanges. Five-mode fuzz selectors and seeds keep
+MD5 reachable in all four targets without adding duplicate test cases.
+
+Validation: the optimized and ASan suites passed, each with 210 library tests,
+68 integration tests, and three doctests. Ten library provider checks/child
+entry points and one installed reflector check remain ignored by default.
+Nine fuzz-harness tests and four ASan campaigns of 10,000 runs passed with
+nonzero coverage. Strict root/fuzz Clippy, formatting, API documentation,
+Markdown links, and both production executable hardening checks passed.
+An initial overlapping optimized/ASan UDP run hit address-in-use errors; ASan
+passed when rerun without the competing suite. Receipts are under
+`target/meticulous-md5`. No external peer interoperability or installed-service
+MD5 test was performed in this change.
 
 ## Test framework cleanup — 2026-10-22
 

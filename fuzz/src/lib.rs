@@ -16,11 +16,12 @@ use bfd_winservice::{
 };
 use std::time::{Duration, Instant};
 
-const TYPES: [AuthType; 4] = [
+const TYPES: [AuthType; 5] = [
     AuthType::None,
     AuthType::SimplePassword,
     AuthType::KeyedSha1,
     AuthType::MeticulousSha1,
+    AuthType::MeticulousMd5,
 ];
 const KEY_ID: u8 = 7;
 const LOCAL_DISC: u32 = 7;
@@ -170,18 +171,23 @@ fn assert_auth_acceptance(
             assert_eq!(&data[27..declared], &material);
             assert_eq!(sequence, None);
         }
-        AuthType::KeyedSha1 | AuthType::MeticulousSha1 => {
+        AuthType::MeticulousMd5 | AuthType::KeyedSha1 | AuthType::MeticulousSha1 => {
             assert_ne!(data[1] & 0x04, 0);
-            assert_eq!(declared, 52);
+            let auth_length = if kind == AuthType::MeticulousMd5 {
+                24
+            } else {
+                28
+            };
+            assert_eq!(declared, 24 + usize::from(auth_length));
             assert_eq!(data[24], kind as u8);
-            assert_eq!(data[25], 28);
+            assert_eq!(data[25], auth_length);
             assert_eq!(data[26], KEY_ID);
             let accepted = sequence.expect("keyed authentication returns its sequence");
             assert_eq!(accepted, wire_word(data, 28));
             if let Some(last) = last_sequence {
                 let delta = accepted.wrapping_sub(last);
                 assert!(delta <= 3 * u32::from(data[2]));
-                if kind == AuthType::MeticulousSha1 {
+                if matches!(kind, AuthType::MeticulousMd5 | AuthType::MeticulousSha1) {
                     assert_ne!(delta, 0);
                 }
             }
@@ -206,8 +212,11 @@ pub fn check_packet(data: &[u8]) {
         if let Ok(packet) = &decoded {
             let encoded = packet.encode(&auth, u32::MAX);
             assert_eq!(ControlPacket::decode(&encoded).as_ref(), Ok(packet));
-            let expected =
-                matches!(kind, AuthType::KeyedSha1 | AuthType::MeticulousSha1).then_some(u32::MAX);
+            let expected = matches!(
+                kind,
+                AuthType::MeticulousMd5 | AuthType::KeyedSha1 | AuthType::MeticulousSha1
+            )
+            .then_some(u32::MAX);
             assert_eq!(auth.verify(&encoded, None), Ok(expected));
         }
     }
@@ -278,7 +287,7 @@ pub fn check_session(data: &[u8]) {
     let Some((&selector, frames)) = data.split_first() else {
         return;
     };
-    let kind = TYPES[usize::from(selector & 3)];
+    let kind = TYPES[usize::from(selector) % TYPES.len()];
     let public_value = u32::from(selector);
     let config = options(kind, public_value)
         .into_validated()
@@ -414,7 +423,7 @@ pub fn check_reflector(data: &[u8]) {
 pub fn seed_cases() -> Vec<(&'static str, String, Vec<u8>)> {
     let mut cases = vec![];
     for (index, kind) in TYPES.into_iter().enumerate() {
-        let mut initiator = vec![u8::try_from(index).expect("four authentication modes")];
+        let mut initiator = vec![u8::try_from(index).expect("authentication modes fit u8")];
         for action in [1, 3, 4, 5, 6, 7, 2] {
             let mut frame = [0; FRAME_LEN];
             frame[0] = action;
@@ -432,7 +441,7 @@ pub fn seed_cases() -> Vec<(&'static str, String, Vec<u8>)> {
             format!("short-{index}"),
             packet[..25.min(packet.len())].to_vec(),
         ));
-        let mut stream = vec![u8::try_from(index).expect("four modes fit u8")];
+        let mut stream = vec![u8::try_from(index).expect("authentication modes fit u8")];
         for step in 0..3u32 {
             let mut frame = [0; FRAME_LEN];
             frame[0] = 1;
@@ -484,7 +493,7 @@ mod tests {
     #[test]
     fn input_derived_material_drives_authenticated_sessions_up() {
         for selector in u8::MIN..=u8::MAX {
-            let kind = TYPES[usize::from(selector & 3)];
+            let kind = TYPES[usize::from(selector) % TYPES.len()];
             let public_value = u32::from(selector);
             let config = options(kind, public_value)
                 .into_validated()

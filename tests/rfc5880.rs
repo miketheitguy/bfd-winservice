@@ -259,15 +259,20 @@ fn multihop_timeout_backoff_preserves_a_slow_peers_rate_as_its_floor() {
     assert_eq!(session.transmit_interval(), Duration::from_millis(100));
 }
 
-const KEYED_TYPES: [AuthType; 2] = [AuthType::KeyedSha1, AuthType::MeticulousSha1];
+const KEYED_TYPES: [AuthType; 3] = [
+    AuthType::MeticulousMd5,
+    AuthType::KeyedSha1,
+    AuthType::MeticulousSha1,
+];
 
 #[test]
-fn removed_md5_types_cannot_change_session_or_refresh_detection() {
-    let sender = AuthConfig::new(AuthType::KeyedSha1, 0, b"test-key".to_vec()).unwrap();
+fn non_meticulous_md5_cannot_change_session_or_refresh_detection() {
+    let sender = AuthConfig::new(AuthType::MeticulousMd5, 0, b"test-key".to_vec()).unwrap();
     let now = Instant::now();
     for kind in [
         AuthType::None,
         AuthType::SimplePassword,
+        AuthType::MeticulousMd5,
         AuthType::KeyedSha1,
         AuthType::MeticulousSha1,
     ] {
@@ -276,27 +281,22 @@ fn removed_md5_types_cannot_change_session_or_refresh_detection() {
             .receive(&peer(State::Init).encode(&auth, 100), now)
             .unwrap();
         let deadline = session.detection_deadline();
-        for wire_type in [2, 3] {
-            let mut data = peer(State::Down).encode(&sender, 101);
-            // MD5's legacy authentication section is 24 bytes, including its digest.
-            data.truncate(48);
-            data[3] = 48;
-            data[24] = wire_type;
-            data[25] = 24;
-            let expected = if kind == AuthType::None {
-                AuthError::Unexpected
-            } else {
-                AuthError::WrongType
-            };
-            assert_eq!(
-                session.receive(&data, now + Duration::from_millis(1)),
-                Err(ReceiveError::Authentication(expected))
-            );
-            assert_eq!(session.state(), State::Up);
-            assert_eq!(session.remote_state(), State::Init);
-            assert_eq!(session.detection_deadline(), deadline);
-        }
-        // Rejected types must not consume the next legitimate authentication sequence.
+        let mut data = peer(State::Down).encode(&sender, 101);
+        // Type 2 shares MD5's wire shape but is never accepted as type 3.
+        data[24] = 2;
+        let expected = if kind == AuthType::None {
+            AuthError::Unexpected
+        } else {
+            AuthError::WrongType
+        };
+        assert_eq!(
+            session.receive(&data, now + Duration::from_millis(1)),
+            Err(ReceiveError::Authentication(expected))
+        );
+        assert_eq!(session.state(), State::Up);
+        assert_eq!(session.remote_state(), State::Init);
+        assert_eq!(session.detection_deadline(), deadline);
+        // A rejected type must not consume the next legitimate sequence.
         session
             .receive(
                 &peer(State::Up).encode(&auth, 101),
@@ -353,11 +353,11 @@ fn peer_receive_limit_changes_are_immediate_and_do_not_change_detection_time() {
 
 #[test]
 fn keyed_sequence_windows_include_only_the_rfc_circular_range_for_every_type() {
-    // RFC 5880 section 6.7.4 specifies the received Detect Mult,
+    // RFC 5880 sections 6.7.3–6.7.4 specify the received Detect Mult,
     // inclusive upper bound, and a stricter lower bound for meticulous types.
     for kind in KEYED_TYPES {
         let auth = AuthConfig::new(kind, 0, b"test-key".to_vec()).unwrap();
-        let meticulous = kind == AuthType::MeticulousSha1;
+        let meticulous = matches!(kind, AuthType::MeticulousMd5 | AuthType::MeticulousSha1);
         for last in [0, 100, u32::MAX - 3, u32::MAX] {
             for multiplier in [1, 3, 255] {
                 let mut packet = peer(State::Up);

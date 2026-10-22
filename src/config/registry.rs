@@ -788,6 +788,11 @@ mod tests {
                 options.validate().unwrap()
                     == AuthConfig::new(AuthType::MeticulousSha1, 255, vec![0, 254, 18]).unwrap()
             );
+            fixture.string("Auth", "meticulous-md5");
+            assert!(
+                fixture.load(false).unwrap().validate().unwrap()
+                    == AuthConfig::new(AuthType::MeticulousMd5, 255, vec![0, 254, 18]).unwrap()
+            );
             fixture.remove("AuthKeyHex");
             fixture.string("AuthKey", "hidden-key");
             assert!(fixture.load(false).unwrap().validate().is_ok());
@@ -872,7 +877,7 @@ mod tests {
             let mut options = fixture.load(false).unwrap();
             assert!(options.validate().is_ok());
             assert_eq!(options.mode, Mode::Multihop);
-            for auth in ["keyed-md5", "meticulous-md5", "invalid-auth-hidden-key"] {
+            for auth in ["keyed-md5", "invalid-auth-hidden-key"] {
                 fixture.string("Auth", auth);
                 let error = fixture.load(false).err().unwrap().to_string();
                 assert!(error.contains("Auth") && !error.contains("hidden-key"));

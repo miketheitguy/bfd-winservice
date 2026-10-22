@@ -194,7 +194,7 @@ where
 
     let mut rng = Rng::new(seed);
     if current == 0 {
-        data[0] = rng.byte() & 3;
+        data[0] = rng.byte();
     }
     let available = current.max(1).min(limit);
     let mut frame_count = available
@@ -204,7 +204,7 @@ where
     let mut new_size = 1 + frame_count * FRAME_LEN;
     if frame_count == 0 {
         if limit < 1 + FRAME_LEN {
-            data[0] = rng.byte() & 3;
+            data[0] = rng.byte();
             return 1;
         }
         let selector = data[0];
@@ -214,7 +214,7 @@ where
     }
 
     match rng.index(8) {
-        0 => data[0] = rng.byte() & 3,
+        0 => data[0] = rng.byte(),
         1 => {
             if frame_count < MAX_STEPS && new_size + FRAME_LEN <= limit {
                 let index = rng.index(frame_count + 1);
@@ -318,7 +318,7 @@ fn write_frame(frame: &mut [u8], selector: u8, rng: &mut Rng) {
 
 fn write_raw_packet_frame(frame: &mut [u8], selector: u8, rng: &mut Rng) {
     frame[0] = 0;
-    let kind = TYPES[usize::from(selector & 3)];
+    let kind = TYPES[usize::from(selector) % TYPES.len()];
     let mut packet = peer(random_state(rng));
     mutate_packet_fields(&mut packet, rng);
     normalize_packet(&mut packet, PacketProfile::General, rng);
@@ -436,7 +436,7 @@ mod tests {
             let mut rng = Rng::new(u32::from(selector));
             write_raw_packet_frame(&mut frame, selector, &mut rng);
 
-            let kind = TYPES[usize::from(selector & 3)];
+            let kind = TYPES[usize::from(selector) % TYPES.len()];
             let authentication = auth(kind, u32::from(selector));
             assert!(authentication
                 .verify(&frame[FRAME_PAYLOAD_OFFSET..], None)

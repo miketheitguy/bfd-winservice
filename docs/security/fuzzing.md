@@ -45,12 +45,13 @@ independent cryptographic implementation.
 ## Mutation and authentication
 
 The harness retains normal authentication code through `--no-cfg-fuzzing`.
-It uses the four supported modes: `none`, `simple-password`, `keyed-sha1`, and
-`meticulous-sha1`. Authentication test bytes come from public input fields;
-the harness embeds no shared credential. Packet and reflector targets use the
-sender discriminator encoded as four network-order bytes. Sessions use all eight
-bits of their selector byte, widened to four network-order bytes. Configuration,
-structured mutations, and seed generation use matching derivations so replay
+It uses the five supported modes: `none`, `simple-password`, `keyed-sha1`,
+`meticulous-sha1`, and `meticulous-md5`. Authentication test bytes come from
+public input fields; the harness embeds no shared credential. Packet and
+reflector targets use the sender discriminator encoded as four network-order
+bytes. Sessions use all eight bits of their selector byte, widened to four
+network-order bytes. Configuration, structured mutations, and seed generation
+use matching derivations so replay
 needs no external credential. These publicly known bytes exercise authentication
 code and provide no secrecy. Use generated test inputs when extending the corpus;
 deployment keys do not belong in the harness or corpus.

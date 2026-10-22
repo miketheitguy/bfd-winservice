@@ -50,7 +50,7 @@ service SID, and that SID in any nonempty caller restricting list. See the
 
 For remote UDP, [packet authentication](security/packet-authentication.md) is
 separate from path validation and firewall filtering. Classical multihop BGP
-control requires meticulous keyed SHA-1 authentication.
+control requires meticulous keyed authentication.
 
 ## Rust compiler and linker hardening
 

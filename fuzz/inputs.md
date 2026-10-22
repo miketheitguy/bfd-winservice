@@ -7,9 +7,9 @@ owns target boundaries and sanitizer limits.
 
 ## Session input format
 
-The first byte selects `none`, `simple-password`, `keyed-sha1`, or
-`meticulous-sha1` using its low two bits. All eight selector bits supply the
-public value used to derive authentication test bytes. Each subsequent
+The first byte modulo five selects `none`, `simple-password`, `keyed-sha1`,
+`meticulous-sha1`, or `meticulous-md5`, in that order. All eight selector bits
+supply the public value used to derive authentication test bytes. Each subsequent
 64-byte frame has an operation byte, a time-advance byte in units of
 10 milliseconds, and a payload.
 The operation's low three bits select one of these actions:

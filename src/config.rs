@@ -421,7 +421,10 @@ impl Options {
         }
         if self.mode == Mode::Multihop
             && self.bgp_peer_name.is_some()
-            && self.auth != AuthType::MeticulousSha1
+            && !matches!(
+                self.auth,
+                AuthType::MeticulousMd5 | AuthType::MeticulousSha1
+            )
         {
             return Err(ConfigError::MultihopBgpAuthentication);
         }
@@ -778,6 +781,7 @@ mod tests {
         assert_eq!(classical.security_warnings().len(), 1);
         for (kind, warnings) in [
             (AuthType::SimplePassword, 1),
+            (AuthType::MeticulousMd5, 0),
             (AuthType::KeyedSha1, 1),
             (AuthType::MeticulousSha1, 0),
         ] {
@@ -796,6 +800,7 @@ mod tests {
         for (kind, warnings) in [
             (AuthType::None, 1),
             (AuthType::SimplePassword, 1),
+            (AuthType::MeticulousMd5, 0),
             (AuthType::KeyedSha1, 0),
             (AuthType::MeticulousSha1, 0),
         ] {
@@ -872,6 +877,7 @@ mod tests {
                 for auth in [
                     AuthType::None,
                     AuthType::SimplePassword,
+                    AuthType::MeticulousMd5,
                     AuthType::KeyedSha1,
                     AuthType::MeticulousSha1,
                 ] {
@@ -887,7 +893,7 @@ mod tests {
                     options.auth = auth;
                     options.auth_key = (auth != AuthType::None).then(|| "test-key".into());
                     let result = options.into_validated();
-                    if auth == AuthType::MeticulousSha1 {
+                    if matches!(auth, AuthType::MeticulousMd5 | AuthType::MeticulousSha1) {
                         assert!(result.is_ok(), "{shortcut} {min_ttl:?} {auth:?}");
                     } else {
                         assert_eq!(result.err(), Some(ConfigError::MultihopBgpAuthentication));

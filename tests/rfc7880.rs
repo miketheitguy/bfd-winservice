@@ -11,7 +11,11 @@ use bfd_winservice::{
 };
 use std::time::{Duration, Instant};
 
-const KEYED_TYPES: [AuthType; 2] = [AuthType::KeyedSha1, AuthType::MeticulousSha1];
+const KEYED_TYPES: [AuthType; 3] = [
+    AuthType::MeticulousMd5,
+    AuthType::KeyedSha1,
+    AuthType::MeticulousSha1,
+];
 
 fn pair(kind: AuthType) -> (Session, Reflector, AuthConfig) {
     let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());

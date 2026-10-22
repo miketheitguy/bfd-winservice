@@ -70,41 +70,44 @@ fn receive(transport: &Transport) -> Datagram {
 
 #[test]
 fn windows_reflector_serves_multiple_authenticated_initiators_from_port_7784() {
-    let mut reflector = Options::reflector("127.0.0.90".parse().unwrap(), 99);
-    reflector.auth = AuthType::MeticulousSha1;
-    reflector.auth_key = Some("secret".into());
-    let _engine = RunningEngine::start(reflector);
-    let mut clients = Vec::new();
-    for (local, discriminator) in [("127.0.0.91", 7), ("127.0.0.91", 8), ("127.0.0.92", 9)] {
-        let mut options = initiator(local, "127.0.0.90", discriminator);
-        let auth = options.validate().unwrap();
-        let transport = Transport::open(&options).unwrap();
-        assert_ne!(transport.source_port, 7784);
-        transport.wait_readable(Duration::from_millis(30)).unwrap();
-        assert_eq!(
-            transport
-                .receive()
-                .err()
-                .expect("reflector sends no unsolicited traffic")
-                .kind(),
-            io::ErrorKind::WouldBlock
-        );
-        let session = Session::new(options.clone(), auth.clone()).unwrap();
-        clients.push((options, auth, transport, session));
-    }
-    for (options, auth, transport, session) in &mut clients {
-        let request = session.packet(false);
-        transport.send(&request).unwrap();
-        let response = receive(transport);
-        response.validate(options).unwrap();
-        assert_eq!(response.source.port(), 7784);
-        assert_eq!(response.ttl, Some(255));
-        assert_eq!(
-            auth.verify(&request, None),
-            auth.verify(&response.data, None)
-        );
-        session.receive(&response.data, Instant::now()).unwrap();
-        assert_eq!(session.state(), State::Up);
+    for kind in [AuthType::MeticulousMd5, AuthType::MeticulousSha1] {
+        let mut reflector = Options::reflector("127.0.0.90".parse().unwrap(), 99);
+        reflector.auth = kind;
+        reflector.auth_key = Some("secret".into());
+        let _engine = RunningEngine::start(reflector);
+        let mut clients = Vec::new();
+        for (local, discriminator) in [("127.0.0.91", 7), ("127.0.0.91", 8), ("127.0.0.92", 9)] {
+            let mut options = initiator(local, "127.0.0.90", discriminator);
+            options.auth = kind;
+            let auth = options.validate().unwrap();
+            let transport = Transport::open(&options).unwrap();
+            assert_ne!(transport.source_port, 7784);
+            transport.wait_readable(Duration::from_millis(30)).unwrap();
+            assert_eq!(
+                transport
+                    .receive()
+                    .err()
+                    .expect("reflector sends no unsolicited traffic")
+                    .kind(),
+                io::ErrorKind::WouldBlock
+            );
+            let session = Session::new(options.clone(), auth.clone()).unwrap();
+            clients.push((options, auth, transport, session));
+        }
+        for (options, auth, transport, session) in &mut clients {
+            let request = session.packet(false);
+            transport.send(&request).unwrap();
+            let response = receive(transport);
+            response.validate(options).unwrap();
+            assert_eq!(response.source.port(), 7784);
+            assert_eq!(response.ttl, Some(255));
+            assert_eq!(
+                auth.verify(&request, None),
+                auth.verify(&response.data, None)
+            );
+            session.receive(&response.data, Instant::now()).unwrap();
+            assert_eq!(session.state(), State::Up);
+        }
     }
 }
 
