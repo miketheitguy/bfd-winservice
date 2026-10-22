@@ -106,6 +106,30 @@ fn checked_types_reject_out_of_range_and_noncanonical_fields() {
 }
 
 #[test]
+fn event_ages_are_bounded_by_snapshot_age_and_engine_uptime() {
+    for field in [RECEIVE, SEND] {
+        for (event_age, valid) in [(99, false), (100, true), (1000, true), (1001, false)] {
+            let mut w = wire();
+            w.uptime_us = 1000;
+            w.age_us = 100;
+            w.fields |= field;
+            if field == RECEIVE {
+                w.received_utc = w.captured_utc;
+                w.received_age_us = event_age;
+            } else {
+                w.sent_utc = w.captured_utc;
+                w.sent_age_us = event_age;
+            }
+            assert_eq!(
+                SessionStatus::try_from(w).is_ok(),
+                valid,
+                "field {field}, event age {event_age}"
+            );
+        }
+    }
+}
+
+#[test]
 fn historical_peer_up_and_saturated_counters_are_valid_after_local_expiry() {
     let mut w = wire();
     w.fields |= PEER_REPORT | RECEIVE | SOURCE | DOWN;

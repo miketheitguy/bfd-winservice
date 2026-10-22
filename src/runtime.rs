@@ -764,7 +764,8 @@ impl Engine {
             }
             let now = Instant::now();
             self.refresh_settings(now, &mut next_settings_poll, log);
-            self.publish_status(now);
+            // Settings reloads can record events after the loop's time sample.
+            self.publish_status(Instant::now());
             match self.transport.receive_into(&mut datagram) {
                 Ok(()) => {
                     faults.recovered(log);
@@ -1040,7 +1041,8 @@ impl Engine {
             }
             // Checked on every pass, before receive's flood-path `continue`.
             // Protocol expiry and required transmissions take precedence.
-            self.publish_status(now);
+            // Transmissions above record a newer time than the loop's sample.
+            self.publish_status(Instant::now());
             let before_interval = self.session.transmit_interval();
             let before_enabled = self.session.periodic_enabled();
             let mut fault = None;
@@ -1184,6 +1186,47 @@ mod tests {
     use super::*;
     #[cfg(not(miri))]
     use std::{fs, io::Write};
+
+    #[cfg(not(miri))]
+    #[test]
+    fn periodic_transmissions_precede_their_status_capture() {
+        let mut options = Options::new(
+            "127.0.0.114".parse().unwrap(),
+            "127.0.0.115".parse().unwrap(),
+        );
+        options.multihop = true;
+        let mut log = Logger::new(false).unwrap();
+        let mut engine = Engine::from_config(options.into_validated().unwrap(), &mut log).unwrap();
+        let observer = engine.status_observer();
+        let stop = StopSignal::new().unwrap();
+        let snapshot = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| engine.run_until(&stop, &mut log));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let snapshot = loop {
+                let snapshot = observer.snapshot();
+                // The first send is coalesced into the initial publication. A
+                // later periodic send can make a publication immediately due.
+                if snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.packets_sent_successfully >= 2)
+                {
+                    break snapshot;
+                }
+                if Instant::now() >= deadline {
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            };
+            stop.signal().unwrap();
+            worker.join().unwrap().unwrap();
+            snapshot
+        })
+        .expect("engine did not publish two successful transmissions");
+        assert!(
+            snapshot.publication.sent.unwrap() <= snapshot.publication.captured,
+            "publication capture precedes its successful transmission"
+        );
+    }
 
     #[cfg(not(miri))]
     #[test]
