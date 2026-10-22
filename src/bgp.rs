@@ -8,12 +8,38 @@ use crate::{
     runtime::{Logger, StopSignal},
 };
 use std::{
+    cell::Cell,
     collections::VecDeque,
     io,
     sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+const CONTROL_FAILURE_REPORT_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Worker-local incident state; retries never allocate or acquire another lock.
+#[derive(Default)]
+struct ControlFailureLog {
+    last_report: Option<Instant>,
+}
+
+impl ControlFailureLog {
+    fn failed(&mut self, now: Instant) -> bool {
+        if self.last_report.is_none_or(|last| {
+            now.saturating_duration_since(last) >= CONTROL_FAILURE_REPORT_INTERVAL
+        }) {
+            self.last_report = Some(now);
+            return true;
+        }
+        false
+    }
+
+    fn recovered(&mut self, rpc_completed: bool) -> bool {
+        // A locally superseded Start may return Ok without contacting the broker.
+        rpc_completed && self.last_report.take().is_some()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Method {
@@ -119,11 +145,13 @@ impl Controller {
             .name("bgp-ipc".into())
             .spawn(move || {
                 let client = ipc::Client::with_cancel(worker_cancel.clone());
+                let mut failure_log = ControlFailureLog::default();
                 work(&worker_mailbox, |method| {
+                    let rpc_completed = Cell::new(false);
                     let result = reconcile(
                         method,
-                        || client.started(),
-                        |method| client.invoke(method),
+                        || client.started().inspect(|_| rpc_completed.set(true)),
+                        |method| client.invoke(method).inspect(|_| rpc_completed.set(true)),
                         || start_is_current(&worker_mailbox),
                     );
                     // Shutdown cancels a call superseded by the queued final action.
@@ -136,16 +164,35 @@ impl Controller {
                         ));
                         return Ok(());
                     }
+                    if result.is_ok() && failure_log.recovered(rpc_completed.get()) {
+                        log.bgp_control_message(
+                            &peer,
+                            method.name(),
+                            "RPC requests are succeeding again; inspect the peer and management result for the action outcome",
+                            true,
+                        );
+                    }
                     match &result {
                         Ok(true) => log.log(format!(
                             "BGP peer={peer:?} method={} succeeded",
                             method.name()
                         )),
                         Ok(false) => log.log(format!("BGP peer={peer:?} Start unnecessary or superseded by BFD; leaving BGP unchanged")),
-                        Err(error) => log.log(format!(
-                            "BGP peer={peer:?} method={} failed: {error}",
-                            method.name()
-                        )),
+                        Err(error) => {
+                            if failure_log.failed(Instant::now()) {
+                                log.bgp_control_message(
+                                    &peer,
+                                    method.name(),
+                                    format_args!("failed: {error}"),
+                                    false,
+                                );
+                            } else {
+                                log.log(format!(
+                                    "BGP peer={peer:?} method={} failed: {error}",
+                                    method.name()
+                                ));
+                            }
+                        }
                     }
                     result.map(|_| ())
                 })
@@ -322,6 +369,22 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
+    #[test]
+    fn client_failure_reporting_bounds_retries_and_requires_rpc_success_for_recovery() {
+        let start = Instant::now();
+        let mut report = ControlFailureLog::default();
+        assert!(!report.recovered(true));
+        assert!(report.failed(start));
+        assert!(!report.failed(start + Duration::from_secs(59)));
+        assert!(report.failed(start + CONTROL_FAILURE_REPORT_INTERVAL));
+        // A queued Start superseded before its first RPC is not a recovery.
+        assert!(!report.recovered(false));
+        assert!(!report.failed(start + Duration::from_secs(61)));
+        assert!(report.recovered(true));
+        assert!(!report.recovered(true));
+        // A new incident is visible immediately, even just after recovery.
+        assert!(report.failed(start + Duration::from_secs(61)));
+    }
     #[test]
     fn bfd_does_not_control_bgp_until_the_first_up() {
         let controller = Controller {

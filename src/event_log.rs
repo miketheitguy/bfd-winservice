@@ -26,6 +26,8 @@ const SERVICE_FAILED: EVENT_DESCRIPTOR = descriptor(3, 2, 1, 0x1);
 const SERVICE_WARNING: EVENT_DESCRIPTOR = descriptor(4, 3, 1, 0x1);
 const BROKER_INFORMATION: EVENT_DESCRIPTOR = descriptor(300, 4, 4, 0x4);
 const BROKER_ERROR: EVENT_DESCRIPTOR = descriptor(301, 2, 4, 0x4);
+const BGP_CONTROL_FAILED: EVENT_DESCRIPTOR = descriptor(302, 2, 4, 0x4);
+const BGP_CONTROL_RECOVERED: EVENT_DESCRIPTOR = descriptor(303, 4, 4, 0x4);
 const PEER_COMMUNICATION_STARTED: EVENT_DESCRIPTOR = descriptor(100, 4, 2, 0x2);
 const PEER_COMMUNICATION_STOPPED: EVENT_DESCRIPTOR = descriptor(101, 3, 2, 0x2);
 const SESSION_UP: EVENT_DESCRIPTOR = descriptor(102, 4, 2, 0x2);
@@ -142,6 +144,29 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    pub(crate) fn bgp_control_message(
+        peer: &str,
+        method: &str,
+        detail: &str,
+        recovered: bool,
+    ) -> Self {
+        let mut payload = Vec::new();
+        // Each field is bounded to 8192 UTF-16 units, keeping all three under 64 KiB.
+        append_unicode(&mut payload, peer);
+        append_unicode(&mut payload, method);
+        append_unicode(&mut payload, detail);
+        Self {
+            event: if recovered {
+                &BGP_CONTROL_RECOVERED
+            } else {
+                &BGP_CONTROL_FAILED
+            },
+            payload,
+            // The logger attaches one bounded text record for the optional file.
+            text: None,
+        }
+    }
+
     pub(crate) fn broker_message(message: &str, failure: bool) -> Self {
         let event = if failure {
             &BROKER_ERROR
@@ -515,6 +540,8 @@ mod tests {
             ("SERVICE_WARNING", SERVICE_WARNING),
             ("BROKER_INFORMATION", BROKER_INFORMATION),
             ("BROKER_ERROR", BROKER_ERROR),
+            ("BGP_CONTROL_FAILED", BGP_CONTROL_FAILED),
+            ("BGP_CONTROL_RECOVERED", BGP_CONTROL_RECOVERED),
             ("PEER_COMMUNICATION_STARTED", PEER_COMMUNICATION_STARTED),
             ("PEER_COMMUNICATION_STOPPED", PEER_COMMUNICATION_STOPPED),
             ("SESSION_UP", SESSION_UP),
@@ -569,6 +596,28 @@ mod tests {
             header.contains(&compact(&declaration)),
             "MC provider GUID differs"
         );
+    }
+
+    #[test]
+    fn bgp_control_payload_matches_three_unicode_fields_and_bounds_total_size() {
+        for recovered in [false, true] {
+            let record =
+                Record::bgp_control_message("Site 🐢", "Stop", "RPC unavailable", recovered);
+            let expected: Vec<_> = ["Site 🐢", "Stop", "RPC unavailable"]
+                .into_iter()
+                .flat_map(|field| field.encode_utf16().chain(Some(0)))
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            assert_eq!(record.payload, expected);
+            assert_eq!(
+                record.identity(),
+                if recovered { (303, 4) } else { (302, 2) }
+            );
+        }
+        let long = "🐢".repeat(10_000);
+        let record = Record::bgp_control_message(&long, &long, &long, false);
+        assert_eq!(record.payload.len(), 3 * (8192 + 1) * 2);
+        assert!(record.payload.len() < 64 * 1024);
     }
 
     #[test]

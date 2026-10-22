@@ -119,7 +119,7 @@ On the installed server, inspect BFD transitions and broker results:
 ```powershell
 $eventFilter = @{
     LogName = 'BFD-Service/Operational'
-    Id = 102, 103, 106, 110, 300, 301
+    Id = 102, 103, 106, 110, 300, 301, 302, 303
 }
 Get-WinEvent -FilterHashtable $eventFilter -MaxEvents 30 |
     Select-Object TimeCreated, Id, LevelDisplayName, Message
@@ -128,6 +128,11 @@ Get-WinEvent -FilterHashtable $eventFilter -MaxEvents 30 |
 Confirm event 102 when BFD reaches Up and broker event 300 for successful BGP
 operations. An already running peer needs no mutation, so Up needn't produce a
 Start result. Event 301 identifies broker authorization or provider failures.
+Event 302 identifies a failed BFD-side control request, including an unavailable
+broker; event 303 marks successful control requests after a failure. These
+client diagnostics remain available with file logging disabled. See
+[BGP control events](logging.md#bgp-control-broker-and-rpc-telemetry-events)
+for reporting limits and recovery semantics.
 For an end-to-end check in a maintenance window, test a peer that
 starts stopped, a peer that starts running, BFD failure/recovery, and AdminDown.
 Compare the actual peer state with the action table after each transition.

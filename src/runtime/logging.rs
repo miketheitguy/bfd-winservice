@@ -280,6 +280,30 @@ impl Logger {
         let _ = write!(&mut text, "{message}");
         self.enqueue(Command::Event(Record::broker_message(&text.0, failure)));
     }
+    pub(crate) fn bgp_control_message(
+        &mut self,
+        peer: &str,
+        method: &str,
+        detail: impl Display,
+        recovered: bool,
+    ) {
+        let mut detail_text = BoundedText(String::new());
+        let _ = write!(&mut detail_text, "{detail}");
+        let mut record = Record::bgp_control_message(peer, method, &detail_text.0, recovered);
+        let mut text = BoundedText(String::new());
+        let (id, level) = if recovered {
+            (303, "Information")
+        } else {
+            (302, "Error")
+        };
+        let _ = write!(
+            &mut text,
+            "event_id={id} level={level} BGP control client peer={peer:?} method={method} {}",
+            detail_text.0
+        );
+        record.text = Some(text.0);
+        self.enqueue(Command::Event(record));
+    }
     /// Queues successful engine startup.
     pub fn service_started(&mut self) {
         self.log(format_args!(
@@ -593,6 +617,39 @@ mod tests {
                 shutdown: Mutex::new(Shutdown { done, thread }),
                 dropped,
             }),
+        }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn bgp_client_events_reach_etw_with_file_disabled_and_mirror_enabled_file() {
+        for file_enabled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut options =
+                Options::new("127.0.0.1".parse().unwrap(), "127.0.0.2".parse().unwrap());
+            options.log_to_file = file_enabled;
+            options.log_file_path = directory.path().join("output/trace.log");
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut log = captured_logger(false, Arc::clone(&events), false);
+            log.open_file(&options).unwrap();
+            log.bgp_control_message("Site 🐢", "Stop", "failed: RPC server unavailable", false);
+            log.bgp_control_message(
+                "Site 🐢",
+                "Start",
+                "RPC requests are succeeding again",
+                true,
+            );
+            log.flush(Duration::from_secs(2)).unwrap();
+            assert_eq!(*events.lock().unwrap(), [(302, 2), (303, 4)]);
+            if file_enabled {
+                let contents = fs::read_to_string(&options.log_file_path).unwrap();
+                assert!(contents.contains("event_id=302 level=Error"));
+                assert!(contents.contains("event_id=303 level=Information"));
+                assert!(contents.contains("method=Stop failed: RPC server unavailable"));
+                assert_eq!(contents.lines().count(), 2);
+            } else {
+                assert!(!options.log_file_path.parent().unwrap().exists());
+            }
         }
     }
 

@@ -69,6 +69,11 @@
           <template tid="BrokerMessageData">
             <data name="Message" inType="win:UnicodeString"/>
           </template>
+          <template tid="BgpControlMessageData">
+            <data name="PeerName" inType="win:UnicodeString"/>
+            <data name="RequestedMethod" inType="win:UnicodeString"/>
+            <data name="Detail" inType="win:UnicodeString"/>
+          </template>
           <template tid="ServiceStartedData">
             <data name="Mode" inType="win:UInt8" map="RunMode"/>
           </template>
@@ -124,6 +129,12 @@
           <event value="301" version="0" symbol="BROKER_ERROR" channel="Operational"
                  level="win:Error" task="BgpManagement" keywords="Diagnostics"
                  template="BrokerMessageData" message="$(string.Event.BrokerMessage)"/>
+          <event value="302" version="0" symbol="BGP_CONTROL_FAILED" channel="Operational"
+                 level="win:Error" task="BgpManagement" keywords="Diagnostics"
+                 template="BgpControlMessageData" message="$(string.Event.BgpControlMessage)"/>
+          <event value="303" version="0" symbol="BGP_CONTROL_RECOVERED" channel="Operational"
+                 level="win:Informational" task="BgpManagement" keywords="Diagnostics"
+                 template="BgpControlMessageData" message="$(string.Event.BgpControlMessage)"/>
           <event value="1" version="0" symbol="SERVICE_STARTED" channel="Operational"
                  level="win:Informational" task="ServiceLifecycle" keywords="Service"
                  template="ServiceStartedData" message="$(string.Event.ServiceStarted)"/>
@@ -231,6 +242,7 @@
         <string id="Event.ServiceStarted" value="BFD service started. Mode: %1."/>
         <string id="Task.BgpManagement" value="BGP management"/>
         <string id="Event.BrokerMessage" value="BFD BGP broker: %1"/>
+        <string id="Event.BgpControlMessage" value="BFD BGP control client. Peer: %1. Requested method: %2. %3"/>
         <string id="Event.ServiceStopped" value="BFD service stopped. Mode: %1. Exit code: %2."/>
         <string id="Event.ServiceFailed" value="BFD service failed. Mode: %1. Error: %2."/>
         <string id="Event.ServiceWarning" value="BFD service warning. Mode: %1. Warning: %2."/>
