@@ -79,7 +79,7 @@ try {
     Assert-Package ($service.Name -eq 'BfdWinService' -and $service.DisplayName -eq 'BFD Windows Service') 'Service names differ from documentation.'
     Assert-Package ($service.Type -eq '16' -and $service.Start -eq '2' -and $service.Account -eq 'NT AUTHORITY\LocalService') 'Expected an Automatic LocalService own-process service.'
     Assert-Package ([string]::IsNullOrEmpty($service.Arguments)) 'Service command line must have no console or configuration arguments.'
-    Assert-Package ($service.Dependencies -ceq 'BfdBgpBroker[~][~]') 'BFD must depend only on the broker; its local RPC interface needs no COM activation.'
+    Assert-Package ([string]::IsNullOrEmpty($service.Dependencies)) 'BFD must have no SCM dependencies and start independently of the broker.'
     $broker = @($services | Where-Object Name -EQ 'BfdBgpBroker')[0]
     Assert-Package ($broker.Type -eq '16' -and $broker.Start -eq '2' -and $broker.Account -eq 'LocalSystem' -and $broker.Dependencies -ceq 'RpcSs[~][~]' -and [string]::IsNullOrEmpty($broker.Arguments)) 'Expected an Automatic, own-process LocalSystem BGP broker.'
     $controls = @(Get-MsiRows 'SELECT `Event`, `Wait` FROM `ServiceControl`' @('Event','Wait'))

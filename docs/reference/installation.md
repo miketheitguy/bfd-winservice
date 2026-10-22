@@ -18,8 +18,8 @@ the following resources for all users:
   Windows. Delayed start runs after boot-time services, when interface addresses
   are more likely to be assigned.
 - The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
-  LocalSystem account. BFD depends on the broker, so starting BFD also starts the
-  broker. Without `BgpPeerName`, BFD doesn't open its BGP control RPC interface. The
+  LocalSystem account. Both services start independently; neither depends on the
+  other. Without `BgpPeerName`, BFD doesn't start its BGP control worker. The
   broker still queries BFD's private RPC status interface. Both services have their
   own enabled service SID. BFD uses restricted SID type `3`; its service SID is
   also present in the token's restricting list. The broker retains unrestricted
@@ -55,8 +55,9 @@ the following resources for all users:
   code remains writable only by
   SYSTEM and administrators.
 - Five executable-specific UDP allow rules for classical and Seamless BFD.
-- The broker's `RpcSs` service dependency for native MI. The BFD service depends
-  on the broker. See [Monitor service status and BFD events](../monitoring.md) for
+- The broker's `RpcSs` service dependency for native MI. BFD has no SCM service
+  dependencies. Install and repair clear its former broker dependency; rollback
+  restores its previous dependency list. See [Monitor service status and BFD events](../monitoring.md) for
   lifecycle queries and event-log monitoring.
 
 ## Installed firewall rules

@@ -119,6 +119,7 @@ try {
     Set-Content -LiteralPath $sentinel -Value 'BFD upgrade log preservation fixture' -Encoding UTF8
     $configuration = Get-Configuration
     $servicePolicy = Get-ServicePolicy
+    $previousBfdDependencies = @((Get-Service BfdWinService).ServicesDependedOn | ForEach-Object Name)
     $sentinelText = Get-Content -LiteralPath $sentinel -Raw
     $hashes = @('bfd-winservice.exe','bfd-bgp-broker.exe' | ForEach-Object {
         (Get-FileHash -LiteralPath (Join-Path $installDirectory $_) -Algorithm SHA256).Hash
@@ -135,6 +136,8 @@ try {
     }
     Assert-Version $PreviousVersion
     Assert-Preserved
+    $restoredDependencies = @((Get-Service BfdWinService).ServicesDependedOn | ForEach-Object Name)
+    if (($restoredDependencies -join [char]0) -cne ($previousBfdDependencies -join [char]0)) { throw 'Failed upgrade did not restore the published service dependencies.' }
     $restoredHashes = @('bfd-winservice.exe','bfd-bgp-broker.exe' | ForEach-Object {
         (Get-FileHash -LiteralPath (Join-Path $installDirectory $_) -Algorithm SHA256).Hash
     })
@@ -145,11 +148,14 @@ try {
     Assert-Version $ExpectedVersion
     Assert-UpgradedFirewall
     Assert-Preserved
+    if (@((Get-Service BfdWinService).ServicesDependedOn).Count -ne 0) { throw 'Upgrade retained the obsolete broker dependency.' }
     Invoke-Setup $setup '/repair' 'upgrade-repair.log'
     Assert-Version $ExpectedVersion
     Assert-UpgradedFirewall
     Assert-Preserved
+    if (@((Get-Service BfdWinService).ServicesDependedOn).Count -ne 0) { throw 'Repair restored the obsolete broker dependency.' }
     $since = Get-Date
+    Start-Service BfdBgpBroker
     Start-Service BfdWinService
     $deadline = (Get-Date).AddSeconds(45)
     do {

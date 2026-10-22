@@ -71,14 +71,16 @@ $key.SetAttribute('Key', 'SOFTWARE\Classes\CLSID\{E4A97D25-73E2-4E6C-9A35-281B6A
 $rejected = $false
 try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
 if (-not $rejected) { throw 'A COM status class registration was accepted.' }
-$unsafe = $source.Clone()
-$ns = [Xml.XmlNamespaceManager]::new($unsafe.NameTable)
-$ns.AddNamespace('w','http://wixtoolset.org/schemas/v4/wxs')
-$service = $unsafe.SelectSingleNode('//w:ServiceInstall[@Name="BfdWinService"]', $ns)
-$dependency = $unsafe.CreateElement('ServiceDependency', 'http://wixtoolset.org/schemas/v4/wxs')
-$dependency.SetAttribute('Id', 'RpcSs')
-[void]$service.AppendChild($dependency)
-$rejected = $false
-try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
-if (-not $rejected) { throw 'A COM-era RpcSs dependency for BFD was accepted.' }
-Write-Output 'Validated exactly five UDP allow rules, no COM status registration, commit-only service policy, and 29 unsafe source mutations.'
+foreach ($target in @(@('BfdWinService','RpcSs'), @('BfdWinService','BfdBgpBroker'), @('BfdBgpBroker','BfdWinService'))) {
+    $unsafe = $source.Clone()
+    $ns = [Xml.XmlNamespaceManager]::new($unsafe.NameTable)
+    $ns.AddNamespace('w','http://wixtoolset.org/schemas/v4/wxs')
+    $service = $unsafe.SelectSingleNode(('//w:ServiceInstall[@Name="' + $target[0] + '"]'), $ns)
+    $dependency = $unsafe.CreateElement('ServiceDependency', 'http://wixtoolset.org/schemas/v4/wxs')
+    $dependency.SetAttribute('Id', $target[1])
+    [void]$service.AppendChild($dependency)
+    $rejected = $false
+    try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
+    if (-not $rejected) { throw "An unexpected dependency was accepted: $($target -join ' -> ')" }
+}
+Write-Output 'Validated exactly five UDP allow rules, independent service startup, no COM status registration, commit-only service policy, and 31 unsafe source mutations.'

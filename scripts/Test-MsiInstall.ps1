@@ -93,9 +93,10 @@ function Assert-ServicePolicy {
             Assert-Installed ('RequiredPrivileges' -notin $key.GetValueNames()) 'The installer must leave the broker privilege policy at its existing default.'
         }
     }
-    Assert-Installed ('RpcSs' -in @((Get-Service BfdBgpBroker).ServicesDependedOn.Name)) 'The MI broker must depend on RpcSs.'
-    $dependencies = @((Get-Service BfdWinService).ServicesDependedOn.Name)
-    Assert-Installed ($dependencies.Count -eq 1 -and $dependencies[0] -eq 'BfdBgpBroker') 'BFD must depend only on the broker; it needs no COM activation.'
+    $brokerDependencies = @((Get-Service BfdBgpBroker).ServicesDependedOn | ForEach-Object Name)
+    Assert-Installed ($brokerDependencies.Count -eq 1 -and $brokerDependencies[0] -eq 'RpcSs') 'The MI broker must depend only on RpcSs, never BFD.'
+    $dependencies = @((Get-Service BfdWinService).ServicesDependedOn | ForEach-Object Name)
+    Assert-Installed ($dependencies.Count -eq 0) 'BFD must start independently of the broker, with no SCM dependencies.'
     Assert-Installed (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'service-policy.rollback'))) 'Installer policy snapshot was not committed.'
 }
 
@@ -123,6 +124,33 @@ function Assert-InstalledFirewall {
             ($ports.LocalPort -join ',') -ceq $values[3] -and ($ports.RemotePort -join ',') -ceq $values[4] -and
             ($addresses.LocalAddress -join ',') -ceq 'Any' -and ($addresses.RemoteAddress -join ',') -ceq 'Any') "Unsafe installed firewall program/protocol/port/address scope: $name"
     }
+}
+
+function Assert-IndependentServiceStartup {
+    Assert-Installed ((Get-Service BfdWinService).Status -eq 'Stopped' -and
+        (Get-Service BfdBgpBroker).Status -eq 'Stopped') 'Independent startup must begin with both services stopped.'
+    # A configured BGP worker must not turn broker availability into a startup
+    # requirement. The isolated loopback peer never establishes BFD or calls MI.
+    New-ItemProperty -Path $parameters -Name BgpPeerName -PropertyType String -Value 'MSI-Independent-Startup-Fixture' -Force | Out-Null
+    # Public fixture material satisfies authenticated multihop BGP policy.
+    New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'meticulous-sha1' -Force | Out-Null
+    New-ItemProperty -Path $parameters -Name AuthKey -PropertyType String -Value 'startup-fixture-key' -Force | Out-Null
+    New-ItemProperty -Path $parameters -Name AuthKeyId -PropertyType DWord -Value 23 -Force | Out-Null
+    try {
+        Start-Service BfdWinService
+        $bfd = Get-CimInstance Win32_Service -Filter "Name='BfdWinService'"
+        Assert-Installed ($bfd.State -eq 'Running' -and (Get-Service BfdBgpBroker).Status -eq 'Stopped') 'BFD must start with BGP configured while the broker remains stopped.'
+        Start-Service BfdBgpBroker
+        Stop-Service BfdBgpBroker
+        $stillRunning = Get-CimInstance Win32_Service -Filter "Name='BfdWinService'"
+        Assert-Installed ($stillRunning.State -eq 'Running' -and $stillRunning.ProcessId -eq $bfd.ProcessId) 'Stopping the broker must leave the same BFD process running.'
+    } finally {
+        Stop-Service BfdWinService
+        Remove-ItemProperty -Path $parameters -Name BgpPeerName,Auth,AuthKey,AuthKeyId
+    }
+    Start-Service BfdBgpBroker
+    Assert-Installed ((Get-Service BfdBgpBroker).Status -eq 'Running' -and
+        (Get-Service BfdWinService).Status -eq 'Stopped') 'The broker must start while BFD remains stopped.'
 }
 
 function Assert-PrivateRpcRejectsUnrelatedClient {
@@ -226,6 +254,7 @@ try {
     New-ItemProperty -Path $parameters -Name Local -PropertyType String -Value '127.0.0.240' -Force
     New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '127.0.0.241' -Force
     New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 1 -Force
+    Assert-IndependentServiceStartup
     $probeStarted = Get-Date
     Start-Service BfdWinService
     Assert-Installed ((Get-CimInstance Win32_Service -Filter "Name='BfdWinService'").State -eq 'Running') 'Configured service failed to start.'
@@ -293,6 +322,10 @@ try {
     $customLog = Join-Path $logDirectory 'custom.log'
     New-ItemProperty -Path $parameters -Name LogToFile -PropertyType DWord -Value 1 -Force
     New-ItemProperty -Path $parameters -Name LogFilePath -PropertyType String -Value $customLog -Force
+    # Seed the earlier release's dependency while both services are stopped.
+    Stop-Service BfdBgpBroker
+    & sc.exe config BfdWinService depend= BfdBgpBroker | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not seed the legacy dependency for repair validation.' }
     Invoke-Msi '/fomus' 'repair.log'
     Assert-NoComRegistration
     Assert-InstallationSecurity
@@ -301,6 +334,7 @@ try {
     $settings = Get-ItemProperty -Path $parameters
     Assert-Installed ($settings.Multihop -eq 1 -and $settings.LogToFile -eq 1 -and $settings.LogFilePath -eq $customLog) 'Repair reset administrator settings.'
     $probeStarted = Get-Date
+    Start-Service BfdBgpBroker
     Start-Service BfdWinService
     Assert-Installed ((Get-Service BfdWinService).Status -eq 'Running') 'Service failed to start after repair.'
     Assert-BrokerAuthenticatesBfd -Since $probeStarted
@@ -313,7 +347,7 @@ try {
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     Assert-Installed ($text -match '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z .*event_id=106 level=Information') 'Missing UTC file event after repair.'
-    Write-Output 'Installation, service accounts/SIDs, mutual local RPC authentication, broker authorization/recovery, protected ACLs, versions, firewall, rendered ETW, file logging, and repair checks passed.'
+    Write-Output 'Installation, independent startup/stop, service accounts/SIDs, mutual local RPC authentication, broker authorization/recovery, protected ACLs, versions, firewall, rendered ETW, file logging, and legacy-dependency repair checks passed.'
 }
 finally {
     if ($installed) { Invoke-Msi '/x' 'uninstall.log' }

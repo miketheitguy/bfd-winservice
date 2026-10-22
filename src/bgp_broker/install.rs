@@ -3,8 +3,9 @@
 use crate::bgp::ipc::BROKER_NAME;
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     mem::size_of,
+    os::windows::ffi::OsStrExt,
     path::PathBuf,
     ptr,
     time::Duration,
@@ -20,9 +21,12 @@ use windows_sys::Win32::System::Services::{
 };
 
 const NAMES: [&str; 2] = ["BfdWinService", BROKER_NAME];
-const SNAPSHOT_MAGIC: &[u8; 4] = b"BSI3";
+const SNAPSHOT_MAGIC: &[u8; 4] = b"BSI4";
 /// Account, SID type, delayed start, recovery flag, and little-endian preshutdown timeout.
 const RECORD_LEN: usize = 8;
+const DEPENDENCIES_OFFSET: usize = SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len();
+const MAX_DEPENDENCY_UNITS: usize = 4096;
+const MAX_SNAPSHOT_BYTES: usize = DEPENDENCIES_OFFSET + 4 + MAX_DEPENDENCY_UNITS * 2;
 /// Covers the maximum 60-second announcement, 60-second cleanup, and final logging.
 const BFD_PRESHUTDOWN_MS: u32 = 125_000;
 
@@ -188,7 +192,10 @@ fn query(service: &Service) -> io::Result<Policy> {
     })
 }
 
-fn set(service: &Service, policy: Policy) -> io::Result<()> {
+fn set(service: &Service, policy: Policy, dependencies: Option<&[u16]>) -> io::Result<()> {
+    if let Some(dependencies) = dependencies {
+        validate_dependencies(dependencies)?;
+    }
     let account: Vec<u16> = policy
         .account
         .name()
@@ -196,7 +203,8 @@ fn set(service: &Service, policy: Policy) -> io::Result<()> {
         .chain(Some(0))
         .collect();
     // SAFETY: live service handle has CHANGE_CONFIG; terminated account name;
-    // all other configuration fields remain unchanged. Built-in accounts have no password.
+    // optional dependencies are validated MULTI_SZ storage alive through the call.
+    // Other configuration fields remain unchanged; built-in accounts have no password.
     if unsafe {
         ChangeServiceConfigW(
             service.raw_handle(),
@@ -206,7 +214,7 @@ fn set(service: &Service, policy: Policy) -> io::Result<()> {
             ptr::null(),
             ptr::null(),
             ptr::null_mut(),
-            ptr::null(),
+            dependencies.map_or(ptr::null(), <[u16]>::as_ptr),
             account.as_ptr(),
             ptr::null(),
             ptr::null(),
@@ -229,14 +237,76 @@ fn set(service: &Service, policy: Policy) -> io::Result<()> {
         .map_err(io::Error::other)
 }
 
-fn decode(bytes: &[u8]) -> io::Result<[Option<Policy>; 2]> {
-    if bytes.len() != SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len()
+fn validate_dependencies(units: &[u16]) -> io::Result<()> {
+    if !(2..=MAX_DEPENDENCY_UNITS).contains(&units.len()) || !units.ends_with(&[0, 0]) {
+        return Err(io::Error::other("invalid rollback dependency list"));
+    }
+    if units == [0, 0] {
+        return Ok(());
+    }
+    let mut start = 0;
+    for (index, unit) in units[..units.len() - 1].iter().enumerate() {
+        if *unit == 0 {
+            if index == start {
+                return Err(io::Error::other("empty rollback dependency name"));
+            }
+            start = index + 1;
+        }
+    }
+    Ok(())
+}
+
+fn dependencies(service: &Service) -> io::Result<Vec<u16>> {
+    let config = service.query_config().map_err(io::Error::other)?;
+    let mut units = Vec::new();
+    for dependency in config.dependencies {
+        for unit in dependency.to_system_identifier().encode_wide().chain([0]) {
+            if units.len() >= MAX_DEPENDENCY_UNITS - 1 {
+                return Err(io::Error::other("service dependency list is too large"));
+            }
+            units.push(unit);
+        }
+    }
+    if units.is_empty() {
+        units.push(0);
+    }
+    units.push(0);
+    validate_dependencies(&units)?;
+    Ok(units)
+}
+
+fn append_dependencies(bytes: &mut Vec<u8>, units: &[u16]) -> io::Result<()> {
+    validate_dependencies(units)?;
+    let count = u32::try_from(units.len()).map_err(io::Error::other)?;
+    bytes.extend_from_slice(&count.to_le_bytes());
+    for unit in units {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Snapshot {
+    policies: [Option<Policy>; 2],
+    bfd_dependencies: Vec<u16>,
+}
+
+fn read_snapshot() -> io::Result<Snapshot> {
+    let mut bytes = Vec::new();
+    fs::File::open(snapshot_path()?)?
+        .take(u64::try_from(MAX_SNAPSHOT_BYTES + 1).map_err(io::Error::other)?)
+        .read_to_end(&mut bytes)?;
+    decode(&bytes)
+}
+
+fn decode(bytes: &[u8]) -> io::Result<Snapshot> {
+    if !(DEPENDENCIES_OFFSET + 4..=MAX_SNAPSHOT_BYTES).contains(&bytes.len())
         || &bytes[..SNAPSHOT_MAGIC.len()] != SNAPSHOT_MAGIC
     {
         return Err(io::Error::other("invalid service rollback snapshot"));
     }
     let mut values = [None, None];
-    let (records, _) = bytes[SNAPSHOT_MAGIC.len()..].as_chunks::<RECORD_LEN>();
+    let (records, _) = bytes[SNAPSHOT_MAGIC.len()..DEPENDENCIES_OFFSET].as_chunks::<RECORD_LEN>();
     for (value, record) in values.iter_mut().zip(records) {
         let account = match record[0] {
             0 => Account::System,
@@ -264,13 +334,34 @@ fn decode(bytes: &[u8]) -> io::Result<[Option<Policy>; 2]> {
             preshutdown_ms: u32::from_le_bytes(record[4..].try_into().map_err(io::Error::other)?),
         });
     }
-    Ok(values)
+    let count = u32::from_le_bytes(
+        bytes[DEPENDENCIES_OFFSET..DEPENDENCIES_OFFSET + 4]
+            .try_into()
+            .map_err(io::Error::other)?,
+    );
+    let count = usize::try_from(count).map_err(io::Error::other)?;
+    if count > MAX_DEPENDENCY_UNITS || count * 2 != bytes.len() - DEPENDENCIES_OFFSET - 4 {
+        return Err(io::Error::other("invalid rollback dependency length"));
+    }
+    let (words, _) = bytes[DEPENDENCIES_OFFSET + 4..].as_chunks::<2>();
+    let bfd_dependencies: Vec<u16> = words.iter().map(|word| u16::from_le_bytes(*word)).collect();
+    validate_dependencies(&bfd_dependencies)?;
+    if values[0].is_none() && bfd_dependencies != [0, 0] {
+        return Err(io::Error::other(
+            "absent BFD service has rollback dependencies",
+        ));
+    }
+    Ok(Snapshot {
+        policies: values,
+        bfd_dependencies,
+    })
 }
 
 pub(super) fn prepare() -> io::Result<()> {
     let manager = manager()?;
     let mut bytes = Vec::with_capacity(SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len());
     bytes.extend_from_slice(SNAPSHOT_MAGIC);
+    let mut bfd_dependencies = vec![0, 0];
     for name in NAMES {
         let service = match manager.open_service(name, ServiceAccess::QUERY_CONFIG) {
             Ok(service) => service,
@@ -283,7 +374,11 @@ pub(super) fn prepare() -> io::Result<()> {
             Err(error) => return Err(io::Error::other(error)),
         };
         bytes.extend_from_slice(&query(&service)?.encode());
+        if name == NAMES[0] {
+            bfd_dependencies = dependencies(&service)?;
+        }
     }
+    append_dependencies(&mut bytes, &bfd_dependencies)?;
     let path = snapshot_path()?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -321,30 +416,38 @@ fn broker_policy(preshutdown_ms: u32) -> Policy {
 
 pub(super) fn configure() -> io::Result<()> {
     // A valid snapshot is required before changing either installed service.
-    decode(&fs::read(snapshot_path()?)?)?;
+    read_snapshot()?;
     let manager = manager()?;
     // RequiredPrivileges remains untouched until commit. That preserves absent,
     // explicit-empty, and explicit-list policies on every ordinary rollback.
     // Both start after the boot-critical automatic services, when interface
     // addresses are more likely to exist. BFD recovery also covers nonzero exits.
-    set(&open(&manager, NAMES[0])?, bfd_policy())?;
+    // Explicit empty MULTI_SZ also clears the old broker dependency on repair.
+    set(&open(&manager, NAMES[0])?, bfd_policy(), Some(&[0, 0]))?;
     let broker = open(&manager, NAMES[1])?;
-    set(&broker, broker_policy(preshutdown_timeout(&broker)?))
+    set(&broker, broker_policy(preshutdown_timeout(&broker)?), None)
 }
 
 pub(super) fn rollback() -> io::Result<()> {
     let path = snapshot_path()?;
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
+    let snapshot = match read_snapshot() {
+        Ok(snapshot) => snapshot,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
     let manager = manager()?;
     // Restore every previously existing service, even if restoring the first fails.
     let mut failure = None;
-    for (name, old) in NAMES.iter().zip(decode(&bytes)?) {
+    for (name, old) in NAMES.iter().zip(snapshot.policies) {
         if let Some(policy) = old {
-            if let Err(error) = open(&manager, name).and_then(|service| set(&service, policy)) {
+            let dependencies = if *name == NAMES[0] {
+                Some(snapshot.bfd_dependencies.as_slice())
+            } else {
+                None
+            };
+            if let Err(error) =
+                open(&manager, name).and_then(|service| set(&service, policy, dependencies))
+            {
                 failure = Some(error);
             }
         }
@@ -357,7 +460,7 @@ pub(super) fn rollback() -> io::Result<()> {
 
 pub(super) fn commit() -> io::Result<()> {
     let path = snapshot_path()?;
-    decode(&fs::read(&path)?)?;
+    read_snapshot()?;
     let manager = manager()?;
     let service = open(&manager, NAMES[0])?;
     // MSI stops both services and never starts them. Commit is the final policy
@@ -402,9 +505,10 @@ mod tests {
         let mut bytes = SNAPSHOT_MAGIC.to_vec();
         bytes.extend_from_slice(&bfd.encode());
         bytes.extend_from_slice(&broker.encode());
+        append_dependencies(&mut bytes, &[0, 0]).unwrap();
         assert_eq!(bytes[SNAPSHOT_MAGIC.len() + 1], 3);
         assert_eq!(bytes[SNAPSHOT_MAGIC.len() + RECORD_LEN + 1], 3);
-        assert_eq!(decode(&bytes).unwrap(), [Some(bfd), Some(broker)]);
+        assert_eq!(decode(&bytes).unwrap().policies, [Some(bfd), Some(broker)]);
     }
 
     #[test]
@@ -426,12 +530,17 @@ mod tests {
         let mut encoded = SNAPSHOT_MAGIC.to_vec();
         encoded.extend_from_slice(&system.encode());
         encoded.extend_from_slice(&local.encode());
-        assert_eq!(decode(&encoded).unwrap(), [Some(system), Some(local)]);
+        append_dependencies(&mut encoded, &[0, 0]).unwrap();
+        assert_eq!(
+            decode(&encoded).unwrap().policies,
+            [Some(system), Some(local)]
+        );
         let mut absent = SNAPSHOT_MAGIC.to_vec();
         for _ in NAMES {
             absent.extend_from_slice(&[255, 0, 0, 0, 0, 0, 0, 0]);
         }
-        assert_eq!(decode(&absent).unwrap(), [None, None]);
+        append_dependencies(&mut absent, &[0, 0]).unwrap();
+        assert_eq!(decode(&absent).unwrap().policies, [None, None]);
         for (index, value) in [(0, 3), (1, 2), (2, 2), (3, 2)] {
             let mut invalid = encoded.clone();
             invalid[SNAPSHOT_MAGIC.len() + index] = value;
@@ -456,5 +565,56 @@ mod tests {
             assert!(decode(bytes).is_err(), "{bytes:?}");
         }
         assert!(Account::parse("DOMAIN\\custom-service-user").is_err());
+    }
+
+    #[test]
+    fn rollback_preserves_dependency_names_groups_order_and_utf16() {
+        let dependencies: Vec<u16> = "RpcSs\0+Group\u{1f40e}\0BfdBgpBroker\0"
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        let mut bytes = SNAPSHOT_MAGIC.to_vec();
+        bytes.extend_from_slice(&bfd_policy().encode());
+        bytes.extend_from_slice(&broker_policy(10_000).encode());
+        append_dependencies(&mut bytes, &dependencies).unwrap();
+        assert_eq!(decode(&bytes).unwrap().bfd_dependencies, dependencies);
+    }
+
+    #[test]
+    fn rollback_rejects_malformed_or_oversized_dependency_storage() {
+        for invalid in [
+            vec![],
+            vec![0],
+            vec![1, 0],
+            vec![0, 0, 0],
+            vec![1, 0, 0, 2, 0, 0],
+        ] {
+            assert!(validate_dependencies(&invalid).is_err(), "{invalid:?}");
+        }
+        let mut boundary = vec![1; MAX_DEPENDENCY_UNITS];
+        boundary[MAX_DEPENDENCY_UNITS - 2..].fill(0);
+        validate_dependencies(&boundary).unwrap();
+        boundary.push(0);
+        assert!(validate_dependencies(&boundary).is_err());
+
+        let mut bytes = SNAPSHOT_MAGIC.to_vec();
+        bytes.extend_from_slice(&bfd_policy().encode());
+        bytes.extend_from_slice(&broker_policy(10_000).encode());
+        append_dependencies(&mut bytes, &[0, 0]).unwrap();
+        for count in [0_u32, 1, 3, u32::MAX] {
+            let mut invalid = bytes.clone();
+            invalid[DEPENDENCIES_OFFSET..DEPENDENCIES_OFFSET + 4]
+                .copy_from_slice(&count.to_le_bytes());
+            assert!(decode(&invalid).is_err());
+        }
+        let mut odd = bytes.clone();
+        odd.push(0);
+        assert!(decode(&odd).is_err());
+        let mut unterminated = bytes.clone();
+        *unterminated.last_mut().unwrap() = 1;
+        assert!(decode(&unterminated).is_err());
+        let mut oversized = bytes;
+        oversized.resize(MAX_SNAPSHOT_BYTES + 1, 0);
+        assert!(decode(&oversized).is_err());
     }
 }

@@ -15,6 +15,8 @@ The session-status contract uses a fixed 336-byte x64 native record. The BGP res
 
 ## Supervision and health meaning
 
+The services start independently. BFD has no SCM service dependencies; only the broker depends on RpcSs for native MI. Neither service verifies its counterpart at startup. Both verify their own installed identity before registering endpoints, and functional calls authenticate their peer independently. A missing BFD leaves telemetry unavailable with retries; a missing broker leaves pending BGP actions retrying while the packet engine continues.
+
 Telemetry binds and calls each have a two-second native deadline, with an eight-second supervisor budget. Healthy polling is one second. Clean failures discard stale status and use bounded exponential backoff (1, 2, 4, 8, 16, then 30 seconds) and rate-limited diagnostics. Uncertain native ownership retains one parked worker and quarantines telemetry; no replacement-worker loop is allowed.
 
 BGP control uses a finite total operation budget with a bounded native cancellation drain. Its worker is joined on shutdown; unresolved ownership aborts the BFD process to preserve native stack lifetime. Do not propagate this abort policy to the broker's telemetry supervisor. Inspect the implementation's exact current constants before changing timing or making operational claims.

@@ -20,7 +20,8 @@ Get the mission prerequisites lined up, turtle crew. Preflight check, buddy: the
 peer must already exist on a Windows Server with Remote Access/BGP configured.
 Install the setup bundle: BGP control requires the installed service identities and is
 unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
-native MI query is started. The broker still starts as a service dependency.
+native MI query is started. BFD and the broker start independently; enable both
+services when you need BGP control or broker telemetry.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
@@ -80,11 +81,13 @@ coordinated restart:
 ```powershell
 Stop-Service BfdWinService
 Stop-Service BfdBgpBroker
+Start-Service BfdBgpBroker
 Start-Service BfdWinService
 ```
 
-Starting BFD starts its broker dependency. Do not stop the broker while BFD is
-running except during coordinated maintenance.
+Either service can start first or run while the other is stopped. Starting one
+doesn't start the other. Keep the broker running when BFD needs to control BGP;
+pending failed actions retry when it becomes available.
 
 BFD startup and the initial handshake send no BGP control requests. The first
 BFD Up triggers a status query; check its result and subsequent broker events

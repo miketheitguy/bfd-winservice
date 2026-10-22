@@ -22,7 +22,7 @@ evidence:
 | --- | --- |
 | Private local RPC | [BGP probe removal](#bgp-control-probe-removal--2026-10-22), [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
 | Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
-| Service reliability and security | [Reliability follow-up](#reliability-follow-up--2026-10-09) and [reliability/security review](#reliability-and-security-review--2026-10-09) |
+| Service reliability and security | [Independent startup](#independent-service-startup--2026-10-22), [Reliability follow-up](#reliability-follow-up--2026-10-09), and [reliability/security review](#reliability-and-security-review--2026-10-09) |
 | Deployment and observability | [MSI packaging](#msi-packaging-review--2026-10-08) and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
 | Earlier Rust remediation | [rust-security remediation](#rust-security-remediation--2026-10-08), [rust-check remediation](#rust-check-remediation--2026-10-07), and [review before remediation](#review-before-remediation--2026-10-07) |
 | Original review and rule assessment | [Historical review](#historical-review--2026-10-05) and [archived rule matrix](docs/archive/RUST_SKILLS_VALIDATION_2026-10-01.md) |
@@ -36,11 +36,49 @@ these later changes supersede descriptions in older entries:
 | --- | --- |
 | BGP control uses a named pipe, PID/SCM matching, or caller impersonation. | Both service channels use authenticated `ncalrpc`; BGP retains a separate interface and serialized provider worker. See [BGP RPC security](docs/rpc-authentication.md#bgp-control-over-local-rpc). |
 | BGP control uses a connection probe, broker-instance nonce, or restart-triggered replay. | `BgpControl` 2.0 exposes only Get/Start/Stop. BFD sends no startup or idle control calls and retries only outstanding failed actions. See [BGP worker behavior](docs/reference/bgp-provider.md#worker-retries-and-broker-recovery). |
+| BFD depends on a Running broker before it can start. | Both services start independently. BFD has no SCM dependencies; the broker depends only on Windows `RpcSs`. See [installed service settings](docs/reference/installation.md#installed-resources-and-security-settings). |
 | An isolated broker child performs RPC connection checks, or invalid status stays quarantined until restart. | One worker inside the broker queries typed status. Rejected replies clear the cache and retry; only a stuck native worker quarantines telemetry. See [RPC session-status query](docs/rpc-session-status-design.md). |
 | Stop always stops BGP, or AdminDown never changes BGP. | Local or peer AdminDown releases a Stop issued by BFD by queuing Start; it leaves other peers untouched. See [BGP behavior](docs/bgp.md). |
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
+
+## Independent service startup — 2026-10-22
+
+Cowabunga, lifecycle crew. Review baseline: `4ef4bf7`. The remaining startup
+coupling was BFD's installed SCM dependency on the broker. Removed that
+dependency; either service can start first or remain Running while its
+counterpart is stopped. Each service still secures its own token and RPC
+interface before reporting readiness. Functional calls authenticate their peer;
+peer availability isn't a startup prerequisite.
+
+Install and repair explicitly clear BFD's old dependency list through
+`ChangeServiceConfigW`. An empty MULTI_SZ clears the list; a null pointer would
+leave it unchanged ([native contract](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-changeserviceconfigw)).
+The protected rollback snapshot captures the previous list, preserving names,
+groups, order, and UTF-16 units. Reads, declared lengths, and allocation are
+bounded. Empty, truncated, oversized, and malformed dependency records have
+regression coverage. The broker retains its `RpcSs` dependency and the existing
+commit-only privilege policy.
+
+Validation: the full optimized suite and ASan library suite passed, including
+214 library tests with 11 ignored installed/provider checks and child entry
+points. Strict all-target Clippy, formatting, API documentation, native runtime,
+both production-image hardening checks, 31 installer source mutations, 19
+rollback privilege fixtures, MSI tables, and offline bundle checks passed.
+Hosted install, repair, upgrade, and rollback fixtures now check the dependency
+policy and both startup orders.
+
+The Windows Hyper-V lab passed actual startup/stop independence with BGP
+configured, repair of a seeded legacy dependency, and native configure/rollback/
+commit of a two-service dependency list. Both installed executable hashes
+matched the tested build. Same-version lab deployment used forced file repair
+to replace older binaries. Authentication configuration and 300 ms × 3 timers
+were preserved. Authenticated telemetry, BGP Connected, and both advertised /32
+routes recovered; both VMs remain running. Receipts are under
+`target/service-independence`. The lifecycle PNG/editable source, Mermaid,
+setup/BGP guides, installation reference, and concrete skill profile describe
+the independent startup paths.
 
 ## BGP control probe removal — 2026-10-22
 

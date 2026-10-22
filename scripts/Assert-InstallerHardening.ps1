@@ -54,8 +54,13 @@ function Assert-InstallerHardeningSource {
     if ($classes.Count -ne 0) { throw 'The installer must not register COM classes, ProgIDs, or AppIDs.' }
     $service = $Document.SelectSingleNode('//w:ServiceInstall[@Name="BfdWinService"]', $ns)
     $dependencies = @($service.SelectNodes('w:ServiceDependency', $ns) | ForEach-Object { $_.GetAttribute('Id') })
-    if ($dependencies.Count -ne 1 -or $dependencies[0] -cne 'BfdBgpBroker') {
-        throw 'BFD must depend only on the BGP broker.'
+    if ($dependencies.Count -ne 0) {
+        throw 'BFD must start independently, with no SCM service dependencies.'
+    }
+    $broker = $Document.SelectSingleNode('//w:ServiceInstall[@Name="BfdBgpBroker"]', $ns)
+    $brokerDependencies = @($broker.SelectNodes('w:ServiceDependency', $ns) | ForEach-Object { $_.GetAttribute('Id') })
+    if ($brokerDependencies.Count -ne 1 -or $brokerDependencies[0] -cne 'RpcSs') {
+        throw 'The broker must depend only on RpcSs for native MI, never on BFD.'
     }
     if ($Document.SelectNodes('//w:RequiredPrivilege | //w:RegistryValue[@Name="RequiredPrivileges"]', $ns).Count -ne 0) {
         throw 'SCM privilege policy must use the transactional native installer, not registry writes or MsiConfigureServices.'

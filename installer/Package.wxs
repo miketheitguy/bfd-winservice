@@ -48,9 +48,7 @@
                           Description="Monitors a configured peer with Bidirectional Forwarding Detection."
                           Type="ownProcess" Start="auto" Account="NT AUTHORITY\LocalService"
                           ErrorControl="normal" Vital="yes">
-            <!-- The broker depends on RpcSs for its MI provider calls. BFD itself
-                 hosts a private local RPC interface and needs no COM activation. -->
-            <ServiceDependency Id="BfdBgpBroker" />
+            <!-- BFD starts independently; peer RPC availability is checked per call. -->
             <PermissionEx Id="BfdServiceSecurity" Sddl="$(var.ServiceSecurity)" />
             <!-- ConfigureServicePolicy also enables delayed start and recovery after a
                  nonzero exit. Administrator Stop requests always exit with code 0. -->

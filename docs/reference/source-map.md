@@ -9,6 +9,7 @@ described in this guide:
 | [installer/Package.wxs](../../installer/Package.wxs) | Service accounts, dependencies, SCM control/query ACLs, Parameters ACL, and firewall rules |
 | [src/service.rs](../../src/service.rs) and [src/bgp_broker/service.rs](../../src/bgp_broker/service.rs) | SCM lifecycle, startup identity checks, local RPC lifetime, and private broker COM initialization |
 | [src/runtime/privileges.rs](../../src/runtime/privileges.rs) | BFD and broker process privilege allowlists |
+| [src/bgp_broker/install.rs](../../src/bgp_broker/install.rs) | Transactional SCM policy, BFD dependency removal, and bounded dependency rollback snapshot |
 | [src/transport.rs](../../src/transport.rs) | `Datagram::validate`, transport construction, `send`, and `send_reply` |
 | [src/session.rs](../../src/session.rs), [src/packet.rs](../../src/packet.rs), and [src/seamless.rs](../../src/seamless.rs) | `receive_checked`, `receive_seamless`, `AuthConfig::verify_decoded`, and `respond_checked` |
 | [src/local_rpc.rs](../../src/local_rpc.rs) and [src/local_rpc/monitor.rs](../../src/local_rpc/monitor.rs) | Private local RPC listener, in-process client, authentication, authorization, supervised worker, and telemetry cache |

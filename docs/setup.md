@@ -195,6 +195,13 @@ Start-Service BfdWinService
 
 The command returns without output on success.
 
+BFD starts independently. For BGP control or broker telemetry, also start the
+broker; either service can start first:
+
+```powershell
+Start-Service BfdBgpBroker
+```
+
 ### 5. Verify startup
 
 Cowabunga, verification crew. Check the Windows Service Control Manager (SCM) status:

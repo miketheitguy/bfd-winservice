@@ -76,7 +76,7 @@ try {
             # Emulate a stopped, pre-existing LocalSystem service with the fixture's
             # previous SID policy. The executable is never started by these tests.
             $fixtureExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
-            New-Service -Name BfdWinService -BinaryPathName ('"' + $fixtureExe + '"') -StartupType Manual | Out-Null
+            New-Service -Name BfdWinService -BinaryPathName ('"' + $fixtureExe + '"') -StartupType Manual -DependsOn RpcSs | Out-Null
             $oldSidType = if ($label -eq 'restricted') { 3 } else { 0 }
             $fixtureSidType = if ($label -eq 'restricted') { 'restricted' } else { 'none' }
             & sc.exe sidtype BfdWinService $fixtureSidType | Out-Null
@@ -149,6 +149,8 @@ try {
             if ($key.GetValue('ServiceSidType', 0) -ne $oldSidType) { throw 'Rollback did not restore the previous service SID setting.' }
             if ($key.GetValue('DelayedAutostart', 0) -ne 0) { throw 'Rollback did not restore the previous delayed-start setting.' }
             if ($key.GetValue('FailureActionsOnNonCrashFailures', 0) -ne 0) { throw 'Rollback did not restore the previous non-crash recovery setting.' }
+            $restoredDependencies = @((Get-Service BfdWinService).ServicesDependedOn | ForEach-Object Name)
+            if ($restoredDependencies.Count -ne 1 -or $restoredDependencies[0] -ne 'RpcSs') { throw 'Rollback did not restore the previous service dependencies.' }
             # GitHub's Windows 2025 runner uses the 10-second Windows default.
             if ($key.GetValue('PreshutdownTimeout', 10000) -ne 10000) { throw 'Rollback did not restore the previous preshutdown timeout.' }
             & sc.exe delete BfdWinService | Out-Null

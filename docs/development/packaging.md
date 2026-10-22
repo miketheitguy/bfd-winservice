@@ -66,7 +66,7 @@ follow that guide.
 
 Loose files support console execution. Use the setup bundle for SCM execution: it
 provisions the LocalService BFD process, Automatic (Delayed Start) LocalSystem broker, enabled
-service SIDs, service dependency, and scoped registry/file/log ACLs. Native MI
+service SIDs, independent service startup, and scoped registry/file/log ACLs. Native MI
 code is confined to `src/bgp_broker/mi.rs`; the BFD worker uses `src/bgp/ipc.rs`.
 Broker operations accept only fixed Get/Start/Stop frames and load their target
 from protected configuration. Protocol, authorization, reconnect, disconnect
@@ -252,7 +252,10 @@ Authenticated Users restricted token to verify query rights and reject Start/Sto
 pause, configuration changes, deletion, ACL changes, and custom controls. These
 checks run on descriptor fixtures locally and the actual service descriptors in
 the installation test. The migration rollback test also checks restoration of the
-previous service security descriptor. It provisions
+previous service security descriptor and BFD dependency list. Install and repair
+explicitly clear BFD's former broker dependency through SCM. The protected,
+bounded rollback snapshot preserves dependency names, groups, order, and UTF-16
+without changing the commit-only privilege policy. It provisions
 loopback addresses before starting the service. It doesn't run on
 developer machines. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is
@@ -263,6 +266,9 @@ using the actual service tokens, denial of authenticated unrelated clients
 on both private RPC interfaces after install, broker recovery, and repair, both
 executable versions, delayed start and recovery settings, SCM recovery after a
 broker crash, and log writes through the BFD service SID.
+Startup fixtures start BFD with BGP configured while the broker is stopped,
+stop the broker without stopping BFD, and start the broker while BFD is stopped.
+Repair fixtures seed the former broker dependency and require its removal.
 `Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
 copy to exercise fresh-install and existing LocalSystem-account rollback, including
 the delayed-start and non-crash recovery flags. Separate fixtures cover an absent

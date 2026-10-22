@@ -169,8 +169,9 @@ uses the broker's reduced SYSTEM token and configured COM/MI security.
 
 ## Service lifecycle
 
-SCM gives BFD the go-ahead as soon as the broker reports Running. The broker's
-telemetry worker runs concurrently with BFD startup.
+SCM starts each service independently. Only the broker depends on `RpcSs` for
+native MI; neither service waits for its counterpart to report Running. The
+broker's telemetry worker retries while BFD is unavailable.
 
 ### Lifecycle diagram (PNG)
 
@@ -200,10 +201,10 @@ config:
 ---
 flowchart LR
     accTitle: Service lifecycle: startup, status fetching, and administrative shutdown
-    accDescr: SCM starts RpcSs, the broker, and BFD in dependency order. Both services validate and reduce their tokens before accepting work. The status supervisor owns one RPC worker and quarantines stalled telemetry while the provider continues. Shutdown preserves native ownership.
+    accDescr: SCM starts BFD and the broker independently; only the broker depends on RpcSs. Each service validates and reduces its own token before accepting work. The status supervisor retries while BFD is unavailable and quarantines stalled telemetry while the provider continues. Shutdown preserves native ownership.
     %% Mirrors service-communication.drawio, page 2.
 
-    lc_scm["<b>[E] Windows SCM</b><br/>RpcSs → broker → BFD<br/>Applies installed token policy"]:::external
+    lc_scm["<b>[E] Windows SCM</b><br/>RpcSs → broker; BFD starts separately<br/>Applies installed token policy"]:::external
     subgraph lc_broker["Broker service process"]
         direction TB
         lc_broker_init["<b>1. Verify broker; initialize provider</b><br/>SYSTEM + enabled broker service SID<br/>Retain SeChangeNotifyPrivilege<br/>Initialize COM / MI; load fixed target"]:::broker
@@ -217,21 +218,21 @@ flowchart LR
 
     subgraph lc_bfd["BFD service | LocalService + restricted SID"]
         direction TB
-        lc_bfd_start["<b>4. SCM starts BFD</b><br/>Broker dependency is Running<br/>Advance StartPending checkpoints"]:::bfd
-        lc_bfd_guard["<b>5. Verify and reduce the BFD token</b><br/>LocalService + enabled BFD service SID<br/>BFD SID + S-1-5-33 restricting entries<br/>Remove unused privileges"]:::gate
-        lc_engine["<b>6. Create engine and status observer</b><br/>Initial immutable snapshot exists<br/>Verify configured BGP control connection"]:::bfd
-        lc_listener["<b>7. Register the private RPC interface</b><br/>Deny management; protect endpoint<br/>Authorize each call; copy one snapshot<br/>No packet-loop queries or lock"]:::gate
+        lc_bfd_start["<b>1. SCM starts BFD independently</b><br/>Advance StartPending checkpoints"]:::bfd
+        lc_bfd_guard["<b>2. Verify and reduce the BFD token</b><br/>LocalService + enabled BFD service SID<br/>BFD SID + S-1-5-33 restricting entries<br/>Remove unused privileges"]:::gate
+        lc_engine["<b>3. Create engine and status observer</b><br/>Initial immutable snapshot exists<br/>BGP control begins on the first Up"]:::bfd
+        lc_listener["<b>4. Register the private RPC interface</b><br/>Deny management; protect endpoint<br/>Authorize each call; copy one snapshot<br/>No packet-loop queries or lock"]:::gate
         lc_bfd_stop["<b>BFD shutdown</b><br/>Close observer; announce AdminDown<br/>Release BFD-owned BGP Stop; finish action<br/>Unregister and drain the RPC interface"]:::note
-        lc_bfd_running["<b>8. Report Running; run packet engine</b><br/>Lifecycle and BFD state are separate<br/>Publish changes and refresh snapshots"]:::bfd
+        lc_bfd_running["<b>5. Report Running; run packet engine</b><br/>Lifecycle and BFD state are separate<br/>Publish changes and refresh snapshots"]:::bfd
     end
 
-    lc_scm -->|"start dependency"| lc_broker
+    lc_scm -->|"start broker"| lc_broker
     lc_broker_init -->|"initialized"| lc_broker_running
     lc_broker_running -->|"background"| lc_monitor
     lc_monitor -->|"supervise"| lc_cache
     lc_cache <-->|"request / result"| lc_call
     lc_call -->|"stalled"| lc_quarantine
-    lc_broker -->|"dependency ready"| lc_bfd
+    lc_scm -->|"start BFD"| lc_bfd
     lc_bfd_start -->|"validate"| lc_bfd_guard
     lc_bfd_guard -->|"reduced token"| lc_engine
     lc_engine -->|"observer"| lc_listener
@@ -254,10 +255,10 @@ flowchart LR
 
 ### Startup and shutdown behavior
 
-Keep the turtle team in formation through startup and cleanup. SCM starts
-`RpcSs`, then `BfdBgpBroker`, then its dependent `BfdWinService`. The broker
+Keep the turtle team in formation through startup and cleanup. Either service
+can start first; only `BfdBgpBroker` requires `RpcSs`. The broker
 secures its BGP control RPC interface before reporting Running, then starts the
-telemetry monitor and retries while BFD initializes. BFD gives RPC a read-only
+telemetry monitor and retries while BFD is unavailable. BFD gives RPC a read-only
 observer before moving the engine to its packet worker. Neither SCM Running nor
 RPC success implies a session is Up.
 
@@ -299,8 +300,9 @@ firewall filtering are separate gates.
 
 Turtle power follows engine state and the configured control policy. BGP control
 runs only when `BgpPeerName` is configured for classical BFD or an S-BFD
-initiator. Reflectors reject BGP control. Plain BFD still has the installed SCM
-dependency on the broker, but starts no BGP worker and makes no BGP control calls.
+initiator. Reflectors reject BGP control. Plain BFD starts no BGP worker and makes
+no BGP control calls. Both services start independently even with BGP configured;
+functional control calls require the broker to be available.
 
 The packet engine owns state-driven actions. Read the [BGP action rules](bgp.md#verify-state-changes-and-actions)
 for startup, failure, recovery, and administrative disablement. The broker's

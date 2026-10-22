@@ -43,7 +43,9 @@ Get-Service BfdWinService, BfdBgpBroker
 ```
 
 For BFD, `Running` means engine initialization completed; it does not mean the
-BFD session reached `Up`.
+BFD session reached `Up`. Each service starts independently. Start the broker
+as well as BFD when you need telemetry or BGP control; a stopped counterpart
+doesn't prevent the other service from reporting `Running`.
 
 ### Read recent BFD transitions
 

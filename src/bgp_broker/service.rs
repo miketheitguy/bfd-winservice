@@ -156,8 +156,8 @@ fn start() -> io::Result<()> {
                 let _ = sender.send(());
                 result
             });
-            // Register and secure the control interface before SCM releases BFD's
-            // dependency. Registration failure leaves the service out of Running.
+            // Secure this service's own interface before reporting Running.
+            // Neither service waits for the other service to start.
             let mut status_failure = None;
             let _local_rpc = if initialized.recv().is_ok() {
                 let startup = reporter
