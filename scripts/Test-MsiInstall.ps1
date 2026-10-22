@@ -274,6 +274,7 @@ try {
     # Exercise the installed reflector across both sides of the excluded port.
     New-ItemProperty -Path $parameters -Name SessionType -PropertyType String -Value 'sbfd-reflector' -Force
     New-ItemProperty -Path $parameters -Name Discriminator -PropertyType DWord -Value 99 -Force
+    New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 0 -Force
     Start-Service BfdWinService
     $env:BFD_TEST_INSTALLED_REFLECTOR = '1'
     try {
@@ -286,6 +287,7 @@ try {
         Remove-Item Env:BFD_TEST_INSTALLED_REFLECTOR
         Stop-Service BfdWinService
         Remove-ItemProperty -LiteralPath $parameters -Name SessionType,Discriminator
+        New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 1 -Force
     }
 
     $customLog = Join-Path $logDirectory 'custom.log'
