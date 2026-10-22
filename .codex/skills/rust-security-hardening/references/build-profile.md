@@ -37,7 +37,7 @@ Pass each option as a separate `-C link-arg=...` pair:
 | `/CETCOMPAT` | CET shadow-stack compatibility declaration. |
 | `/DEBUG:NONE` in release only | Suppresses linker-generated PDB/debug output; retain dev/ASan PDBs. |
 
-Do not infer runtime CET enforcement from the image bit; Windows, hardware, and process policy also matter. SEHOP is a separate Windows process policy. `/SAFESEH` is for x86 and must not be added to this x64 profile.
+Do not infer runtime CET enforcement from the image bit; Windows, hardware, and process policy also matter. `/SAFESEH` is for x86 and must not be added to this x64 profile.
 
 ## Lints and test profiles
 

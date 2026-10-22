@@ -23,7 +23,7 @@ Require the final x64 MSVC link to retain:
 
 These select x64, ASLR, high-entropy address space, DEP compatibility, CFG/EH metadata, CET compatibility, and large-address support. Pair CFG/EH link options with compiler instrumentation. Keep relocations for ASLR. Verify final PE flags/tables, cookie metadata, and profile-specific debug output. An enabled empty EH continuation table can be legitimate. Image metadata does not prove per-function instrumentation or active hardware enforcement.
 
-For a symbol-free production profile, add `/DEBUG:NONE`; keep debug information for development and diagnostics. Native `/Zi`, `/ZH:SHA_256`, or AddressSanitizer would be separate intentional additions and must not be claimed from another language's settings. `/SAFESEH` is x86-only; SEHOP requires a separate Windows process policy. CET enforcement depends on Windows and hardware.
+For a symbol-free production profile, add `/DEBUG:NONE`; keep debug information for development and diagnostics. Native `/Zi`, `/ZH:SHA_256`, or AddressSanitizer would be separate intentional additions and must not be claimed from another language's settings. `/SAFESEH` is x86-only. CET enforcement depends on Windows and hardware.
 
 Use a compatible pinned/controlled MSVC and Windows SDK toolchain. Do not remove unsupported flags silently or overwrite a dependency's exception model without reviewing its requirements and ABI. Link the selected CRT and required system libraries through the normal toolchain driver.
 

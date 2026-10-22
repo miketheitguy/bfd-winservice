@@ -19,7 +19,7 @@ Choose the path for your deployment:
 - For Windows services, [install the MSI](#install-with-an-msi), then
   [configure and verify the service](#configure-and-verify-the-windows-service).
 - For foreground execution, [prepare loose files](#prepare-installation-files)
-  if needed, [enable SEHOP](#enable-sehop-for-the-executable), then
+  if needed, then
   [run in a console](#run-in-a-console).
 - For removal, use the [MSI uninstall procedure](#remove-an-msi-installation) or
   the [legacy manual removal procedure](#remove-a-legacy-manual-installation).
@@ -107,13 +107,11 @@ means installation succeeded and Windows requests a restart.
 Turtle power starts with preflight, buddy. Like, for sure, complete these steps
 before the first start:
 
-1. [Enable SEHOP for the executable](#enable-sehop-for-the-executable).
-   The MSI doesn't change Windows Exploit Protection policy.
-2. [Configure the session](#2-configure-the-session), including the required
+1. [Configure the session](#2-configure-the-session), including the required
    addresses and interface index. The MSI already provisions logging defaults.
-3. [Start the service](#4-start-the-service) and
+2. [Start the service](#4-start-the-service) and
    [verify startup](#5-verify-startup).
-4. Configure the remote peer and [verify peer communication](#6-verify-peer-communication).
+3. Configure the remote peer and [verify peer communication](#6-verify-peer-communication).
 
 The MSI registers the manifest automatically. Use the session and logging
 references to configure authentication, multihop, S-BFD, or file output.
@@ -243,43 +241,9 @@ PowerShell displays the destination folder and the two copied filenames.
 These files support console execution. Use the MSI for service execution;
 copying files doesn't create services, service identities, or access policies.
 
-## Enable SEHOP for the executable
-
-Turtle power includes checking the Windows process protections. In **PowerShell
-as Administrator**, enable Structured Exception Handling Overwrite Protection
-(SEHOP) for the executable. For an MSI deployment, also apply it to the broker:
-
-```powershell
-Set-ProcessMitigation -Name bfd-winservice.exe -Enable SEHOP
-Get-ProcessMitigation -Name bfd-winservice.exe |
-    Select-Object -ExpandProperty SEHOP
-```
-
-Confirm that `Enable` is `ON`. For the installed broker, run:
-
-```powershell
-Set-ProcessMitigation -Name bfd-bgp-broker.exe -Enable SEHOP
-Get-ProcessMitigation -Name bfd-bgp-broker.exe |
-    Select-Object -ExpandProperty SEHOP
-```
-
-Confirm the broker's `Enable` is also `ON`. These Windows Exploit Protection
-policies apply to subsequent processes with the specified executable names on
-this machine. If a process is already running, restart it to apply the policy.
-
-SEHOP is a [Windows process mitigation](https://learn.microsoft.com/en-us/powershell/module/processmitigations/set-processmitigation?view=windowsserver2025-ps),
-not an executable build flag. The service is x64: its exception handlers use
-Windows unwind tables instead of the stack-based chain that SEHOP validates.
-The supplied binary also contains EH continuation metadata and is marked
-compatible with CET shadow stacks. Enforcement of those protections requires
-Windows and hardware support; see [Build security](../CONTRIBUTING.md#build-security).
-
 <a id="install-the-windows-service"></a>
 
 ## Configure and verify the Windows service
-
-Before creating or starting the service, complete
-[Enable SEHOP for the executable](#enable-sehop-for-the-executable).
 
 ### 1. Install the services
 

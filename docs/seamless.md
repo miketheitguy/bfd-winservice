@@ -24,8 +24,6 @@ these prerequisites dialed in, buddy:
 - Install the [MSI package](setup.md#install-with-an-msi) for service execution,
   or prepare supplied loose files for console execution using
   [Prepare installation files](setup.md#prepare-installation-files).
-- Follow [Enable SEHOP for the executable](setup.md#enable-sehop-for-the-executable)
-  for both service and console execution.
 - Open **PowerShell as Administrator**. These examples use
   `C:\Program Files\BfdWinService`; adjust the path for your installation.
 - Assign a nonzero discriminator to the reflector's local entity. Coordinate

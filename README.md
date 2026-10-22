@@ -60,9 +60,7 @@ Use the MSI for service execution and BGP management.
 
 Give these settings the Donatello treatment: check the details. Follow
 [Configure the session](docs/setup.md#2-configure-the-session) to provision the
-required registry values. Before the first start,
-[enable SEHOP](docs/setup.md#enable-sehop-for-the-executable) for the
-executable.
+required registry values.
 
 The default transport is single-hop. File output defaults to disabled; on a
 default Windows layout, its path is `C:\ProgramData\BfdWinService\trace.log`.

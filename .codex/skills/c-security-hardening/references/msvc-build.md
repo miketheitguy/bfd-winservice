@@ -49,7 +49,7 @@ Require these on the final executable/DLL link, even when a different build syst
 /MACHINE:X64 /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /GUARD:CF /GUARD:EHCONT /CETCOMPAT /LARGEADDRESSAWARE
 ```
 
-ASLR needs relocations; high-entropy ASLR also needs large-address support. Compiler CFG checks and linker CFG metadata are both necessary. An enabled empty EH continuation table can be valid if there are no continuation targets. CET compatibility is a declaration; actual enforcement depends on Windows, hardware, and process mitigation policy. `/SAFESEH` is x86-only. SEHOP is a separate Windows process policy.
+ASLR needs relocations; high-entropy ASLR also needs large-address support. Compiler CFG checks and linker CFG metadata are both necessary. An enabled empty EH continuation table can be valid if there are no continuation targets. CET compatibility is a declaration; actual enforcement depends on Windows, hardware, and process mitigation policy. `/SAFESEH` is x86-only.
 
 For the symbol-free production profile, `/DEBUG:NONE` suppresses linker PDB output; keep development/test diagnostics. Symbol stripping is not executable signing, authentication, or a memory-safety mitigation. Verify final PE architecture, relocations, DLL characteristics, CFG tables, cookie metadata, EH continuation data, CET bit, and debug policy with `dumpbin /headers /loadconfig` or an equivalent parser. Do not assert per-function coverage from metadata alone.
 

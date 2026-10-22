@@ -64,12 +64,6 @@ options through `-C link-arg=...` to the MSVC linker:
 | [`/GUARD:EHCONT`](https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-eh-continuation-metadata?view=msvc-170) | Links EH continuation metadata for Windows instruction-pointer validation during context restoration. An enabled empty table is valid when the image has no continuation targets. |
 | [`/CETCOMPAT`](https://learn.microsoft.com/en-us/cpp/build/reference/cetcompat?view=msvc-170) | Marks compatibility with Control-flow Enforcement Technology (CET) shadow stacks, which protect return addresses against return-oriented attacks. Actual enforcement requires suitable hardware, Windows support, and process mitigation policy. |
 
-Structured Exception Handling Overwrite Protection (SEHOP) is a separate Windows
-process policy. It is not enabled by these linker flags. On x64, exception
-handlers use table-based metadata; `/SAFESEH` is an x86-only option. See [Enable
-SEHOP for the executable](../setup.md#enable-sehop-for-the-executable) for the
-deployment setting.
-
 ## Diagnostics, lint policy, and security limits
 
 Bodacious diagnostic settings still have a defined scope. AddressSanitizer

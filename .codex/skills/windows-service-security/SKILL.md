@@ -45,4 +45,4 @@ Code/docs changes and local fixtures do not authorize live SCM, registry, firewa
 
 Verify process account, enabled and restricting SIDs, retained privileges, object ACLs, endpoint authorization, provider coexistence, readiness, cancellation, rollback, and bounded shutdown. Separate configured policy from observed tokens and runtime behavior. Host administrators remain trusted in this design; do not claim to contain a compromised administrator.
 
-Compiler/linker flags belong to the corresponding language hardening skill. SEHOP is a distinct deployment process policy, and CET enforcement depends on OS/hardware/policy; neither can be established by configuration prose alone.
+Compiler/linker flags belong to the corresponding language hardening skill. CET enforcement depends on OS/hardware/policy and cannot be established by configuration prose alone.

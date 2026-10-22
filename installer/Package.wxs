@@ -57,7 +57,7 @@
             <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
                                 ThirdFailureActionType="restart" RestartServiceDelayInSeconds="10" ResetPeriodInDays="1" />
           </ServiceInstall>
-          <!-- Configuration and SEHOP policy are provisioned before the first start. -->
+          <!-- Configuration is provisioned before the first start. -->
           <ServiceControl Id="ControlBfdService" Name="BfdWinService"
                           Stop="both" Remove="uninstall" Wait="yes" />
           <firewall:FirewallException Id="ControlInbound" Name="BfdWinService - control inbound"

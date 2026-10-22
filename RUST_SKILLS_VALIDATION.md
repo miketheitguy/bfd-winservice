@@ -328,13 +328,6 @@ compatibility marker. Release `dumpbin` inspection found guard flags
 release LLVM IR contains `ehcontguard=1`; Rust assembly contains a
 `.gehcont$y` section.
 
-SEHOP is a Windows process policy, not a linker option. The administrator
-[setup procedure](docs/setup.md#enable-sehop-for-the-executable) explicitly
-enables it for `bfd-winservice.exe` and queries the saved policy. The x64
-executable uses table-based exception handling instead of the stack-based
-handler chain that SEHOP validates. No installed service or machine mitigation
-policy was changed during development.
-
 All 106 default tests passed in debug and release, with one opt-in CIM schema
 test ignored. Formatting, strict Clippy, Rust documentation checks, and release
 help passed. Runtime CET enforcement depends on Windows, hardware, and policy;

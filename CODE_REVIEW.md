@@ -345,7 +345,7 @@ Added the [Build Windows MSI workflow](.github/workflows/build-msi.yml),
 the documented Automatic LocalSystem service without starting it, registers
 the event manifest with installed resource paths, creates the ProgramData
 folder, and provisions the single-hop/file-logging defaults. Operators provision
-addresses and the documented SEHOP policy before starting the service.
+addresses before starting the service.
 
 Four executable-specific UDP rules cover classical control traffic, S-BFD
 requests, replies to initiators' high source ports, and reflector responses.

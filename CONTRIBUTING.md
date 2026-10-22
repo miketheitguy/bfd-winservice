@@ -139,16 +139,6 @@ output and run the executable hardening regression after changing profiles,
 target flags, or nightly Rust; PE header checks alone do not prove stack protector
 instrumentation.
 
-Structured Exception Handling Overwrite Protection (SEHOP) is a
-[Windows process policy](https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/override-mitigation-options-for-app-related-security-policies),
-so it isn't a compiler or PE-header flag. On x64, Windows records exception
-handlers in `.pdata` and `.xdata`, rather than the stack-based handler chain
-that SEHOP validates.
-[`/SAFESEH`](https://learn.microsoft.com/en-us/cpp/build/reference/safeseh-image-has-safe-exception-handlers?view=msvc-170)
-applies to x86 builds only. The installation
-procedure [enables SEHOP for the executable](docs/setup.md#enable-sehop-for-the-executable)
-through Windows Exploit Protection.
-
 To inspect the release executable, run this command in Developer PowerShell:
 
 ```powershell
@@ -665,8 +655,8 @@ restore them during MSI rollback, and remove the snapshot on commit.
 WiX documents limitations in the native MSI service-configuration action; these
 settings therefore use explicit SCM calls instead of `MsiServiceConfig` authoring.
 See [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/wxs/serviceconfig/).
-The installed service is Automatic (Delayed Start) and remains stopped for address configuration
-and the documented SEHOP policy. See [MSI installation](docs/setup.md#install-with-an-msi).
+The installed service is Automatic (Delayed Start) and remains stopped for address configuration.
+See [MSI installation](docs/setup.md#install-with-an-msi).
 
 ### Build with GitHub Actions
 
@@ -729,7 +719,7 @@ pause, configuration changes, deletion, ACL changes, and custom controls. These
 checks run on descriptor fixtures locally and the actual service descriptors in
 the installation test. The migration rollback test also checks restoration of the
 previous service security descriptor. It provisions
-loopback addresses and SEHOP before starting the service. It doesn't run on
+loopback addresses before starting the service. It doesn't run on
 developer machines. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is
 read-only and can run locally.

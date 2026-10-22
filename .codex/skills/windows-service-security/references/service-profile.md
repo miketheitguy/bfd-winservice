@@ -65,7 +65,7 @@ Provision required privileges while services remain stopped and before normal fi
 
 Use local token fixtures for authorization logic and disposable hosted MSI tests for real service-account handshakes after start and repair. Do not install services or manipulate live BGP/RRAS state to validate a documentation/skill change. Use a read-only provider coexistence test to validate that local RPC did not disrupt COM/MI hosting. Distinguish test tokens from SCM-issued service tokens in the report.
 
-Use final executable checks for compiler/linker mitigations. Configure SEHOP separately where the supported deployment policy requires it, and verify its Windows setting rather than claiming `/SAFESEH` protects x64. A CET-compatible image still requires supported Windows/hardware and enforcement policy.
+Use final executable checks for compiler/linker mitigations. A CET-compatible image still requires supported Windows/hardware and enforcement policy.
 
 ## Primary references
 
@@ -73,4 +73,3 @@ Use final executable checks for compiler/linker mitigations. Configure SEHOP sep
 - [Service configuration APIs](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-changeserviceconfig2w)
 - [COM process security](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-coinitializesecurity)
 - [COM global options](https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-iglobaloptions)
-- [SEHOP exploit protection](https://learn.microsoft.com/en-us/defender-endpoint/exploit-protection-reference#validate-exception-chains-sehop)
