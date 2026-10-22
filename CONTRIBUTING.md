@@ -667,12 +667,16 @@ together when refreshing the prerequisite. `scripts/Test-VcRedist.ps1` verifies
 the pin, and `scripts/Test-Bundle.ps1` verifies that the final bundle contains
 the exact verified Microsoft installer and validated internal MSI.
 The native build records the `vcvars64.bat` environment's `VCToolsVersion` in
-each executable's Windows Comments field. `Test-NativeRuntime.ps1` rejects
-missing receipts or a toolset newer than the bundled runtime, including with
+each executable's Windows Comments field, together with the CRT version from
+that toolset's `include/crtversion.h`. Servicing can change CRT revisions without
+changing the toolset directory name. `Test-NativeRuntime.ps1` rejects missing
+receipts or either version newer than the bundled runtime, including with
 `-SkipBuild`. Refresh the runtime pin or select a compatible Visual Studio
 installation when that guard fails. `Test-NativeRuntimePolicy.ps1` checks version
 comparison boundaries. The build fingerprints the default-toolset selection file
-so a Visual Studio update triggers a fresh receipt and native compilation.
+and the CRT header so a Visual Studio update triggers a fresh receipt and native
+compilation. The embedded runtime must cover both versions under Microsoft's
+[redistributable compatibility policy](https://learn.microsoft.com/en-us/cpp/porting/binary-compat-2015-2017).
 
 The [package definition](installer/Package.wxs) uses the `v4` XML schema
 namespace, which WiX 7 retains, and uses

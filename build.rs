@@ -29,7 +29,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
     let root =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest directory")?);
-    let native_toolset = rpc_build::build(&out, &root)?;
+    let native = rpc_build::build(&out, &root)?;
+    let native_toolset = format!("{}; CRT: {}", native.toolset, native.runtime);
     let manifest = root.join("events/BFD-Service.man");
     run(Command::new(sdk_tool("mc.exe", "BFD_MC_PATH")?)
         .args(["-h", ".", "-r", "."])

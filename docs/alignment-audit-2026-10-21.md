@@ -4,7 +4,7 @@
 baseline. See [remediation and release validation](#remediation-and-release-validation)
 for the corrected v2.0.1 checkout and its validation limits.
 
-**Diagnostic:** 8/10 — failed rows: 2 (the validation guide mixes current guidance
+**Baseline diagnostic:** 8/10 — failed rows: 2 (the validation guide mixes current guidance
 and dated records), 3 (the deployment, telemetry, and socket-recovery contracts
 have the mismatches below).
 
@@ -15,7 +15,7 @@ operators. **Language:** en.
 conventions honored, including the existing conversational tone. This audit
 prioritizes behavior and evidence over wording preferences.
 
-**Blocking:** the documented reflector deployment does not admit every supported
+**Baseline blocking findings:** the documented reflector deployment does not admit every supported
 request source port; loose-file deployment omits a required native runtime;
 telemetry loses configured IPv6 scope; socket recovery and transport descriptions
 disagree across current references.
@@ -236,7 +236,7 @@ preserves dated records and the current guide retains their incoming anchors.
 | F4 | Protocol and warning references distinguish receive/wait backoff and Event 4 from send-error telemetry and rate-limited text output on the normal protocol schedule. |
 | F5 | Current contributor instructions and the service description identify authenticated ncalrpc and asynchronous RPC cancellation fixtures. Historical descriptions remain dated. |
 | G1 | A disposable-host gate upgrades from the real published v2.0.0 bundle. It forces deferred failure and requires restoration of both old executable hashes, MSI registration, typed configuration, service policy, and logs; then checks normal upgrade, updated firewall rules, repair, mutual RPC authentication, and removal. |
-| G2 | Both production images record the selected native MSVC toolset in their version resources. Packaging compares each receipt with the pinned runtime and rejects missing or newer versions, including SkipBuild. Boundary fixtures cover compatible and incompatible versions. |
+| G2 | Both production images record the selected native MSVC toolset and serviced CRT header version in their version resources. Packaging compares both versions with the pinned runtime and rejects missing or newer versions, including SkipBuild. Boundary fixtures cover compatible and incompatible versions. |
 | G3 | A fourth safe-Rust fuzz target models S-BFD outstanding probes and exercises authenticated exchanges, loss, delayed replies, replay, timing updates, Poll/Final, maintenance, and rejection without consuming a valid probe. Native failed-send commitment and sequence wrap remain covered by focused crate regressions. |
 
 Local validation of the corrected checkout:
@@ -250,9 +250,16 @@ Local validation of the corrected checkout:
 | Fuzz regression suite | Nine passed |
 | Four ASan fuzz targets | 10,000 runs each without a reported failure; final coverage: packet 314, session 835, initiator 1064, reflector 543 |
 | Release version, native runtime, ACL, installer, and rollback fixtures | Passed, including 29 unsafe installer mutations and 19 rollback privilege fixtures |
-| Production PE hardening and native runtime receipts | Both service and broker passed; MSVC 14.51.36231 is covered by runtime 14.51.36247.0 |
+| Production PE hardening and native runtime receipts | Both service and broker passed; MSVC toolset 14.51.36231 and CRT headers 14.51.36244.0 are covered by runtime 14.51.36247.0 |
 | v2.0.1 offline bundle | Built and extracted; internal MSI tables, versions, runtime provenance, embedded bytes, detection policy, and checksum passed |
 | PowerShell and documentation | All 26 scripts and 72 examples parsed; 950 local references across 32 Markdown documents resolved; three embedded diagram graphs match their source |
+
+Hosted installation and upgrade validation passed at `83ba005` in
+[workflow run 39721235148](https://github.com/miketheitguy/bfd-winservice/actions/runs/39721235148),
+including the installed-reflector regression and actual v2.0.0 upgrade/rollback.
+The final CRT servicing receipt was additionally validated locally with strict
+Clippy, native/Rust ASan, production hardening, boundary fixtures, and bundle
+extraction; the exact release tag reruns all hosted gates before publication.
 
 Hosted installation and upgrade validation is enforced before release publication
 by the ASan, fuzz, and build-msi jobs. Local logs are under `target/fix-*`;

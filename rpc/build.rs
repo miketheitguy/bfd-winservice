@@ -3,7 +3,12 @@ use std::{collections::BTreeMap, io, path::Path, process::Command};
 #[cfg(windows)]
 use std::{env, path::PathBuf};
 
-pub(super) fn build(out: &Path, root: &Path) -> io::Result<String> {
+pub(super) struct NativeVersions {
+    pub toolset: String,
+    pub runtime: String,
+}
+
+pub(super) fn build(out: &Path, root: &Path) -> io::Result<NativeVersions> {
     for file in [
         "rpc/build.rs",
         "rpc/bfd_local.idl",
@@ -45,6 +50,34 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<String> {
         })
         .ok_or_else(|| io::Error::other("MSVC setup supplied no valid VCToolsVersion"))?;
     println!("cargo:rustc-env=BFD_NATIVE_TOOLSET={toolset}");
+    // Servicing can update CRT headers without changing the toolset directory.
+    let install = environment
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("VCToolsInstallDir"))
+        .map(|(_, value)| value)
+        .ok_or_else(|| io::Error::other("MSVC setup supplied no VCToolsInstallDir"))?;
+    let header = Path::new(install).join("include/crtversion.h");
+    println!("cargo:rerun-if-changed={}", header.display());
+    let definitions = std::fs::read_to_string(header)?;
+    let runtime = ["MAJOR", "MINOR", "BUILD", "RBUILD"]
+        .map(|part| {
+            let name = format!("_VC_CRT_{part}_VERSION");
+            definitions
+                .lines()
+                .find_map(|line| {
+                    let mut words = line.split_whitespace();
+                    (words.next() == Some("#define") && words.next() == Some(name.as_str()))
+                        .then(|| words.next()?.parse::<u32>().ok())
+                        .flatten()
+                })
+                .ok_or_else(|| io::Error::other(format!("missing numeric CRT version {name}")))
+        })
+        .into_iter()
+        .collect::<io::Result<Vec<_>>>()?
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(".");
     // Cargo fingerprints target compiler options; this cfg is supplied by
     // Cargo rather than an ambient environment variable to watch separately.
     let address_sanitizer = std::env::var("CARGO_CFG_SANITIZE")
@@ -156,7 +189,10 @@ pub(super) fn build(out: &Path, root: &Path) -> io::Result<String> {
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=bfd_local_rpc");
     println!("cargo:rustc-link-lib=Rpcrt4");
-    Ok(toolset.to_owned())
+    Ok(NativeVersions {
+        toolset: toolset.to_owned(),
+        runtime,
+    })
 }
 
 fn run_compiler(command: &mut Command) -> io::Result<()> {
@@ -210,9 +246,16 @@ fn compiler_environment() -> io::Result<BTreeMap<String, String>> {
         .lines()
         .filter_map(|line| line.split_once('='))
         .filter(|(name, _)| {
-            ["PATH", "INCLUDE", "LIB", "LIBPATH", "VCToolsVersion"]
-                .iter()
-                .any(|expected| name.eq_ignore_ascii_case(expected))
+            [
+                "PATH",
+                "INCLUDE",
+                "LIB",
+                "LIBPATH",
+                "VCToolsVersion",
+                "VCToolsInstallDir",
+            ]
+            .iter()
+            .any(|expected| name.eq_ignore_ascii_case(expected))
         })
         .map(|(name, value)| (name.to_owned(), value.to_owned()))
         .collect())
