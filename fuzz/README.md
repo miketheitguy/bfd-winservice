@@ -10,35 +10,20 @@ For the trust boundaries, acceptance and rejection assertions, build differences
 and coverage limits, see the
 [fuzz harness security reference](../docs/security/fuzzing.md).
 
-The targets check these properties:
+Choose a target for your test mission, dude:
 
-| Target | Properties |
+| Target | Boundary |
 | --- | --- |
-| `packet` | Arbitrary decoding and authentication never panic. Accepted input satisfies independent header and authentication constraints and round-trips through every supported authentication mode. |
-| `session` | Rejected input preserves observable state. Explicitly malformed version, discriminator, and length cases are rejected. A session receiving arbitrary packets stays equivalent to a reference session that skips rejected packets. |
-| `initiator` | Stateful S-BFD exchanges model outstanding keyed probes, loss, delayed replies, replay, timing updates, Poll/Final, and maintenance while requiring rejection to preserve state. |
-| `reflector` | Reflection is stateless and deterministic. Accepted requests satisfy the S-BFD constraints; replies authenticate, reverse the discriminators, acknowledge Poll, and preserve the keyed request sequence. |
+| `packet` | Wire decoding and authentication |
+| `session` | Classical session state and rejection invariants |
+| `initiator` | Stateful S-BFD probes, reply correlation, replay, loss, and live timing |
+| `reflector` | Stateless S-BFD request acceptance and authenticated replies |
 
-Authentication stays enabled. Authentication test bytes are derived from public
-input fields, with no embedded credentials: packet and reflector targets use the
-sender discriminator's four network-order bytes; sessions use the selector byte
-widened to four network-order bytes. The mutators and seed generator use the same
-derivation to reach authenticated paths and preserve reproducible replay. These
-public values provide no secrecy and must not be used as deployment keys. The
-wrapper uses `--no-cfg-fuzzing` to retain normal conditional compilation.
-Packet and reflector inputs are limited to 256 bytes.
-A classical session or initiator input is limited to 2,049 bytes and processes at most 32 actions. The
-targets use no sockets, service control, registry configuration, RPC operations,
-or BGP provider calls. Transport metadata and native RPC unmarshaling need
-separate fuzz targets.
-
-Each target combines byte-level mutation with protocol-aware mutation. Packet
-mutations rebuild and sign valid wire packets, reflector mutations retain the
-S-BFD request constraints, and session mutations preserve the authentication
-selector and fixed-size action frames. Deliberately invalid session actions
-must be rejected without changing observable state. One-quarter of mutation
-seeds use libFuzzer's default mutator so campaigns continue to explore malformed
-lengths, authentication fields, and frame boundaries.
+The harness uses synthetic inputs and public authentication test bytes. Those
+bytes provide no secrecy; don't use them as deployment keys. Targets call
+in-memory APIs and don't open sockets, services, RPC endpoints, or BGP peers.
+For exact input bounds, mutation strategy, and assertions, see the
+[security reference](../docs/security/fuzzing.md#target-boundaries-and-checks).
 
 ## Set up Windows fuzzing
 
@@ -74,7 +59,7 @@ campaign:
 
 The wrapper selects the MSVC compiler and matching ASan runtime, checks the
 driver version, fetches locked dependencies, generates a starting corpus, and
-runs all three targets. It forwards the configured Windows hardening flags to
+runs all four targets. It forwards the configured Windows hardening flags to
 cargo-fuzz, which otherwise replaces target-specific Rust flags. `--dev` selects
 the fuzz package's optimized development profile with debug information, avoiding
 the production profile's `/DEBUG:NONE`. The wrapper disables the repository's
@@ -164,49 +149,6 @@ authentication, rejection with different authentication material, generated
 seeds against their oracles, and mutator output structure, determinism, and
 byte-level fallback.
 
-## Session input format
+## Input formats
 
-The first byte selects `none`, `simple-password`, `keyed-sha1`, or
-`meticulous-sha1` using its low two bits. All eight selector bits supply the
-public value used to derive authentication test bytes. Each subsequent
-64-byte frame has an operation byte, a time-advance byte in units of
-10 milliseconds, and a payload.
-The operation's low three bits select one of these actions:
-
-| Value | Action |
-| --- | --- |
-| `0` | Receive the payload as arbitrary wire bytes. |
-| `1` | Generate and sign a structurally valid packet from the payload. |
-| `2` | Expire the session at the advanced time. |
-| `3` | Attempt a timing update; classical sessions reject it. |
-| `4` | Generate a signed packet, then set an invalid version. |
-| `5` | Generate and sign a packet with the wrong receiver discriminator. |
-| `6` | Generate and sign a packet with a zero sender discriminator. |
-| `7` | Generate a signed packet, then remove its last byte. |
-
-Actions `4` through `7` must be rejected without changing observable session
-state. A final partial frame is accepted when it contains both control bytes.
-Generated traffic keeps structural fields valid so mutations can explore state
-transitions while raw reception covers rejection.
-
-
-## Initiator input format
-
-The `initiator` target uses the same selector, 64-byte frames, 10-millisecond
-time advances, and 32-action limit as `session`. Its action values differ:
-
-| Value | Action |
-| --- | --- |
-| `0` | Receive arbitrary response bytes. |
-| `1` | Transmit a probe and immediately receive its valid reflected response. |
-| `2` | Expire the session and clear expired probe tracking. |
-| `3` | Apply nonzero TX/RX timing and detection-multiplier updates from the frame. |
-| `4` | Transmit a probe whose response is lost. |
-| `5` | Deliver a retained response, including delayed or already consumed replies. |
-| `6` | Reject a signed unissued sequence and wrong discriminator, then accept the valid response. |
-| `7` | Toggle reflector maintenance from the payload's low bit and exchange a probe. |
-
-An independent bounded queue requires every accepted keyed response to match
-an unconsumed, unexpired transmitted probe. The public packet API treats
-generation as transmission; failed native sends and sequence wraparound remain
-covered by focused crate regressions rather than this fuzz target.
+For stateful frame layouts and action tables, see [Stateful fuzz input formats](inputs.md).

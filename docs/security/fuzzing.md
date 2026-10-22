@@ -59,7 +59,7 @@ Packet mutations change control fields and re-encode them with a selected
 authentication mode. Reflector mutations additionally preserve valid S-BFD
 request constraints. Session mutations insert, remove, duplicate, replace, or
 modify complete action frames, including explicit rejection actions. See the
-[session input format](../../fuzz/README.md#session-input-format) for the action
+[session input format](../../fuzz/inputs.md#session-input-format) for the action
 encoding.
 
 One-quarter of mutation seed values select libFuzzer's default byte mutator.
@@ -140,7 +140,7 @@ identities or ACLs, native RPC unmarshaling, COM/MI provider behavior, BGP actio
 or router interoperability. Source coverage and a completed campaign describe
 executed paths; they do not establish exhaustive rejection or absence of defects.
 
-Use the [ASan test procedure](../../CONTRIBUTING.md#run-addresssanitizer-checks),
+Use the [ASan test procedure](../development/validation.md#run-addresssanitizer-checks),
 [RFC conformance tests](../rfc-conformance.md), and
 [service isolation reference](service-isolation.md) for the adjacent validation
 boundaries.

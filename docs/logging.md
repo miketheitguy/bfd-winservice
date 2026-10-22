@@ -31,50 +31,17 @@ Operational events.
 
 If a STDOUT write fails, the shared writer disables further console writes and attempts one standard error (STDERR) diagnostic. File logging, BFD execution, and Border Gateway Protocol (BGP) control continue. A failed diagnostic write is ignored.
 
-### Output queue and loss
+### Rotation, loss, and timestamps
 
-Even a bodacious log pipeline has queue limits. One background writer handles
-the text and ETW workload for the engine and its BGP worker. Slow output does
-not delay BFD timers or Stop processing. The queue holds up to 256 records; when
-it fills, additional records are dropped instead of delaying protocol execution.
-Text messages are limited to 16 KiB on UTF-8 character boundaries. When output
-resumes, the writer reports how many records were dropped to STDOUT or the
-enabled file log. This diagnostic does not produce an Operational event.
+File output rotates at 64 MiB to one `.1` backup, replacing the previous backup.
+Rotation needs rename/delete permission. If rotation fails, affected file lines
+are dropped while other destinations continue. Slow output can also fill the
+shared queue and lose records. Check text diagnostics for dropped output.
 
-### File rotation and buffering
-
-Keep the log stash totally tubular and check rotation behavior. File output
-rotates before a complete line would exceed 64 MiB. The writer renames the
-active file to `LogFilePath` with `.1` appended, replacing the earlier backup,
-and creates a new file. Each file stays within 64 MiB, including buffered bytes
-and timestamps. Existing oversized files are rotated without extending them; the
-logger does not shrink their existing contents.
-
-If a reader denies delete sharing, rotation can fail. Lines that need rotation
-are dropped from file output until rotation succeeds, with retries at most once
-every 30 seconds as new lines arrive. If the rename succeeds but creating the
-new file fails, file output stays paused and retries only creation; it never
-appends to the backup. Operational ETW events and console output continue
-independently. Rotation failures produce a diagnostic at each retry.
-
-File output uses an 8 KiB buffer to group writes. While output is responsive,
-the writer flushes pending bytes within 100 milliseconds, when the buffer
-fills, before replacing the output file, and on normal shutdown. Library
-callers can use `Logger::flush(timeout)` to wait for queued output and buffered
-file bytes. In console mode, the writer flushes the file before writing to
-STDOUT.
-
-### Shutdown and timestamps
-
-Ninja discipline includes knowing when an entry was written. Before reporting
-Stopped, each service explicitly waits up to two seconds for queued output to
-flush. Releasing the last logger then allows up to another 500 milliseconds for
-the writer to drain; console shutdown uses this final-drop wait. If output
-remains blocked, execution ends without waiting for that writer. Queued events
-can be lost in this case; abrupt termination can also lose buffered file
-entries. File timestamps record when the writer formats each entry. Slow output
-can delay that timestamp relative to the underlying BFD state change, and
-buffering can delay when the entry becomes visible.
+File timestamps describe when the writer formats an entry, so they can lag the
+BFD transition. Buffered entries can appear later; blocked output or abrupt
+termination can lose them. Use the [logging internals reference](reference/logging-internals.md)
+for queue sizes, retry intervals, flush budgets, and library APIs.
 
 ## Read logs without service-control privileges
 
@@ -206,23 +173,21 @@ management results) and **301** (Error: startup, authorization, or provider
 failure). These messages include the configured peer and operation when
 available.
 
-Event 300 also records `BFD local RPC mutual service identity verified`,
-`BFD session status unavailable`, and `BFD session telemetry stale`. The broker
-normally queries once per second and logs success on connection/recovery.
-Completed failures clear the cache and back off through 1, 2, 4, 8, 16, then
-30 seconds; a valid reply resets polling. Error 301 `BFD status rejected` discards
-the reply and retries. Ordinary failure and rejected-data reports are each
-limited to once per minute, including across successful replies. Only Error 301
-`BFD status worker stalled` quarantines telemetry until broker restart, stopping
-further fetches while retaining the single worker's native storage. Provider
-work continues without a BGP action from these query failures. See
-[Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
+Use these telemetry messages to distinguish completed failures from a stalled
+native call:
 
-The monitor has an eight-second wall-clock query budget and treats telemetry
-older than two seconds as stale. Age includes the reported snapshot age, fetch
-duration, and time since receipt; it doesn't use wall-clock subtraction.
-Neither stale data nor quarantine replaces the BFD worker's state-driven BGP
-actions.
+| Event / message | Meaning |
+| --- | --- |
+| 300: `BFD local RPC mutual service identity verified` | An authenticated status query succeeded on connection or recovery. |
+| 300: `BFD session status unavailable` | The completed query failed; prior cache data is cleared and the monitor retries. |
+| 300: `BFD session telemetry stale` | Cached telemetry exceeded its freshness limit. |
+| 301: `BFD status rejected` | The whole reply failed validation; the monitor clears its cache and retries. |
+| 301: `BFD status worker stalled` | The monitor quarantines telemetry until broker restart, retaining the pending worker's storage. |
+
+These messages do not request BGP actions. Provider work continues independently.
+For query steps, see [Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
+For exact polling, freshness, backoff, and reporting limits, see the
+[status contract](rpc-session-status-design.md#broker-cache-and-freshness).
 
 ### Lifecycle, communication, and state events
 

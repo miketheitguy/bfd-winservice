@@ -22,8 +22,8 @@ packet gets to influence peer state, dude, the firewall and packet validators
 check the configured path. Configured wire authentication adds the shared-key
 check.
 
-`[AUTH A-fw]` represents Windows kernel UDP firewall filtering through the four
-installed program-specific allow rules. `[AUTH A]` represents the application's
+`[AUTH A-fw]` represents Windows kernel UDP filtering through the
+[installed program-specific firewall rules](../reference/installation.md#installed-firewall-rules). `[AUTH A]` represents the application's
 separate packet and path checks.
 
 The UDP transport validates the source and destination, ports, interface, and

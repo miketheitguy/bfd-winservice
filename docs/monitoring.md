@@ -31,9 +31,8 @@ snapshot or an Up session.
 
 ## Monitor lifecycle and state transitions
 
-Keep these observations in formation, turtle crew. Keep these checks in their
-own lanes: use separate queries for Windows lifecycle and recorded BFD
-transitions.
+Keep these observations in formation, turtle crew: query Windows lifecycle
+and recorded BFD transitions separately.
 
 ### Query service lifecycle
 
@@ -93,22 +92,18 @@ logged on first connection or recovery, not after every one-second query.
 
 ### Investigate RPC status failures
 
-A missing reply is a bummer, dude; inspect the failure category.
-`BFD session status unavailable` reports a connection or RPC failure; the cache
-is cleared and the monitor retries. `BFD session telemetry stale` means the
-conservative snapshot age exceeds two seconds. That is a monitoring threshold,
-not the protocol's detection timer or a synthetic Down event.
+A missing reply is a bummer, dude. Choose the response that fits the message:
 
-Error 301 `BFD status rejected` means the complete reply was discarded and the
-cache became `Unavailable`. Completed failures retry after 1, 2, 4, 8, 16, then
-30 seconds. A valid reply resets polling to one second. A rejection does not
-require a broker restart or change BGP state.
+| Message | What to check or do |
+| --- | --- |
+| `BFD session status unavailable` | Check BFD startup and connectivity; completed failures retry automatically. |
+| `BFD session telemetry stale` | Check BFD scheduling and query delays; stale telemetry is not a synthetic Down event. |
+| `BFD status rejected` | Inspect the rejection category and matching binary versions; a clean rejection retries without a broker restart. |
+| `BFD status worker stalled` | Investigate the stuck native call, then restart the broker through normal administration; telemetry remains quarantined until restart. |
 
-Error 301 `BFD status worker stalled` means the worker exceeded its eight-second
-budget. The cache becomes `Quarantined` and further fetches stop until broker
-restart, retaining that one worker's native call storage. The broker remains
-Running and its provider operations continue. Stop interrupts retry waits and
-does not wait indefinitely for that worker.
+Provider work continues independently of telemetry failures. For exact cache,
+freshness, retry, and reporting rules, see the
+[status contract](rpc-session-status-design.md#secure-response-to-invalid-data).
 
 Query rejection and quarantine events on the installed host:
 
@@ -128,9 +123,7 @@ errors, clock validity, and the record rejection category. Rejected replies
 recover automatically; a stuck-worker quarantine requires investigation and a
 restart through the normal service administration workflow. Do not broaden an
 ACL or treat an old successful event as current telemetry. Old receipts don't
-get a freshness glow-up, buddy. Ordinary failures and rejected-data errors are
-each limited to one report per minute, even across successful replies; a
-stalled-worker quarantine logs once. Matching executables, installed accounts,
+get a freshness glow-up, buddy. Matching executables, installed accounts,
 service SIDs, and privilege policy remain required.
 
 For packet communication and session readiness, use events 100–112 separately.
@@ -158,11 +151,7 @@ uses Windows Event Log permissions without a custom channel ACL.
 
 ## Broker communication
 
-Keep the broker boundary totally tubular and service-specific. Border Gateway
-Protocol (BGP) requests pass through the authenticated service local RPC
-interface. The caller must have LocalService in `TokenUser`, an enabled BFD
-service group, and the BFD SID in a restricted token's restricting list; an
-ordinary administrator process cannot submit broker requests. This
-service-to-service permission is required for BGP control. See
-[Control a Windows BGP peer](bgp.md) for the BGP RPC contract, broker identity
-checks, and native provider calls.
+SCM permissions and private RPC permissions are separate, dude. Only the
+authenticated BFD service identity can request BGP operations. For the complete
+gate matrix, see [RPC authentication](rpc-authentication.md#bgp-control-over-local-rpc).
+For peer setup and actions, use [Control a Windows BGP peer](bgp.md).

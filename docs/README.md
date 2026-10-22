@@ -9,12 +9,13 @@ recorded revisions.
 
 ## Install and operate the service
 
-Cowabunga, deployment crew. Pick the mission that fits your setup. Pick the
-guide for the job you're about to tackle, dude:
+Cowabunga, deployment crew. Pick the guide for your mission:
 
 | Task | Guide |
 | --- | --- |
-| Install, configure, verify, run in a console, or remove the service | [Set up a BFD session](setup.md) |
+| Install, configure, verify, or remove the service | [Set up a BFD session](setup.md) |
+| Run supplied loose files in the foreground | [Console execution](console.md) |
+| Inspect installed files, services, defaults, and firewall rules | [Installation inventory](reference/installation.md) |
 | Look up registry values, defaults, validation rules, and reload behavior | [Registry configuration reference](configuration.md) |
 | Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](seamless.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](bgp.md) |
@@ -44,21 +45,23 @@ references provide additional implementation detail.
 
 ## Build and validate changes
 
-Turtle power needs build and test receipts, dude. Build something rad with these
-development and implementation guides:
+Turtle power needs build and test receipts, dude:
 
 | Task | Guide |
 | --- | --- |
-| Build, test, prepare deployment files, update diagrams, or contribute changes | [Contribute to BFD Windows service](../CONTRIBUTING.md) |
+| Set up a build host or contribute changes | [Contributor guide](../CONTRIBUTING.md) |
+| Run required, optimized, ASan, Miri, or native checks | [Development validation](development/validation.md) |
+| Change library APIs or service boundaries | [Library development](development/library.md) |
+| Prepare deployment files, build installers, or publish a release | [Packaging and releases](development/packaging.md) |
+| Update Mermaid and Draw.io views | [Diagram maintenance](development/diagrams.md) |
 | Fuzz packet acceptance and rejection, classical sessions, or stateful S-BFD initiation and reflection | [Fuzz harness guide](../fuzz/README.md) and [security scope](security/fuzzing.md) |
 | Find RFC 5880, RFC 7419, and RFC 7880 requirements and their test coverage | [RFC conformance tests](rfc-conformance.md) |
 | Review the RFC 5880 behavior matrix and implementation limits | [RFC 5880 conformance](rfc5880-conformance.md) |
-| Find API review guidance, ownership boundaries, and validation commands | [Rust skills validation](../RUST_SKILLS_VALIDATION.md) |
+| Interpret dated validation results and review ownership boundaries | [Rust skills validation](../RUST_SKILLS_VALIDATION.md) |
 
 ## Review evidence and repository instructions
 
-Even heroes in a half-shell check the dates on their evidence. History check, no
-cap: these records and instructions serve different jobs:
+Even heroes in a half-shell check the dates on their evidence, no cap:
 
 | Document | Purpose |
 | --- | --- |
@@ -74,3 +77,15 @@ cap: these records and instructions serve different jobs:
 Use the current guides for commands and configuration. Keep historical results
 tied to their dates and revisions when assessing validation evidence. Old test
 results don't earn a fresh victory lap.
+
+## Implementation references
+
+For deeper troubleshooting and maintenance, follow the contracts rather than
+copying their details into another guide:
+
+| Topic | Reference |
+| --- | --- |
+| Native MI methods, provider queues, watchdogs, and cleanup budgets | [BGP provider](reference/bgp-provider.md) |
+| Logger queues, buffering, loss, and shutdown ownership | [Logging internals](reference/logging-internals.md) |
+| Implementation files by responsibility | [Source map](reference/source-map.md) |
+| Removal of older manually provisioned services | [Legacy removal](reference/legacy-installation.md) |

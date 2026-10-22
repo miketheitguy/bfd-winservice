@@ -33,11 +33,11 @@ engineering priority is P2 or P3.
 
 | # | Location | Rule (ID + name) | Before | After | Severity |
 | --- | --- | --- | --- | --- | --- |
-| F1 | [Installer firewall rules](../installer/Package.wxs#L63), [reflector validation](../src/transport.rs#L191), [setup port table](setup.md#installed-firewall-rules) | P11 verified behavior | The reflector accepts request source ports outside 49152–65535, but installed rules admit only that range. | Give reflector requests/replies their own port policy, preserve the classical restrictions, and update validators, tests, and the setup table together. | Blocking; P2 |
+| F1 | [Installer firewall rules](../installer/Package.wxs#L63), [reflector validation](../src/transport.rs#L191), [setup port table](reference/installation.md#installed-firewall-rules) | P11 verified behavior | The reflector accepts request source ports outside 49152–65535, but installed rules admit only that range. | Give reflector requests/replies their own port policy, preserve the classical restrictions, and update validators, tests, and the setup table together. | Blocking; P2 |
 | F2 | [Status capture](../src/local_rpc/status.rs#L498), [scope test](../src/local_rpc/status/tests.rs#L157), [status contract](rpc-session-status-design.md#session-fields) | P11 verified behavior | Constructing local/peer socket addresses from bare IP addresses discards the configured link-local interface scope. | Preserve scope when constructing both configured endpoints and test the complete snapshot-to-RPC conversion. | Blocking; P2 |
-| F3 | [Setup prerequisites](setup.md#before-you-begin), [loose-file preparation](setup.md#prepare-installation-files), [contributor deployment instructions](../CONTRIBUTING.md#prepare-installation-files) | P1 complete procedures | The loose-file route supplies executables and a logging script without provisioning or requiring the native Visual C++ runtime. | State the x64 runtime prerequisite and provide an installation/verification step before launching loose executables. | Blocking; P2 |
+| F3 | [Setup prerequisites](setup.md#before-you-begin), [loose-file preparation](console.md#prepare-installation-files), [contributor deployment instructions](development/packaging.md#prepare-installation-files) | P1 complete procedures | The loose-file route supplies executables and a logging script without provisioning or requiring the native Visual C++ runtime. | State the x64 runtime prerequisite and provide an installation/verification step before launching loose executables. | Blocking; P2 |
 | F4 | [Socket recovery](protocol.md#socket-recovery), [warning reference](logging.md#service-warnings), [send handling](../src/runtime.rs#L563) | P11 verified behavior | General socket-recovery wording promises backoff, Warning event 4, and termination for other errors; send errors follow a separate policy. | Distinguish send errors from receive/wait errors, including retry cadence, event visibility, and shutdown behavior. | Blocking; P2 |
-| F5 | [Broker security instructions](../CONTRIBUTING.md#initialize-broker-management-security), [deployment text](../CONTRIBUTING.md#prepare-installation-files), [service description](../installer/Package.wxs#L87) | P11 verified behavior | Current text still describes an authenticated local pipe, temporary pipes, and overlapped-I/O cancellation. | Describe authenticated `ncalrpc`, generated asynchronous RPC stubs, and the actual isolated native RPC fixtures. | Blocking; P3 |
+| F5 | [Broker security instructions](development/library.md#initialize-broker-management-security), [deployment text](development/packaging.md#prepare-installation-files), [service description](../installer/Package.wxs#L87) | P11 verified behavior | Current text still describes an authenticated local pipe, temporary pipes, and overlapped-I/O cancellation. | Describe authenticated `ncalrpc`, generated asynchronous RPC stubs, and the actual isolated native RPC fixtures. | Blocking; P3 |
 
 ### F1: installed rules exclude supported S-BFD initiators
 
@@ -219,7 +219,6 @@ transport descriptions with the chosen behavior. Add the upgrade and
 compiler/runtime guards, then extend initiator fuzz coverage. To reach 10/10 on
 the documentation diagnostic, also move dated validation records into linked
 historical documents while retaining their anchors and evidence.
-
 
 ## Remediation and release validation
 

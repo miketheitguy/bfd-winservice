@@ -195,3 +195,12 @@ Windows Routing and Remote Access Service (RRAS) manages the final BGP
 connection to the remote BGP peer. This repository invokes its local provider
 and does not configure BGP wire authentication. Provider permissions and RRAS
 process identity depend on the host's Windows configuration.
+
+## Numeric service SIDs
+
+The numeric service SIDs are fixed by the Windows service names:
+
+| Service | SID |
+| --- | --- |
+| `BfdWinService` | `S-1-5-80-1071555646-3639003188-2623042311-1024194528-3093158512` |
+| `BfdBgpBroker` | `S-1-5-80-3301813337-1731295767-1225795713-3993009034-49020719` |

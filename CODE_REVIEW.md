@@ -367,7 +367,7 @@ GitHub-hosted runner and exercises install, rendered ETW delivery, configured
 service execution, file logging, repair, and uninstall. That test and the
 complete GitHub workflow haven't been executed in this local session. Target
 service, Event Log, and firewall configuration weren't changed locally. The
-package is unsigned. See [Build the offline setup bundle](CONTRIBUTING.md#build-the-offline-setup-bundle) and
+package is unsigned. See [Build the offline setup bundle](docs/development/packaging.md#build-the-offline-setup-bundle) and
 [Install with the offline setup bundle](docs/setup.md#install-with-the-offline-setup-bundle).
 
 Applied the `technical-documentation` skill to the setup, README, network,
@@ -535,7 +535,7 @@ Key-bearing configuration still omits `Debug`, and errors omit secrets.
 
 These changes affect library callers: `load_registry` returns `ValidatedOptions`,
 `Logger::new` returns `io::Result<Logger>`, and domain APIs return typed errors.
-See the [configuration and error API guide](CONTRIBUTING.md#use-the-rust-configuration-and-error-apis).
+See the [configuration and error API guide](docs/development/library.md#use-the-rust-configuration-and-error-apis).
 Registry names and the `--console` interface remain compatible. The log queue
 holds 256 records, caps text at 16 KiB, and allows up to 500 ms to drain on final
 drop. Saturated or blocked output can lose records, including lifecycle events;
@@ -619,7 +619,7 @@ Also corrected unsafe union-access comments, replaced the ancillary parser's inv
 
 ### Compatibility at that revision
 
-The 2026-10-05 changes retained the command-line interface then in use. Library callers had to handle `Session::new(...) -> Result<Session, String>`, use `AuthConfig::kind()`, and use the session's state/diagnostic/discriminator/polling accessors instead of public fields. Supplied session authentication had to match its options. Later changes replace the string error with typed errors and remove the former command-line settings; see the [configuration and error API guide](CONTRIBUTING.md#use-the-rust-configuration-and-error-apis).
+The 2026-10-05 changes retained the command-line interface then in use. Library callers had to handle `Session::new(...) -> Result<Session, String>`, use `AuthConfig::kind()`, and use the session's state/diagnostic/discriminator/polling accessors instead of public fields. Supplied session authentication had to match its options. Later changes replace the string error with typed errors and remove the former command-line settings; see the [configuration and error API guide](docs/development/library.md#use-the-rust-configuration-and-error-apis).
 
 ### Validation at that revision
 

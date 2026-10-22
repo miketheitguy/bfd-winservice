@@ -1,18 +1,14 @@
 # BFD Windows service
 
-Cowabunga, Windows network crew! Let's get your session, like, totally dialed
-in. This service runs a Bidirectional Forwarding Detection (BFD) session with
+Cowabunga, Windows network crew! Let's get your session totally dialed in. This service runs a Bidirectional Forwarding Detection (BFD) session with
 one IPv4 or IPv6 peer, or a stateless Seamless BFD reflector for multiple
 initiators. Follow this guide to install and configure the service. Optional
 Border Gateway Protocol (BGP) control starts and stops a configured Windows BGP
 peer as session state changes.
 
-The BFD service runs as LocalService with a restricted service SID. A separate
-LocalSystem broker manages BGP through authenticated local RPC restricted to the BFD service
-identity. The broker also
-queries BFD session status through a private Windows local RPC interface with
-mutual service authentication. Queries read published snapshots on RPC workers,
-independently of packet processing.
+The packet engine runs as LocalService. A separate LocalSystem broker manages
+the configured BGP peer through authenticated local RPC. For the process and
+trust boundaries, see [Service communication](docs/service-communication.md).
 
 For probes that establish without a discriminator handshake, configure an
 IPv4/IPv6 [Seamless BFD initiator or reflector](docs/seamless.md).
@@ -38,15 +34,15 @@ setup together:
   or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files supplied
   by your service maintainer for console execution. Loose executables also need
   the native x64 Visual C++ runtime; follow the
-  [loose-file prerequisite procedure](docs/setup.md#prepare-installation-files).
+  [loose-file prerequisite procedure](docs/console.md#prepare-installation-files).
 - Administrator PowerShell access to install the service and configure registry settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
   configure. See [network requirements](docs/protocol.md).
 
 ## Quick start
 
-Cowabunga, crew. Get the installation lined up before the pizza break. Time to
-lock in: use **PowerShell as Administrator** for installation and configuration.
+Get the installation lined up before the pizza break, crew. Use
+**PowerShell as Administrator** for installation and configuration.
 
 ### 1. Install the service
 
@@ -57,7 +53,7 @@ The bundle installs the files and Automatic (Delayed Start) services,
 registers the Operational provider, and
 creates firewall rules. The service remains stopped for configuration.
 
-Supplied loose files support [foreground console execution](docs/setup.md#run-in-a-console).
+Supplied loose files support [foreground console execution](docs/console.md#start-and-verify-the-console-session).
 Use the setup bundle for service execution and BGP management.
 
 ### 2. Configure a fresh installation
@@ -66,8 +62,8 @@ Give these settings the Donatello treatment: check the details. Follow
 [Configure the session](docs/setup.md#2-configure-the-session) to provision the
 required registry values.
 
-The default transport is single-hop. File output defaults to disabled; on a
-default Windows layout, its path is `C:\ProgramData\BfdWinService\trace.log`.
+The default transport is single-hop. See [logging](docs/logging.md) to enable
+optional file output.
 
 ### 3. Start the service
 
@@ -105,10 +101,7 @@ verify replies from an initiator instead. See
 [Verify peer communication](docs/setup.md#6-verify-peer-communication) for the
 query and expected events.
 
-Use Windows lifecycle queries and event logs for monitoring. The private local
-RPC interface between BFD and the broker provides authenticated
-read-only session telemetry for the broker; it exposes no
-administrative status client. See
+Use Windows lifecycle queries and event logs for monitoring. See
 [Monitor service status and BFD events](docs/monitoring.md).
 
 Non-administrators can query service status. Log reads depend on the host's
@@ -123,16 +116,15 @@ stop BGP. Dude, read the [BGP action rules](docs/bgp.md) before connecting a
 production peer.
 
 For foreground execution that writes to standard output (STDOUT), see
-[Run in a console](docs/setup.md#run-in-a-console). The executable accepts
+[Run in a console](docs/console.md#start-and-verify-the-console-session). The executable accepts
 `--console`, `--help`, and `--version`; session configuration comes from
 registry values.
 
 ## Documentation
 
-Pizza can wait while you pick the next mission, turtle crew. Use the
-[documentation index](docs/README.md) to find operator guides, architecture
-references, development instructions, and dated review records. Pick your next
-move from these starting points, buddy:
+Pick your next mission, turtle crew. The [documentation index](docs/README.md)
+links operator guides, architecture references, development procedures, and
+dated review records:
 
 | Task | Guide |
 | --- | --- |

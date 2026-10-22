@@ -23,7 +23,7 @@ these prerequisites dialed in, buddy:
 
 - Install the [setup bundle](setup.md#install-with-the-offline-setup-bundle) for service execution,
   or prepare supplied loose files for console execution using
-  [Prepare installation files](setup.md#prepare-installation-files).
+  [Prepare installation files](console.md#prepare-installation-files).
 - Open **PowerShell as Administrator**. These examples use
   `C:\Program Files\BfdWinService`; adjust the path for your installation.
 - Assign a nonzero discriminator to the reflector's local entity. Coordinate
@@ -38,7 +38,7 @@ these prerequisites dialed in, buddy:
 For Windows service execution, the bundle creates the service and registers the
 Operational log. Configure one of the roles in this guide before starting the
 service. Each process runs one role. Supplied loose files use
-[`--console`](setup.md#run-in-a-console); copying them doesn't provision the
+[`--console`](console.md#start-and-verify-the-console-session); copying them doesn't provision the
 service identities or access policies required for service execution.
 
 ### Initialize loose-file logging
@@ -106,7 +106,7 @@ Start-Service BfdWinService
 ```
 
 A successful command produces no output. For foreground execution, use
-[`--console`](setup.md#run-in-a-console) after provisioning the same registry values.
+[`--console`](console.md#start-and-verify-the-console-session) after provisioning the same registry values.
 
 ### 3. Verify establishment
 
@@ -323,15 +323,7 @@ Administrative shutdown uses the same AdminDown events if the entity wasn't
 already in maintenance. In service mode, these records go to the Operational
 channel and the file when enabled; console mode uses STDOUT and the enabled file.
 
-### Library timing APIs
-
-Library callers can use `Timing::new`, `Session::set_timing`,
-`Engine::set_timing`, and `Reflector::set_timing` without registry access.
-For an Up initiator, changes to `MinTxUs` or `DetectMult` return
-`ConfigError::PollInProgress` while a transmitted Poll or its separation period
-protects a preceding change. A `MinRxUs`-only RTT allowance change doesn't alter
-wire parameters and can apply during that period. Reflectors apply their
-stateless response settings immediately.
+For library callers, see [S-BFD timing APIs](development/library.md#s-bfd-library-timing-apis).
 
 ## RFC 7882 use-case coverage and limits
 

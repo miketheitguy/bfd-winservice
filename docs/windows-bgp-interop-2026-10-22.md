@@ -127,3 +127,23 @@ to this lab. These ignored artifacts are not portable test infrastructure.
 These results cover this Windows Server 2025 and BIRD 2.18 pairing. They do not
 establish timing guarantees for other providers, operating systems, virtual
 switches, or hardware.
+
+## Subsequent lab timer change
+
+After the withdrawal measurements, the user requested 300 ms transmit/receive
+intervals with multiplier 3 on both ends. Windows now persists `MinTxUs=300000`,
+`MinRxUs=300000`, and `DetectMult=3`; BIRD's `lab_bfd` uses the matching intervals
+and multiplier. Meticulous keyed SHA-1 and both BFD-to-BGP controllers remain
+enabled. The negotiated detection time while Up is 900 ms.
+
+In this lab, `birdc configure` retained the old active receive interval despite
+the updated file. Restarting only `lab_bfd` applied the new value; live BIRD
+output then confirmed 300 ms TX/RX and multiplier 3 for both local and remote
+parameters. Configuration text alone wasn't the receipt, dude.
+
+A subsequent 120.623-second observation sampled nine times. Every sample found
+BFD Up, BGP established, and both advertised /32 routes present. Windows BFD
+and broker process IDs stayed unchanged, with no new events 3, 105, or 301.
+Evidence is in `target/bird-interop/timers-300ms/stability.json` alongside the
+timer-change receipts. The earlier withdrawal timings still describe the
+original 500 ms configuration; this stability check does not remeasure them.

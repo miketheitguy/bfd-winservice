@@ -46,7 +46,7 @@ design:
 - Production releases omit Rust debug information, symbols, and linker PDBs.
   Development and ASan retain Rust debug information. The RPC stubs and C bridge
   compile with MSVC; Rust ASan does not instrument those native objects. See
-  [build security](../../CONTRIBUTING.md#build-security).
+  [build security](../security/build-hardening.md).
 - A classical communicating session announces AdminDown for the longer local
   or peer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds,
   range 1–60000 ms). The former five-second limit is historical. See
@@ -275,10 +275,10 @@ strict Clippy, and rustdoc checks passed. One opt-in CIM schema test was ignored
 
 Heads up, buddy: this entry records the Rust-only build and release PDBs at that
 revision. The native RPC bridge and symbol-free release policy described in
-[build security](../../CONTRIBUTING.md#build-security) supersede those details.
+[build security](../security/build-hardening.md) supersede those details.
 
 Mapped the requested MSVC and Rust settings to the Rust-only build in
-[Build security](../../CONTRIBUTING.md#build-security). Added explicit PIC, release
+[Build security](../security/build-hardening.md). Added explicit PIC, release
 overflow checks, release panic abortion, full release PDBs, SHA-256 Rust source
 checksums, denied warnings and unsafe operations, and denied production
 `unwrap()`. Packet, session, and reflection modules forbid unsafe code.
@@ -382,7 +382,7 @@ targets, and the build script requires full CFG checks and the
 high-entropy ASLR, large address awareness, NX/DEP, and CFG. The repository
 selects nightly Rust and rebuilds the standard library with the same compiler
 protections as the service and its Rust dependencies. See the
-[build security instructions](../../CONTRIBUTING.md#build-security).
+[build security instructions](../security/build-hardening.md).
 
 Validation used Rust `1.101.0-nightly (21b707e3f 2026-09-30)`. All 99 default
 tests passed, with one opt-in CIM schema test ignored. The new

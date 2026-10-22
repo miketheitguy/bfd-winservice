@@ -21,8 +21,8 @@ To look up this contract, start with [Session fields](#session-fields) and
 
 ## Function call and ownership
 
-Get the observation through the API before calling it bodacious. Dude, fetch one
-observation inside a broker worker function returning `Result`:
+For a bodacious observation, fetch inside a broker worker function returning
+`Result`:
 
 ```rust
 let status = bfd_winservice::local_rpc::query_bfd_session_status()?;
@@ -58,8 +58,8 @@ Native layout tests check size, alignment, and field offsets against MIDL output
 
 ### Deploy matching binaries
 
-Keep the deployed turtle team on the matching interface contract. Keep the
-binaries in sync, dude: deploy the BFD service and broker together. Version
+Keep the deployed turtle team in sync, dude: deploy the BFD service and broker
+together. Version
 `2.0` exposes only `GetSessionStatusV1`, moving it from operation number `1` in
 version `1.1` to `0`. The major interface version and endpoint change prevent
 mixed binaries from interpreting a call as the wrong operation. There is no
@@ -261,13 +261,10 @@ safe to read; its existence does not imply the engine is still running.
 
 ## Verification and source map
 
-Pizza time comes after the relevant test receipts. Run the native RPC suite and
-explicit read-only MI coexistence test on a Windows host with a normal token:
-
-```powershell
-cargo test-release --lib local_rpc::
-cargo test-release --lib native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection -- --ignored
-```
+Pizza time comes after the relevant test receipts. Follow
+[native RPC validation](development/validation.md#verify-native-rpc-boundaries)
+for the suites, normal-token prerequisites, and explicit read-only MI
+coexistence checks.
 
 ### Test coverage and limits
 

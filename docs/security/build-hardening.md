@@ -194,7 +194,59 @@ security-cookie address alone does not prove every function has stack-protector
 instrumentation, and a CET flag does not prove that the host enforces shadow
 stacks.
 
-For build commands, sanitizer checks, compiler-output inspection, and
-verification of production artifacts, see [Build
-security](../../CONTRIBUTING.md#build-security). Recheck those settings after
-changing the toolchain, profiles, or compiler/linker overrides.
+### Check the production executable
+
+Run from the repository root on the [Windows build host](../../CONTRIBUTING.md#before-you-begin).
+Compile the release test harness first, then rebuild the production executables:
+
+```powershell
+$hardeningTests = @(
+    cargo test-release --no-run --test windows_hardening --message-format=json |
+        ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object {
+            $_.reason -eq 'compiler-artifact' -and
+            $_.target.name -eq 'windows_hardening' -and $_.executable
+        } |
+        Select-Object -ExpandProperty executable
+)
+if ($LASTEXITCODE -ne 0 -or $hardeningTests.Count -ne 1) {
+    throw 'Expected one compiled release hardening test executable'
+}
+cargo build --locked --release
+if ($LASTEXITCODE -ne 0) { throw 'Production build failed' }
+$previousImage = $env:BFD_HARDENING_EXE
+try {
+    $env:BFD_HARDENING_EXE = (Resolve-Path `
+        'target/x86_64-pc-windows-msvc/release/bfd-winservice.exe').Path
+    & $hardeningTests[0]
+    if ($LASTEXITCODE -ne 0) { throw 'Production hardening check failed' }
+} finally {
+    $env:BFD_HARDENING_EXE = $previousImage
+}
+```
+
+Expect zero failures. The release harness applies release expectations, including
+the absence of PDBs, to both production images. Running the debug harness against
+a release image instead applies incompatible debug-output expectations.
+`BFD_HARDENING_EXE` chooses the BFD image; the test also inspects its adjacent
+broker executable. The `finally` block restores your previous image selection.
+
+### Inspect compiler output
+
+In Developer PowerShell, inspect the emitted metadata:
+
+```powershell
+dumpbin /headers /loadconfig `
+    .\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe
+```
+
+Confirm x64/PE32+, high-entropy ASLR, dynamic base, NX, CFG instrumentation and
+function table, a security-cookie address, EH continuation metadata, and CET
+compatibility. A nonempty EH continuation table needs an address; an enabled
+empty table is valid when the image has no continuation targets. Release images
+omit PDBs; development images retain them. These are metadata checks, subject to
+the limits described at the start of [Verification](#verification).
+
+Recheck after changing the toolchain, profiles, or compiler/linker overrides.
+For optimized tests and native/Rust ASan setup, use
+[development validation](../development/validation.md).

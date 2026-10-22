@@ -102,7 +102,7 @@ The S-BFD test coverage maps to these requirements:
 | 7.3.3 | AdminDown proves communication and slows actual probes to at least 1 s; initial timeout includes path latency | Maintenance tests cover several receive limits and jitter; native 1 s minimum-spacing test; large timer/RTT arithmetic and exact expiry boundary |
 | 7.5 | Poll/Final runs independently in both directions | Simultaneous Poll regression: a reflector Poll leaves the local Poll pending, the next request carries Final with P clear, and a later request completes the local Poll. An incoming Final is never reflected as Final. |
 | 8.2 | Loss reduces generated traffic, including with slow reflector capacity | Congestion regressions at 30 s, 60 s, and 2,500 s receive limits; backoff clears on a valid reply |
-| 11 | Reflector authentication doesn't use a per-peer sequence window; it authenticates its response using the request's sequence | All four keyed types with multiple clients, repeated sequences, reverse sequence order, and wraparound |
+| 11 | Reflector authentication doesn't use a per-peer sequence window; it authenticates its response using the request's sequence | Both supported keyed SHA-1 modes with multiple clients, repeated sequences, reverse sequence order, and wraparound |
 | 11 | Initiator replies must correlate with acceptable probes | Reordered outstanding replies are accepted; consumed or expired sequences are rejected without refreshing detection |
 
 The initiator uses a local detection policy of
@@ -130,15 +130,16 @@ operator responsibilities, rather than claims made by these tests.
 
 Turtle power means running the relevant suites before the pizza celebration.
 Complete the prerequisites in
-[Run development checks](../CONTRIBUTING.md#run-development-checks). ASan
-requires the MSVC sanitizer runtime on `PATH`.
+[Run development checks](../CONTRIBUTING.md#run-development-checks). The
+[ASan wrapper](development/validation.md#run-addresssanitizer-checks) initializes
+and verifies the selected MSVC sanitizer runtime.
 
 From the repository root on the supported Windows target, run:
 
 ```powershell
 cargo test-release --offline --test rfc5880 --test rfc7419 --test rfc7880
 cargo test-release --offline
-cargo asan --offline
+.\scripts\Test-Asan.ps1 -CargoArguments @('--offline')
 ```
 
 ### Test coverage and timing

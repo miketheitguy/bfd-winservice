@@ -1,14 +1,10 @@
 # Set up a BFD session
 
-Cowabunga, install crew. Get the session ready for action. Windows systems
-admins, let's get this setup rolling. Use this guide for a fresh Bidirectional
-Forwarding Detection (BFD) Windows service installation or a foreground console
-session. The service monitors one configured local/peer pair. Use
-[Install with the offline setup bundle](#install-with-the-offline-setup-bundle)
-for the package produced by GitHub Actions. It installs the native Microsoft
-Visual C++ prerequisite and the service. Loose files support foreground
-console execution; SCM operation requires the bundle to provision both services
-and their security settings.
+Cowabunga, install crew. Use this guide to install, configure, and verify a
+classical Bidirectional Forwarding Detection (BFD) session on Windows. The
+offline setup bundle provisions both services, the native Microsoft Visual C++
+runtime, and their security settings. The service monitors one local/peer pair.
+For foreground execution, follow [Run BFD in a console](console.md).
 
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
@@ -20,23 +16,16 @@ Choose the path for your deployment:
 
 - For Windows services, [install the setup bundle](#install-with-the-offline-setup-bundle), then
   [configure and verify the service](#configure-and-verify-the-windows-service).
-- For foreground execution, [prepare loose files](#prepare-installation-files)
-  if needed, then
-  [run in a console](#run-in-a-console).
+- For foreground execution, follow [Run BFD in a console](console.md).
 - For removal, use the [setup bundle uninstall procedure](#remove-a-setup-bundle-installation) or
-  the [legacy manual removal procedure](#remove-a-legacy-manual-installation).
+  the [legacy manual removal procedure](reference/legacy-installation.md).
 
 ## Before you begin
 
-Gather the gear before the ninja mission starts. Before you send it, line up
-these prerequisites:
+Gather the gear before the ninja mission starts:
 
 - Obtain the x64 setup bundle and its `.sha256` file from
-  [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
-  or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files from your
-  service maintainer for console execution, plus the matching Microsoft
-  `VC_redist.x64.exe` and checksum. Loose execution requires the x64 Visual C++
-  runtime `14.51.36247.0` or newer, just like the bundle.
+  [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
 - Use 64-bit Windows 10 or later, or Windows Server 2016 or later,
   on an x64 processor.
 - Open **PowerShell as Administrator**. Use the same
@@ -45,7 +34,7 @@ these prerequisites:
   family. Configure the remote peer with these addresses reversed.
 - Allow the [required network traffic](protocol.md). The service doesn't create
   firewall rules or discover peers. The bundle installs the rules described in
-  [Installed firewall rules](#installed-firewall-rules).
+  [installed firewall rules](reference/installation.md#installed-firewall-rules).
 
 Get your bearings: find the interface that owns your local address:
 
@@ -135,191 +124,17 @@ before the first start:
 The bundle registers the manifest automatically. Use the session and logging
 references to configure authentication, multihop, S-BFD, or file output.
 
-### Installed resources and security settings
-
-Donatello would inspect the full installation inventory, dude. The bundle installs
-the following resources for all users:
-
-- Both executables, the manifest, and logging script in
-  `C:\Program Files\BfdWinService`.
-- The `BfdWinService` service with display name **BFD Windows Service**,
-  the LocalService account, and **Automatic (Delayed Start)** startup. The bundle
-  leaves it stopped; configure it before starting the service or restarting
-  Windows. Delayed start runs after boot-time services, when interface addresses
-  are more likely to be assigned.
-- The `BfdBgpBroker` service with **Automatic (Delayed Start)** startup and the
-  LocalSystem account. BFD depends on the broker, so starting BFD also starts the
-  broker. Without `BgpPeerName`, BFD doesn't open its BGP control RPC interface. The
-  broker still queries BFD's private RPC status interface. Both services have their
-  own enabled service SID. BFD uses restricted SID type `3`; its service SID is
-  also present in the token's restricting list. The broker retains unrestricted
-  SID type `1`.
-- A BFD `RequiredPrivileges` allowlist containing only
-  `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`. A native commit action
-  records the list after the MSI transaction succeeds; services remain stopped
-  until you start them. SCM applies the list when it creates the LocalService
-  process. BFD also permanently removes unused
-  privileges at startup. The broker separately removes all token privileges
-  except `SeChangeNotifyPrivilege` before initializing COM/MI or RPC.
-- Protected service ACLs for both services: SYSTEM and Administrators have full
-  control. Authenticated users can query configuration/status, enumerate
-  dependents, interrogate status, and read the service ACL. They cannot Start/Stop,
-  pause, reconfigure, delete, or send custom controls to either service. Use an
-  elevated Administrator session for lifecycle commands. Log reads remain
-  available to non-administrators under the existing log permissions.
-- SCM recovery: the broker restarts five seconds after a crash. BFD restarts
-  10 seconds after a crash or an unrequested failure exit, such as a local address
-  that isn't assigned yet. A Stop request always ends BFD with exit code `0`, so
-  recovery never restarts a service that an administrator stopped.
-- The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
-  with message and resource paths pointing to the installed executable.
-- The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and
-  `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
-  Windows layout. The installer uses the machine's ProgramData location. The
-  executable fallback and logging script use the literal `C:\ProgramData` path.
-- The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
-  Only the BFD service SID receives Modify access; shared LocalService processes
-  receive no write grant. The Parameters key permits reads only by SYSTEM,
-  administrators, and that service SID. BFD's write-restricted token requires
-  suitable service-SID grants as well as ordinary write permission. Installed
-  code remains writable only by
-  SYSTEM and administrators.
-- Five executable-specific UDP allow rules for classical and Seamless BFD.
-- The broker's `RpcSs` service dependency for native MI. The BFD service depends
-  on the broker. See [Monitor service status and BFD events](monitoring.md) for
-  lifecycle queries and event-log monitoring.
-
-### Installed firewall rules
-
-Keep the network entrance totally tubular and check the actual rules. Five rules
-allow UDP for the installed executable on Domain, Private, and Public profiles.
-Remote addresses are unrestricted so multihop, anycast, and point-to-point
-configurations can use their configured peers. The rules have these protocol and
-port restrictions:
-
-| Rule | Protocol / action | Direction | Local ports | Remote ports |
-| --- | --- | --- | --- | --- |
-| `BfdWinService - control inbound` | UDP / allow | Inbound | 3784, 4784 | 49152–65535 |
-| `BfdWinService - S-BFD requests inbound` | UDP / allow | Inbound | 7784 | 1–7783, 7785–65535 |
-| `BfdWinService - S-BFD replies inbound` | UDP / allow | Inbound | 49152–65535 | 7784 |
-| `BfdWinService - probes outbound` | UDP / allow | Outbound | 49152–65535 | 3784, 4784, 7784 |
-| `BfdWinService - S-BFD replies outbound` | UDP / allow | Outbound | 7784 | 1–7783, 7785–65535 |
-
-The high-port inbound rule is required for S-BFD initiators because replies
-return to their source port. Reflectors accept requests from any nonzero source
-port except 7784 and reply to that same port; their separate rules preserve
-the classical dynamic-source-port restriction. No BFD Echo rule is installed. Network firewalls
-and organizational policy still control effective access. The private local RPC
-interface uses `ncalrpc` and needs no network firewall rule.
-
-To inspect the installed rules, run:
-
-```powershell
-Get-NetFirewallRule |
-    Where-Object DisplayName -Like 'BfdWinService - *' |
-    Select-Object DisplayName, Direction, Enabled, Profile
-```
-
-Firewall vibe check: confirm that the five rules are enabled. To inspect ports,
-pipe the matching rules to `Get-NetFirewallPortFilter`.
-
-## Prepare installation files
-
-Pack the console gear before the pizza run. For a console-only deployment, copy
-the supplied files to a permanent folder. If the bundle already installed them,
-you're set; skip this section. Before launching a loose executable, verify and
-install the supplied Microsoft runtime from the deployment folder:
-
-```powershell
-$deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
-$runtime = Join-Path $deploymentDirectory 'VC_redist.x64.exe'
-$expectedHash = (Get-Content -LiteralPath "$runtime.sha256" -Raw).Split()[0]
-if ((Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash -ne $expectedHash) {
-    throw 'Visual C++ runtime SHA-256 checksum mismatch'
-}
-$signature = Get-AuthenticodeSignature -LiteralPath $runtime
-if ($signature.Status -ne 'Valid' -or
-    $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
-    throw 'The runtime must have a valid Microsoft signature'
-}
-$runtimeKey = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
-$installed = Get-ItemProperty -LiteralPath $runtimeKey -ErrorAction SilentlyContinue
-if ($null -eq $installed -or $installed.Installed -ne 1 -or
-    [version]$installed.Version.TrimStart('v','V') -lt [version]'14.51.36247.0') {
-    $result = Start-Process -FilePath $runtime -ArgumentList @(
-        '/install', '/quiet', '/norestart'
-    ) -WindowStyle Hidden -Wait -PassThru
-    if ($result.ExitCode -notin @(0, 3010)) {
-        throw "Visual C++ runtime installation failed: $($result.ExitCode)"
-    }
-    $installed = Get-ItemProperty -LiteralPath $runtimeKey
-}
-if ($installed.Installed -ne 1 -or
-    [version]$installed.Version.TrimStart('v','V') -lt [version]'14.51.36247.0') {
-    throw 'Install the x64 Visual C++ runtime 14.51.36247.0 or newer'
-}
-```
-
-Replace `DEPLOYMENT_DIRECTORY` with the supplied folder, such as
-`C:\Temp\BfdWinService`. Exit code `3010` requires a restart before use; the
-command suppresses automatic restarts. An equal or newer runtime can be retained
-after checking its installed version. See [runtime provenance](../installer/redist/README.md)
-for the pinned installer and license. Then copy the console files:
-
-```powershell
-$deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
-$installDirectory = 'C:\Program Files\BfdWinService'
-New-Item -ItemType Directory -Path $installDirectory -Force
-foreach ($file in @(
-    'bfd-winservice.exe', 'Initialize-Logging.ps1'
-)) {
-    Copy-Item -LiteralPath (Join-Path $deploymentDirectory $file) `
-        -Destination $installDirectory
-}
-Get-ChildItem -LiteralPath $installDirectory | Select-Object Name
-```
-
-Replace `DEPLOYMENT_DIRECTORY` with the folder containing the supplied files,
-such as `C:\Temp\BfdWinService`. Adjust `$installDirectory` if your organization
-uses another location.
-
-PowerShell displays the destination folder and the two copied filenames.
-These files support console execution. Use the bundle for service execution;
-copying files doesn't create services, service identities, or access policies.
-
 <a id="install-the-windows-service"></a>
 
 ## Configure and verify the Windows service
 
 ### 1. Install the services
 
-If you haven't installed the package, follow [Install with the offline setup bundle](#install-with-the-offline-setup-bundle)
-to create both services with their accounts, service SIDs, dependencies, and
-protected ACLs. If the bundle is already installed, continue with the installed paths
-in this step.
-The installer migrates an existing built-in service account to LocalService and
-restores its previous account/SID settings if the transaction rolls back. Custom
-service accounts are rejected because their passwords cannot be restored safely.
-The [MSI installation check](../scripts/Test-MsiInstall.ps1) exercises actual
-SCM-created service tokens on a disposable runner, including RPC authentication,
-ETW delivery, and file writes. Follow this guide to verify your deployment too.
-BFD's service-mode startup checks the LocalService account, its enabled service
-group, and the BFD SID plus write-restricted marker in the restricting list
-before loading configuration, creating sockets, or registering its local RPC interface.
-Use the bundle to provision both services. With `BgpPeerName` configured, BFD startup
-also requires an authenticated connection to the broker's BGP control RPC interface.
-
-Set the installed paths for the remaining commands:
-
-```powershell
-$installDirectory = Join-Path $env:ProgramFiles 'BfdWinService'
-$exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
-```
-
-All session settings belong in the BFD Parameters registry key. Automatic
-(Delayed Start) starts BFD and its broker dependency shortly after Windows starts;
-finish configuration before starting the service. The bundle already registers the
-event manifest.
+Follow [Install with the offline setup bundle](#install-with-the-offline-setup-bundle)
+to provision both services and their security settings. If they're already
+installed, continue with configuration. For installed files, accounts,
+permissions, defaults, and recovery settings, see the
+[installation inventory](reference/installation.md).
 
 ### 2. Configure the session
 
@@ -347,27 +162,10 @@ Replace the following before running the commands:
 - `PEER_IP`: the remote peer's address, of the same address family.
 - `INTERFACE_INDEX`: the index from `Get-NetIPAddress`, such as `12`.
 
-The registry commands display the keys and values they create. The bundle already
-provisions logging defaults. For a loose-file console deployment, initialize
-those defaults with the supplied script:
-
-```powershell
-& (Join-Path $installDirectory 'Initialize-Logging.ps1')
-```
-
-The script creates `C:\ProgramData\BfdWinService`, displays the folder and registry
-objects, and prints this settings summary:
-
-```text
-LogFilePath (REG_SZ): C:\ProgramData\BfdWinService\trace.log
-LogToFile (REG_DWORD): 0
-```
-
-It doesn't create or write `trace.log`. Running it again resets `LogFilePath`
-and disables file output, so omit it when retaining existing logging settings.
-The default session uses single-hop.
-For authentication, multihop, or other settings, see the
-[registry configuration reference](configuration.md).
+The commands display the keys and values they create. The bundle already
+provisions logging defaults; see [file logging](logging.md#configure-file-logging)
+to change them. The default session is single-hop. For authentication,
+multihop, or other settings, use the [configuration reference](configuration.md).
 
 <a id="3-register-the-operational-log"></a>
 
@@ -399,8 +197,7 @@ The command returns without output on success.
 
 ### 5. Verify startup
 
-Cowabunga, verification crew. Check the process status separately. Check the
-Windows Service Control Manager (SCM) status:
+Cowabunga, verification crew. Check the Windows Service Control Manager (SCM) status:
 
 ```powershell
 Get-Service BfdWinService | Select-Object Name, Status, StartType
@@ -468,132 +265,26 @@ A turtle knows when to exit with cleanup, dude. To stop the session, run:
 Stop-Service BfdWinService
 ```
 
-The service reports `StopPending` with advancing checkpoints during cleanup,
-then `Stopped`. Stop and Shutdown initiate this status transition immediately.
-The engine sets `AdminDown` and never stops a configured BGP peer; if BFD had
-stopped the peer after a failure, the engine starts it again, as RFC 5882
-requires while BFD is disabled. With a communicating classical peer, it continues
-permitted announcements for one Detection Time, up to `MaxShutdownAnnounceMs`
-(30 seconds by default), before finishing cleanup. The installer sets the Windows
-preshutdown timeout to 125 seconds to cover announcements and cleanup. Other roles
-or sessions without a communicating peer attempt one role-permitted notification.
-See [shutdown behavior and limits](protocol.md#supported-modes-and-limits).
+The service reports `StopPending` during cleanup, then `Stopped`. An
+administrative stop announces `AdminDown` as the role permits and releases any
+BGP Stop previously requested by BFD. Cleanup can take time; see
+[shutdown behavior and limits](protocol.md#supported-modes-and-limits) and
+[BGP cleanup](bgp.md#provider-timeouts-and-final-cleanup).
+
+## Installation reference
+
+Inspect the [installed resources and firewall rules](reference/installation.md)
+or the [service isolation reference](security/service-isolation.md) when you need
+the deployment details.
+
+<a id="prepare-installation-files"></a>
 
 ## Run in a console
 
-Take the session on a foreground mission, turtle crew. Console execution reads
-the same Parameters registry values as service execution. Run it as
-Administrator when using the installer-protected key. Console mode does not authorize
-BGP operations; leave `BgpPeerName` and `BgpRoutingDomain` unset for foreground
-execution.
-
-Dude, stop an installed `BfdWinService` before running the same session in a
-console; both processes would otherwise compete for the same addresses and
-ports.
-
-### 1. Configure the registry values
-
-Set `$installDirectory` to the bundle installation folder or the folder from
-[Prepare installation files](#prepare-installation-files). Run the commands in
-[Configure the session](#2-configure-the-session) to provision the local/peer
-addresses, interface index, and default logging settings.
-
-### 2. Start the foreground session
-
-Start the installed executable in the foreground:
-
-```powershell
-$exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
-& $exe --console
-```
-
-Successful engine startup includes this standard output (STDOUT) message:
-
-```text
-TIMESTAMP service started mode=console
-```
-
-`TIMESTAMP` is the current time in Unix milliseconds. Messages, including
-configuration failures, go to STDOUT. Console execution doesn't register or write
-the ETW provider. See [Configure file logging](logging.md#configure-file-logging) for optional file
-output with ISO-8601 UTC timestamps.
-
-### 3. Verify the handshake
-
-For the real connection flex, configure the remote peer and confirm the console
-output contains `state=Up`. This confirms BFD establishment separately from the
-`service started` message.
-
-### 4. Stop the session
-
-Press **Ctrl+C**. The engine uses the same AdminDown announcements and BGP cleanup
-as [service shutdown](protocol.md#supported-modes-and-limits).
-
-Classical settings are read at startup. Stop execution, edit the registry, and
-restart to apply changes. For S-BFD timing updates, see
-[Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
-
-### Optional: Capture console output
-
-To save STDOUT instead of displaying it, start the console process with
-redirection:
-
-```powershell
-& $exe --console > 'C:\ProgramData\BfdWinService\console.log'
-```
-
-The output file contains console messages with Unix-millisecond timestamps.
-This shell redirection is separate from the `LogToFile` setting.
-
-<a id="remove-the-service-and-manifest"></a>
+For loose-file prerequisites and foreground execution, follow
+[Run BFD in a console](console.md).
 
 ## Remove a legacy manual installation
 
-Wrap up the old mission before the next pizza break. For a bundle installation,
-use [Remove a setup bundle installation](#remove-a-setup-bundle-installation). The following
-procedure removes services from a legacy manual installation.
-
-Use **PowerShell as Administrator** with the installed manifest path.
-
-### 1. Stop the service
-
-Finish service cleanup before removing its registration:
-
-```powershell
-Stop-Service BfdWinService
-Stop-Service BfdBgpBroker -ErrorAction SilentlyContinue
-```
-
-Confirm `Get-Service BfdWinService` reports `Stopped` before continuing.
-
-### 2. Unregister the manifest
-
-Remove the provider's manifest registration:
-
-```powershell
-$installDirectory = 'C:\Program Files\BfdWinService'
-$manifest = (Resolve-Path (Join-Path $installDirectory 'BFD-Service.man')).Path
-wevtutil.exe um $manifest
-if ($LASTEXITCODE -ne 0) {
-    throw 'BFD-Service manifest removal failed'
-}
-```
-
-A successful command returns without output. For registration and removal syntax,
-see Microsoft's [wevtutil commands](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil).
-
-### 3. Delete the service
-
-Remove the stopped service from SCM:
-
-```powershell
-sc.exe delete BfdWinService
-if (Get-Service BfdBgpBroker -ErrorAction SilentlyContinue) {
-    sc.exe delete BfdBgpBroker
-}
-```
-
-The command reports successful deletion. After SCM completes deletion,
-`Get-Service BfdWinService` no longer finds the service.
-
-For another fresh installation, return to [Install with the offline setup bundle](#install-with-the-offline-setup-bundle).
+For an older manually provisioned service, follow the
+[legacy removal procedure](reference/legacy-installation.md).
