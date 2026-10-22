@@ -20,6 +20,7 @@ evidence:
 
 | Topic | Review entries |
 | --- | --- |
+| Test maintenance | [Obsolete and duplicate test cleanup](#test-framework-cleanup--2026-10-22) |
 | Private local RPC | [BGP probe removal](#bgp-control-probe-removal--2026-10-22), [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
 | Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
 | Service reliability and security | [Independent startup](#independent-service-startup--2026-10-22), [Reliability follow-up](#reliability-follow-up--2026-10-09), and [reliability/security review](#reliability-and-security-review--2026-10-09) |
@@ -42,6 +43,29 @@ these later changes supersede descriptions in older entries:
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
+
+## Test framework cleanup — 2026-10-22
+
+Cowabunga, test crew. Review baseline: `d5d3ced`. Removed the idle-poll timing
+check and optional CIM enum-qualifier test after removal of those implementation
+paths. Consolidated duplicate RPC round-trip/shutdown and already-started BGP
+assertions into their existing behavior tests. The mixed caller/cancellation
+test duplicated stronger focused rejection and native cancellation tests, which
+remain in the suite. Five test cases retire in total.
+
+Removed the unused qualifier decoding helpers and their test-only native
+function signatures. The shared read-only MI fixture still drains a real class
+query under COM security and requires exactly one result. Both RPC/MI
+coexistence tests retain that coverage. CI and the validation guide reference
+the remaining tests. Production behavior and installed-service fixtures are
+unchanged.
+
+Validation: the full optimized suite passed, including 210 library tests with
+10 ignored provider checks and child entry points, plus integration and
+documentation tests. Both opt-in RPC/MI coexistence tests passed explicitly.
+The ASan library suite passed with emitted native RPC client hooks verified.
+Strict all-target Clippy, formatting, API documentation, Markdown links, and
+code fences passed. Local receipts are under `target/test-framework-cleanup`.
 
 ## Independent service startup — 2026-10-22
 

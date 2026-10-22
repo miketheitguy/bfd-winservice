@@ -323,44 +323,7 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
-    fn successful_action_stays_idle_until_another_bfd_action() {
-        let mailbox = Mailbox::default();
-        mailbox.0.lock().unwrap().push(Method::Start);
-        let (called, calls) = mpsc::channel();
-        thread::scope(|scope| {
-            let worker_mailbox = &mailbox;
-            let worker = scope.spawn(move || {
-                work(worker_mailbox, |method| {
-                    called.send(method).unwrap();
-                    if method == Method::Stop {
-                        worker_mailbox.0.lock().unwrap().closed = true;
-                    }
-                    Ok(())
-                })
-            });
-            assert_eq!(
-                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                Method::Start
-            );
-            // A successful action isn't replayed on an idle polling interval.
-            let idle = calls.recv_timeout(Duration::from_millis(1_200));
-            let mut pending = mailbox.0.lock().unwrap();
-            assert_eq!(pending.desired, Some(Method::Start));
-            pending.push(Method::Stop);
-            mailbox.1.notify_one();
-            drop(pending);
-            assert!(matches!(idle, Err(mpsc::RecvTimeoutError::Timeout)));
-            assert_eq!(
-                calls.recv_timeout(Duration::from_secs(3)).unwrap(),
-                Method::Stop
-            );
-            worker.join().unwrap().unwrap();
-            assert!(calls.try_recv().is_err());
-        });
-    }
-
-    #[test]
-    fn startup_handshake_preserves_bgp_until_bfd_first_establishes() {
+    fn bfd_does_not_control_bgp_until_the_first_up() {
         let controller = Controller {
             log: None,
             cancel: StopSignal::new().unwrap(),
@@ -396,32 +359,29 @@ mod tests {
     }
 
     #[test]
-    fn already_started_bgp_is_unchanged_when_bfd_establishes() {
-        assert!(!reconcile(
-            Method::Start,
-            || Ok(true),
-            |_| panic!("already started peer must not be changed"),
-            || true,
-        )
-        .unwrap());
-    }
-
-    #[test]
-    fn stopped_bgp_starts_on_bfd_up_and_restarts_after_later_failure() {
+    fn bfd_recovery_starts_only_stopped_bgp_peers() {
         let started = std::cell::Cell::new(false);
         let mut calls = Vec::new();
-        for method in [Method::Start, Method::Start, Method::Stop, Method::Start] {
-            reconcile(
-                method,
-                || Ok(started.get()),
-                |method| {
-                    calls.push(method);
-                    started.set(method == Method::Start);
-                    Ok(())
-                },
-                || true,
-            )
-            .unwrap();
+        for (method, changed) in [
+            (Method::Start, true),
+            (Method::Start, false),
+            (Method::Stop, true),
+            (Method::Start, true),
+        ] {
+            assert_eq!(
+                reconcile(
+                    method,
+                    || Ok(started.get()),
+                    |method| {
+                        calls.push(method);
+                        started.set(method == Method::Start);
+                        Ok(())
+                    },
+                    || true,
+                )
+                .unwrap(),
+                changed,
+            );
         }
         assert_eq!(calls, [Method::Start, Method::Stop, Method::Start]);
     }

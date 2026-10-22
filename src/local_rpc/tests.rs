@@ -210,28 +210,19 @@ fn isolated_client_result(endpoint: &str, user: &str, group: &str) -> i32 {
 }
 
 #[test]
-fn authenticated_native_lrpc_round_trip_and_shutdown() {
+fn session_status_round_trip_reads_published_view_and_detects_shutdown() {
     let user = current_user();
     let fixture = RpcFixture::start(&user);
     let endpoint = fixture.endpoint.clone();
-    query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
-    query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
-    fixture.stop();
-    assert!(query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).is_err());
-}
-
-#[test]
-fn session_status_round_trip_is_typed_and_reads_the_published_view() {
-    let user = current_user();
-    let fixture = RpcFixture::start(&user);
-    let status = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    let status = query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
     assert_eq!(status.local_state, crate::packet::State::Down);
     assert_eq!(status.peer_state, None);
     assert_eq!(status.last_valid_receive, None);
-    let next = query_with_policy(&fixture.endpoint, &user, AUTHENTICATED_USERS).unwrap();
+    let next = query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).unwrap();
     assert_eq!(next.engine_instance_id, status.engine_instance_id);
     assert_eq!(next.publication_sequence, status.publication_sequence);
     fixture.stop();
+    assert!(query_with_policy(&endpoint, &user, AUTHENTICATED_USERS).is_err());
 }
 
 #[test]
@@ -247,20 +238,6 @@ fn native_robust_stub_rejects_out_of_range_status_without_killing_the_client() {
             .invalid_data()
     );
     fixture.stop();
-}
-
-#[test]
-fn session_status_rejects_an_unauthorized_caller_and_bounds_cancellation() {
-    let user = current_user();
-    let rejected = RpcFixture::start(unrelated_account(&user));
-    let error = query_with_policy(&rejected.endpoint, &user, AUTHENTICATED_USERS).unwrap_err();
-    assert!(matches!(error, SessionStatusQueryError::Rpc(ref e) if e.raw_os_error() == Some(5)));
-    rejected.stop();
-    let delayed = RpcFixture::start_with_delay(&user, 2_500);
-    let started = Instant::now();
-    assert!(query_with_policy(&delayed.endpoint, &user, AUTHENTICATED_USERS).is_err());
-    assert!(started.elapsed() < Duration::from_secs(4));
-    delayed.stop();
 }
 
 #[test]

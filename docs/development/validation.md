@@ -26,12 +26,10 @@ Configuration validation and protocol modules are portable. Registry loading, Us
 
 Native tests use temporary `HKEY_CURRENT_USER` (HKCU) registry keys, private local RPC endpoints,
 local MI fixtures, and loopback UDP sockets. They do not change installed service
-settings or Border Gateway Protocol (BGP) peers. The read-only Common Information
-Model (CIM) schema test requires namespace access and is opt-in. Run it separately:
-
-```powershell
-cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
-```
+settings or Border Gateway Protocol (BGP) peers. The two
+[RPC/MI coexistence tests](#verify-native-rpc-boundaries) read a Common
+Information Model (CIM) class schema under the broker's COM security policy.
+They require namespace access and are opt-in.
 
 On a server with RRAS BGP configured, check the native status query against an
 existing peer. This test reads the peer without starting or stopping it:
@@ -44,9 +42,9 @@ Remove-Item Env:BFD_TEST_RRAS_PEER
 
 Replace `EXISTING_PEER_NAME` with a configured RRAS peer's name.
 
-The default suite leaves these provider tests and the native RPC/MI coexistence
-test opt-in. It also contains ignored RPC child fixtures that parent tests launch
-automatically; do not run those fixtures directly.
+The default suite leaves the RRAS query and both coexistence tests opt-in. It
+also contains ignored RPC child fixtures that parent tests launch automatically;
+do not run those fixtures directly.
 
 ## Verify native RPC boundaries
 

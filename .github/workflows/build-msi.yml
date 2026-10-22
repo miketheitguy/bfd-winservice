@@ -189,10 +189,8 @@ jobs:
           }
           "BFD_HARDENING_TEST_EXE=$($hardeningTests[0])" |
             Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
-      - name: Check native MI with COM security
+      - name: Check native RPC and MI coexistence
         run: |
-          cargo test-release --lib bgp_broker::mi::tests::native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored --exact
-          if ($LASTEXITCODE -ne 0) { throw 'Native MI compatibility with COM security failed.' }
           cargo test-release --lib local_rpc::tests::native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { throw 'In-process RPC/MI identity isolation failed.' }
           cargo test-release --lib bgp::ipc::tests::native_bgp_rpc_and_provider_security_coexist -- --ignored --exact

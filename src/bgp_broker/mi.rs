@@ -112,27 +112,6 @@ type GetClass = unsafe extern "system" fn(
     *mut *const u16,
     *mut *const MI_Instance,
 ) -> MI_Result;
-#[cfg(test)]
-type ClassGetElement = unsafe extern "system" fn(
-    *const MI_Class,
-    *const u16,
-    *mut MI_Value,
-    *mut u8,
-    *mut MI_Type,
-    *mut *mut u16,
-    *mut MI_QualifierSet,
-    *mut u32,
-    *mut u32,
-) -> MI_Result;
-#[cfg(test)]
-type GetQualifier = unsafe extern "system" fn(
-    *const MI_QualifierSet,
-    *const u16,
-    *mut MI_Type,
-    *mut u32,
-    *mut MI_Value,
-    *mut u32,
-) -> MI_Result;
 type Next<T> = unsafe extern "system" fn(
     *mut MI_Operation,
     *mut *const T,
@@ -643,104 +622,6 @@ unsafe fn element(
     Ok(value)
 }
 
-/// # Safety
-/// qualifiers must be borrowed from a live MI_Class; name must be terminated.
-#[cfg(test)]
-unsafe fn qualifier_strings(
-    qualifiers: &MI_QualifierSet,
-    name: *const u16,
-) -> io::Result<Vec<String>> {
-    let mut value = MI_Value::default();
-    let mut kind = 0;
-    let mut flags = 0;
-    let mut index = 0;
-    // SAFETY: live qualifier set and terminated name, exact SDK signature.
-    let result = unsafe {
-        let get: GetQualifier = entry((*qualifiers.ft).GetQualifier, "GetQualifier")?;
-        get(
-            qualifiers, name, &mut kind, &mut flags, &mut value, &mut index,
-        )
-    };
-    check(result, "read BGP status enum qualifier")?;
-    if kind != MI_STRINGA || flags & MI_FLAG_NULL != 0 {
-        return Err(io::Error::other(
-            "BGP status enum qualifier is not a string array",
-        ));
-    }
-    // SAFETY: successful accessor reported a non-null MI_STRINGA union member.
-    let array = unsafe { value.stringa };
-    if array.size == 0 {
-        return Ok(Vec::new());
-    }
-    if array.data.is_null() {
-        return Err(io::Error::other("null BGP status enum array"));
-    }
-    let length =
-        usize::try_from(array.size).map_err(|_| io::Error::other("BGP enum array is too large"))?;
-    // SAFETY: MI array contains size valid string pointers; class remains alive.
-    unsafe {
-        std::slice::from_raw_parts(array.data, length)
-            .iter()
-            .map(|&string| {
-                if string.is_null() {
-                    Err(io::Error::other("null BGP status enum string"))
-                } else {
-                    Ok(error_message(string))
-                }
-            })
-            .collect()
-    }
-}
-
-/// # Safety
-/// class must be a live MI class; property must be terminated UTF-16.
-#[cfg(test)]
-unsafe fn enum_mapping(
-    class: *const MI_Class,
-    property: *const u16,
-) -> io::Result<Vec<(u32, String)>> {
-    let mut qualifiers = MI_QualifierSet::default();
-    // SAFETY: caller guarantees live class/property; exact SDK signature.
-    let result = unsafe {
-        let get: ClassGetElement = entry((*(*class).ft).GetElement, "GetElement")?;
-        get(
-            class,
-            property,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &mut qualifiers,
-            ptr::null_mut(),
-            ptr::null_mut(),
-        )
-    };
-    check(result, "read BGP status enum metadata")?;
-    if qualifiers.ft.is_null() {
-        return Err(io::Error::other("BGP status enum metadata is missing"));
-    }
-    // SAFETY: qualifier set was populated from the still-live class above.
-    let (values, labels) = unsafe {
-        (
-            qualifier_strings(&qualifiers, w!("ValueMap"))?,
-            qualifier_strings(&qualifiers, w!("Values"))?,
-        )
-    };
-    if values.is_empty() || values.len() != labels.len() {
-        return Err(io::Error::other("BGP status enum metadata is incomplete"));
-    }
-    values
-        .into_iter()
-        .zip(labels)
-        .map(|(value, label)| {
-            value
-                .parse::<u32>()
-                .map(|value| (value, label))
-                .map_err(|_| io::Error::other("BGP status enum has an unsupported numeric mapping"))
-        })
-        .collect()
-}
-
 fn status_started(code: u32) -> io::Result<bool> {
     // RemoteAccess/PS_BgpPeer_v1.0.cdxml defines Bgp.ConnectivityStatus as
     // Idle=1, Connecting=2, Connected=3, Stopped=4. BgpPeerConfig does not
@@ -941,11 +822,17 @@ pub(super) fn rpc_schema_fixture() -> io::Result<()> {
     )?;
     // SAFETY: the class operation supplies the SDK GetClass accessor.
     let next: GetClass = unsafe { entry((*schema.handle.ft).GetClass, "GetClass") }?;
-    schema.drain(next, |class| {
-        // SAFETY: drain lends the live class for this callback only.
-        let _ = unsafe { enum_mapping(class, w!("InterfaceOperationalStatus")) }?;
+    let mut classes = 0;
+    schema.drain(next, |_| {
+        classes += 1;
         Ok(())
-    })
+    })?;
+    if classes != 1 {
+        return Err(io::Error::other(
+            "native provider fixture expected exactly one CIM class",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -978,39 +865,6 @@ mod tests {
         for code in [0, 5, u32::MAX] {
             assert!(status_started(code).is_err());
         }
-    }
-
-    #[cfg(not(miri))]
-    #[test]
-    #[ignore = "requires access to Windows CIM namespaces; run explicitly outside a restricted sandbox"]
-    fn native_mi_reads_enum_qualifiers_from_local_class_schema() {
-        // The broker initializes private process-wide COM security before native MI.
-        // Exercise a real provider under those defaults without changing BGP.
-        let _com = super::super::com::ComHost::initialize().unwrap();
-        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
-        let mut session = application.session().unwrap();
-        let mut options = application.options().unwrap();
-        // Read-only Windows network adapter schema; no BGP changes.
-        let mut schema = schema_operation(
-            &mut session,
-            &mut options,
-            w!("root/StandardCimv2"),
-            w!("MSFT_NetAdapter"),
-        )
-        .unwrap();
-        let mut mapping = None;
-        // SAFETY: class operation, exact SDK accessor signature.
-        let next: GetClass = unsafe { entry((*schema.handle.ft).GetClass, "GetClass") }.unwrap();
-        schema
-            .drain(next, |class| {
-                // SAFETY: class is lent by drain until the next result fetch/Close.
-                mapping = Some(unsafe { enum_mapping(class, w!("InterfaceOperationalStatus")) }?);
-                Ok(())
-            })
-            .unwrap();
-        let mapping = mapping.unwrap();
-        assert!(mapping.iter().any(|(value, _)| *value == 3));
-        assert!(schema.drained);
     }
 
     #[cfg(not(miri))]
