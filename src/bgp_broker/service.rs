@@ -225,7 +225,7 @@ fn start() -> io::Result<()> {
 }
 
 /// Ends the process when a provider call keeps cleanup running past the stop
-/// budget. The BFD service reconciles BGP state when the broker next starts.
+/// budget. Outstanding BFD actions retain their ordinary retry policy.
 fn abandon_cleanup(reporter: &mut Reporter) -> ! {
     if let Ok(mut log) = Logger::new(false) {
         log.broker_message(

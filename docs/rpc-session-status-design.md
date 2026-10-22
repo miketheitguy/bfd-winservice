@@ -66,9 +66,13 @@ mixed binaries from interpreting a call as the wrong operation. There is no
 legacy endpoint fallback. The `BFD_SESSION_STATUS_V1` record remains schema
 version `1`; the interface version is a separate contract.
 
-The BGP control interface stays at `BgpControl` version `1.0`. Its BFD-to-broker
-liveness operation verifies control authorization and detects broker restarts;
-the broker-to-BFD telemetry query does not replace it.
+The BGP control interface uses `BgpControl` version `2.0` at
+`BfdWinService.Bgp.v2`, exposing only fixed-target `Get`, `Start`, and `Stop`.
+Its eight-byte result contains provider status and a Boolean value. Version 2
+removes the former connection probe and broker-instance nonce; the changed
+interface and endpoint reject mismatched binaries. Deploy both executables from
+the same build. The [BGP provider reference](reference/bgp-provider.md) describes
+state-driven calls and failed-action retries.
 
 ## Session fields
 

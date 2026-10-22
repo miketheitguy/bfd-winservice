@@ -13,8 +13,9 @@ pair remains queued; Down discards queued Starts. An already issued call
 finishes before the next action runs, unless shutdown queues a newer final
 action, which cancels it.
 
-SCM restarts a crashed broker after five seconds; once it restarts, the BFD
-worker reconciles the latest requested action. A normal broker Stop does not trigger automatic restart.
+SCM restarts a crashed broker after five seconds. An outstanding failed action
+continues its normal retries; a completed action isn't replayed. A normal broker
+Stop does not trigger automatic restart.
 The broker supervises provider requests while Running as well as during Stop.
 If a request, including schema lookup and cleanup, remains active for 20 seconds,
 the watchdog exits the broker process and SCM recovery restarts it. The check
@@ -22,9 +23,9 @@ runs once per second; idle RPC waits do not count as stalled provider work.
 If Stop was requested, the broker reports Stopped before exiting, preventing an
 automatic restart.
 
-The BFD worker checks its broker connection once per idle second and compares
-the returned instance nonce to detect a restart. Recovery reapplies the latest
-requested action without inventing an action before the session establishes.
+When no action is pending, the BFD worker waits for a BFD state change. It sends
+no connection probes and doesn't track broker instances. Startup sends no BGP
+control calls; the first Up queries the peer before deciding whether to Start.
 
 BGP control uses authenticated `ncalrpc` with a two-second bind deadline and a
 30-second total call budget. A cancellation signal interrupts an in-flight call;
@@ -68,6 +69,6 @@ warning because the peer might classify the administrative stop as a failure.
 
 The broker calls [`PS_BgpPeer`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/ps-bgppeer) in `root\Microsoft\Windows\RemoteAccess` through Rust bindings to `mi.dll` and the [MI client API](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_session_invoke).
 
-At startup, [`PS_BgpPeer.Get`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/get-ps-bgppeer) reads the selected peer. The broker uses the `Bgp.ConnectivityStatus` contract in the Windows RemoteAccess module's `PS_BgpPeer_v1.0.cdxml`: `Idle=1`, `Connecting=2`, and `Connected=3` mean started; `Stopped=4` means stopped. This also works when the CIM property omits enum qualifiers. An unknown status returns an error and does not authorize Start. The BFD handshake runs independently.
+Before Start, [`PS_BgpPeer.Get`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/get-ps-bgppeer) reads the selected peer. The broker uses the `Bgp.ConnectivityStatus` contract in the Windows RemoteAccess module's `PS_BgpPeer_v1.0.cdxml`: `Idle=1`, `Connecting=2`, and `Connected=3` mean started; `Stopped=4` means stopped. This also works when the CIM property omits enum qualifiers. An unknown status returns an error and does not authorize Start. The BFD handshake runs independently.
 
 Each method receives a one-element `Name` string array and, when configured, `RoutingDomain`. [`Stop`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/stop-ps-bgppeer) also receives `Force=true`. All calls require successful MI completion. A status query also requires a non-null unsigned 32-bit `ReturnValue=0` and exactly one peer. Start and Stop can return empty output on RRAS; the broker reads the peer back and requires the requested started or stopped state before reporting success. Any explicit invalid or nonzero `ReturnValue` remains an error. Start checks for supersession before and after its status query; provider calls are not atomic with BFD state changes.

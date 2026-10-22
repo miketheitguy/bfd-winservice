@@ -84,7 +84,7 @@ Generate MIDL with `/nologo /env x64 /robust /Oicf /app_config`, separate `/clie
 
 Application-level permits and bounded nonblocking queues provide the hard work bound; interface `MaxCalls` is best effort and `MaxRpcSize` is ignored for local RPC. `RPC_C_OPT_CALL_TIMEOUT` is ignored for LRPC. Use native async notification, explicit deadlines, cancellation, and confirmed completion instead. Keep output, async state/event, binding, and referenced security allocations alive throughout cancel/drain/unbind/free.
 
-Define a finite supervision budget and a process-specific uncertain-ownership policy. Retain at most the planned worker(s), quarantine/mark telemetry unavailable, or terminate the affected process if safe lifetime cannot be maintained. Never free an active native stack, use forced thread termination, or create unbounded replacement workers. A fresh server instance nonce detects restart; it is not an authentication credential.
+Define a finite supervision budget and a process-specific uncertain-ownership policy. Retain at most the planned worker(s), quarantine/mark telemetry unavailable, or terminate the affected process if safe lifetime cannot be maintained. Never free an active native stack, use forced thread termination, or create unbounded replacement workers. Authenticate each functional call independently rather than relying on a prior connection check.
 
 ## Negative test matrix
 

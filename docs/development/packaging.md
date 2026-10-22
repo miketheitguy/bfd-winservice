@@ -258,8 +258,8 @@ developer machines. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is
 read-only and can run locally.
 
-The tests check both service accounts and SIDs, broker startup authorization
-from the actual LocalService token, denial of authenticated unrelated clients
+The tests check both service accounts and SIDs, mutual telemetry authorization
+using the actual service tokens, denial of authenticated unrelated clients
 on both private RPC interfaces after install, broker recovery, and repair, both
 executable versions, delayed start and recovery settings, SCM recovery after a
 broker crash, and log writes through the BFD service SID.

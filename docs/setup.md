@@ -215,7 +215,7 @@ Confirm `StartType` is `Automatic`; Windows reports delayed automatic services
 with this value. SCM `Running` means configuration is valid,
 sockets are open, and any configured
 Border Gateway Protocol (BGP) worker has started. BFD reaches `Up` separately;
-the initial BGP status query can also still be pending.
+that transition triggers the first BGP status query when control is configured.
 
 Configuration, file-log, and engine failures that end the service without a
 Stop request produce a nonzero SCM service-specific exit status, and SCM restarts

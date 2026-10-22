@@ -14,7 +14,7 @@ Deploy both executables from the same build, dude.
 | Caller → server | Endpoint / interface | Operation |
 | --- | --- | --- |
 | Broker → BFD | `BfdWinService.Local.v2` / `BfdLocal 2.0` | Read-only `GetSessionStatusV1` |
-| BFD → broker | `BfdWinService.Bgp.v1` / `BgpControl 1.0` | Connection check and fixed-target `Get`, `Start`, `Stop` |
+| BFD → broker | `BfdWinService.Bgp.v2` / `BgpControl 2.0` | Fixed-target `Get`, `Start`, `Stop` |
 
 Arrows show call initiation. Replies return on the same calls; neither interface
 defines server-initiated RPC callbacks. A familiar endpoint name doesn't pass

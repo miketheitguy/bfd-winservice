@@ -28,7 +28,7 @@ pub(crate) const SERVICE_SID: &str =
     "S-1-5-80-1071555646-3639003188-2623042311-1024194528-3093158512";
 pub(crate) const BROKER_SID: &str = "S-1-5-80-3301813337-1731295767-1225795713-3993009034-49020719";
 pub(crate) const BROKER_NAME: &str = "BfdBgpBroker";
-const ENDPOINT: &str = "BfdWinService.Bgp.v1";
+const ENDPOINT: &str = "BfdWinService.Bgp.v2";
 const CALL_TIMEOUT_MS: u32 = 30_000;
 const SHUTDOWN_TIMEOUT_MS: u32 = 20_000;
 const BIND_TIMEOUT_MS: u32 = 2_000;
@@ -49,7 +49,6 @@ extern "C" {
 #[repr(C)]
 #[derive(Default, Debug)]
 struct WireResult {
-    instance: u64,
     status: u32,
     value: u32,
 }
@@ -62,7 +61,6 @@ pub(crate) fn require_broker_identity() -> io::Result<()> {
 struct Policy {
     user: String,
     group: String,
-    instance: u64,
     sender: SyncSender<Request>,
     stop: StopSignal,
 }
@@ -105,7 +103,6 @@ impl Listener {
             .set(Policy {
                 user: user.to_owned(),
                 group: group.to_owned(),
-                instance: rand::random::<u64>().max(1),
                 sender,
                 stop,
             })
@@ -200,24 +197,14 @@ unsafe extern "C" fn bgp_rpc_control(
     if authorized != RPC_S_OK as u32 {
         return authorized;
     }
-    if operation > 3 {
+    if !(1..=3).contains(&operation) {
         return ERROR_INVALID_DATA;
     }
     let Some(policy) = POLICY.get() else {
         return ERROR_ACCESS_DENIED;
     };
-    // SAFETY: exclusive MIDL output record, all fields are integers.
-    unsafe {
-        output.write(WireResult {
-            instance: policy.instance,
-            ..WireResult::default()
-        });
-    }
     if policy.stop.is_requested() {
         return ERROR_SERVICE_NOT_ACTIVE;
-    }
-    if operation == 0 {
-        return RPC_S_OK as u32;
     }
     if ACTIVE
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -264,11 +251,7 @@ unsafe extern "C" fn bgp_rpc_control(
                 }
                 // SAFETY: output is still exclusive to this call.
                 unsafe {
-                    output.write(WireResult {
-                        instance: policy.instance,
-                        status,
-                        value,
-                    });
+                    output.write(WireResult { status, value });
                 }
                 return RPC_S_OK as u32;
             }
@@ -278,38 +261,27 @@ unsafe extern "C" fn bgp_rpc_control(
     }
 }
 
+#[derive(Default)]
 pub(crate) struct Client {
-    instance: Option<u64>,
     cancel: Option<StopSignal>,
-    healthy: bool,
 }
 impl Client {
-    pub(crate) fn new() -> Self {
-        Self {
-            instance: None,
-            cancel: None,
-            healthy: false,
-        }
-    }
     pub(crate) fn with_cancel(cancel: StopSignal) -> Self {
         Self {
             cancel: Some(cancel),
-            ..Self::new()
         }
     }
-    fn exchange(&mut self, operation: u32) -> io::Result<WireResult> {
+    fn exchange(&self, operation: u32) -> io::Result<WireResult> {
         crate::service_identity::verify_bfd_service_identity()?;
         let closing = self.cancel.as_ref().is_some_and(StopSignal::is_requested);
         let timeout = if closing {
             SHUTDOWN_TIMEOUT_MS
-        } else if operation == 0 {
-            BIND_TIMEOUT_MS
         } else {
             CALL_TIMEOUT_MS
         };
         let cancel = self.cancel.as_ref().filter(|_| !closing);
         let deadline = Instant::now() + Duration::from_millis(u64::from(timeout));
-        let result = loop {
+        loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             let remaining_ms = u32::try_from(remaining.as_millis())
                 .unwrap_or(timeout)
@@ -334,37 +306,19 @@ impl Client {
                 continue;
             }
             break result;
-        };
-        if result.is_err() {
-            self.healthy = false;
         }
-        result
     }
-    pub(crate) fn maintain(&mut self) -> io::Result<bool> {
-        let response = self.exchange(0)?;
-        let changed = !self.healthy || self.instance.is_some_and(|old| old != response.instance);
-        self.instance = Some(response.instance);
-        self.healthy = true;
-        Ok(changed)
-    }
-    pub(crate) fn probe(&mut self) -> io::Result<()> {
-        self.exchange(0).map(|_| ())
-    }
-    pub(crate) fn started(&mut self) -> io::Result<bool> {
+    pub(crate) fn started(&self) -> io::Result<bool> {
         let response = self.exchange(1)?;
-        self.instance = Some(response.instance);
-        self.healthy = true;
         local_rpc::check(response.status as i32)?;
         Ok(response.value != 0)
     }
-    pub(crate) fn invoke(&mut self, method: Method) -> io::Result<()> {
+    pub(crate) fn invoke(&self, method: Method) -> io::Result<()> {
         let response = self.exchange(match method {
             Method::Get => 1,
             Method::Start => 2,
             Method::Stop => 3,
         })?;
-        self.instance = Some(response.instance);
-        self.healthy = true;
         local_rpc::check(response.status as i32)
     }
 }
@@ -418,7 +372,7 @@ fn call_with_policy(
                 ));
             }
             local_rpc::check(status as i32)?;
-            if output.instance == 0 || output.value > 1 {
+            if output.value > 1 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "invalid BGP RPC result",

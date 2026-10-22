@@ -90,7 +90,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
         }
     };
     let result = (|| -> Result<(), Box<dyn Error>> {
-        // Startup can wait for the broker; advance StartPending checkpoints meanwhile.
+        // Advance StartPending checkpoints while initializing the engine.
         let mut engine = with_progress(&reporter, || -> Result<_, Box<dyn Error>> {
             // Require the SCM account and restricted service SID before opening
             // configured resources or accepting local RPC calls.
@@ -105,10 +105,6 @@ fn run_service() -> Result<(), Box<dyn Error>> {
                 ));
             }
             let options = load_registry(false)?;
-            // Only BGP control needs the broker; plain BFD starts without it.
-            if options.bgp_peer_name.is_some() {
-                bfd_winservice::bgp_broker::verify_connection()?;
-            }
             log.open_file(&options)?;
             Ok(Engine::from_config(options, &mut log)?)
         })?;

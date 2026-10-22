@@ -20,7 +20,7 @@ evidence:
 
 | Topic | Review entries |
 | --- | --- |
-| Private local RPC | [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
+| Private local RPC | [BGP probe removal](#bgp-control-probe-removal--2026-10-22), [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
 | Protocol requirements | [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09) and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
 | Service reliability and security | [Reliability follow-up](#reliability-follow-up--2026-10-09) and [reliability/security review](#reliability-and-security-review--2026-10-09) |
 | Deployment and observability | [MSI packaging](#msi-packaging-review--2026-10-08) and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
@@ -35,11 +35,45 @@ these later changes supersede descriptions in older entries:
 | Older description | Implemented behavior and reference |
 | --- | --- |
 | BGP control uses a named pipe, PID/SCM matching, or caller impersonation. | Both service channels use authenticated `ncalrpc`; BGP retains a separate interface and serialized provider worker. See [BGP RPC security](docs/rpc-authentication.md#bgp-control-over-local-rpc). |
+| BGP control uses a connection probe, broker-instance nonce, or restart-triggered replay. | `BgpControl` 2.0 exposes only Get/Start/Stop. BFD sends no startup or idle control calls and retries only outstanding failed actions. See [BGP worker behavior](docs/reference/bgp-provider.md#worker-retries-and-broker-recovery). |
 | An isolated broker child performs RPC connection checks, or invalid status stays quarantined until restart. | One worker inside the broker queries typed status. Rejected replies clear the cache and retry; only a stuck native worker quarantines telemetry. See [RPC session-status query](docs/rpc-session-status-design.md). |
 | Stop always stops BGP, or AdminDown never changes BGP. | Local or peer AdminDown releases a Stop issued by BFD by queuing Start; it leaves other peers untouched. See [BGP behavior](docs/bgp.md). |
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
+
+## BGP control probe removal — 2026-10-22
+
+Cowabunga, control crew. Review baseline: `0d488c9`. Removed the startup
+connection probe, startup-only provider status query, idle connection polling,
+broker-instance nonce, and restart-triggered replay of completed actions.
+The worker waits on its condition variable until a BFD action or shutdown;
+outstanding failed actions retain their existing retry and supersession rules.
+SCM recovery and the independent broker-to-BFD telemetry worker keep their
+existing behavior.
+
+The private BGP interface advances to `BgpControl` 2.0 at
+`BfdWinService.Bgp.v2`. Its result is eight bytes: provider status and Boolean
+value. MIDL and the manager accept only Get/Start/Stop opcodes `1..3`; the old
+probe opcode `0` is rejected. Both executables must come from the same build.
+Functional calls retain server identity pinning, per-call shared Authz checks,
+protected ACLs, bounded dispatch, native cancellation, and completion ownership.
+The client no longer tracks connection health or requires interior mutability.
+
+Validation: the full optimized suite passed, including 212 library tests with
+11 ignored installed/provider checks and child entry points. The ASan library
+run also passed 212 tests; the final focused BGP ASan run passed 27 tests with
+three ignored. The wrapper verified emitted native RPC ASan hooks. Regressions
+cover the reduced C/Rust result layout, rejection of opcode 0 and other invalid
+values, idle waiting after success, failed-action retries, authorization,
+cancellation, and shutdown. Strict all-target Clippy and API documentation
+checks passed, as did read-only native BGP RPC/MI coexistence and both
+production executable-hardening checks. Actual installed-service and live RRAS
+tests remain separate from these local fixtures.
+
+The BGP guide, provider and RPC references, setup and packaging guidance,
+source map, Mermaid runtime view, editable Draw.io source/PNG, and concrete
+RPC skill profile describe the reduced contract and state-driven behavior.
 
 ## RPC restricting-SID alignment — 2026-10-22
 

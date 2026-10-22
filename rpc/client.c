@@ -135,7 +135,7 @@ unsigned long bfd_rpc_call_status(void *binding, unsigned long timeout_ms,
  * process closed rather than freeing pending storage or hanging that join. */
 unsigned long bgp_rpc_bind(void *binding, unsigned long timeout_ms)
 {
-    return bind_async(binding, timeout_ms, BgpClient_BgpControl_v1_0_c_ifspec, TRUE);
+    return bind_async(binding, timeout_ms, BgpClient_BgpControl_v2_0_c_ifspec, TRUE);
 }
 
 unsigned long bgp_rpc_call(void *binding, unsigned long timeout_ms,

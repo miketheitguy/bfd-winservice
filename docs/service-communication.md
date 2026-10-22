@@ -24,7 +24,7 @@ Each interface keeps call initiation in one direction, dude:
 | Call initiator | RPC server | Endpoint (`ncalrpc`) | Operations |
 | --- | --- | --- | --- |
 | Broker's telemetry worker | BFD service | `BfdWinService.Local.v2` | `GetSessionStatusV1` |
-| BFD's BGP worker | BGP broker | `BfdWinService.Bgp.v1` | Control liveness check, `Get`, `Start`, `Stop` |
+| BFD's BGP worker | BGP broker | `BfdWinService.Bgp.v2` | `Get`, `Start`, `Stop` |
 
 Diagram arrows show **call initiation**, from client to server. BFD returns
 status replies to the broker; the broker returns control results to BFD
@@ -101,7 +101,7 @@ flowchart LR
         rt_monitor["<b>Status supervisor</b><br/>One RPC worker inside this process<br/>Provider work remains independent"]:::broker
         rt_cache["<b>Checked telemetry cache</b><br/>Validate the whole reply and its freshness<br/>Cache state never requests BGP actions"]:::cache
         rt_client["<b>[F] Session-status RPC client</b><br/>Initiates GetSessionStatusV1<br/>Pins LocalService and BFD service SID"]:::gate
-        rt_control["<b>[C / D] BGP server and provider worker</b><br/>BfdWinService.Bgp.v1 / BgpControl 1.0<br/>Authorizes BFD; serialized native MI"]:::broker
+        rt_control["<b>[C / D] BGP server and provider worker</b><br/>BfdWinService.Bgp.v2 / BgpControl 2.0<br/>Authorizes BFD; serialized native MI"]:::broker
     end
 
     rt_remote["<b>Remote BFD peer</b><br/>UDP BFD / S-BFD<br/>Firewall and path checks<br/>Wire auth defaults to none"]:::external
@@ -155,7 +155,7 @@ installed services roll through these paths:
    and converts the reply into checked Rust types before publishing its cache.
    There is no helper executable instance, stdout transport, or additional pipe.
 5. When `BgpPeerName` is configured, BFD's separate BGP worker sends `Get`,
-   `Start`, or `Stop` on the `ncalrpc` endpoint `BfdWinService.Bgp.v1`. The client
+   `Start`, or `Stop` on the `ncalrpc` endpoint `BfdWinService.Bgp.v2`. The client
    pins SYSTEM and the broker SID; the broker checks BFD through Authz without
    impersonation.
 6. The broker invokes native Management Infrastructure (MI) against the local
@@ -300,8 +300,7 @@ firewall filtering are separate gates.
 Turtle power follows engine state and the configured control policy. BGP control
 runs only when `BgpPeerName` is configured for classical BFD or an S-BFD
 initiator. Reflectors reject BGP control. Plain BFD still has the installed SCM
-dependency on the broker, but starts no BGP worker and makes no BGP RPC
-connection check.
+dependency on the broker, but starts no BGP worker and makes no BGP control calls.
 
 The packet engine owns state-driven actions. Read the [BGP action rules](bgp.md#verify-state-changes-and-actions)
 for startup, failure, recovery, and administrative disablement. The broker's

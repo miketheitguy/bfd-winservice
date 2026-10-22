@@ -15,7 +15,7 @@ unsigned long BgpServer_Control(handle_t binding, unsigned long operation,
 
 void *bgp_rpc_server_interface(void)
 {
-    return BgpServer_BgpControl_v1_0_s_ifspec;
+    return BgpServer_BgpControl_v2_0_s_ifspec;
 }
 
 unsigned long bgp_rpc_result_layout(unsigned long field)

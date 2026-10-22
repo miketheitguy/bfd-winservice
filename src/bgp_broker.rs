@@ -26,28 +26,7 @@ pub(crate) fn test_rpc_with_provider<R>(
     Ok(work(mi::rpc_schema_fixture))
 }
 
-/// Verify the installed broker's identity and the BFD service's RPC authorization.
-/// Provider errors do not prevent BFD startup; transport/authentication errors do.
-///
-/// # Errors
-/// Returns authentication, protocol, or connection errors after a bounded retry.
-pub fn verify_connection() -> io::Result<()> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    loop {
-        match ipc::Client::new().probe() {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if matches!(error.raw_os_error(), Some(1722 | 1723 | 1753))
-                    && std::time::Instant::now() < deadline =>
-            {
-                std::thread::sleep(std::time::Duration::from_millis(100))
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// Dispatch fixed installer/probe commands or enter the broker's SCM service.
+/// Dispatch fixed installer commands or enter the broker's SCM service.
 ///
 /// # Errors
 /// Returns command-line, installer-provisioning, or SCM errors.

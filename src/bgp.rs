@@ -118,25 +118,18 @@ impl Controller {
         let worker = thread::Builder::new()
             .name("bgp-ipc".into())
             .spawn(move || {
-                let client =
-                    std::cell::RefCell::new(ipc::Client::with_cancel(worker_cancel.clone()));
-                match client.borrow_mut().started() {
-                    Ok(started) => {
-                        log.log(format!("BGP peer={peer:?} startup started={started}; BFD handshake begins without changing BGP"));
-                    }
-                    Err(error) => {
-                        log.log(format!("BGP peer={peer:?} startup status check failed: {error}; will recheck when BFD reaches Up"));
-                    }
-                }
-                work_with_health(&worker_mailbox, |method| {
-                    let result = reconcile(method,
-                        || client.borrow_mut().started(),
-                        |method| client.borrow_mut().invoke(method),
-                        || start_is_current(&worker_mailbox));
+                let client = ipc::Client::with_cancel(worker_cancel.clone());
+                work(&worker_mailbox, |method| {
+                    let result = reconcile(
+                        method,
+                        || client.started(),
+                        |method| client.invoke(method),
+                        || start_is_current(&worker_mailbox),
+                    );
                     // Shutdown cancels a call superseded by the queued final action.
-                    if result.as_ref().is_err_and(|error|
-                        superseded_cancellation(&worker_mailbox, &worker_cancel, error))
-                    {
+                    if result.as_ref().is_err_and(|error| {
+                        superseded_cancellation(&worker_mailbox, &worker_cancel, error)
+                    }) {
                         log.log(format!(
                             "BGP peer={peer:?} method={} superseded at service shutdown",
                             method.name()
@@ -155,7 +148,7 @@ impl Controller {
                         )),
                     }
                     result.map(|_| ())
-                }, || client.borrow_mut().maintain())
+                })
             })?;
         Ok(Some(Self {
             mailbox,
@@ -247,8 +240,7 @@ fn reconcile(
             if !start_is_current() {
                 return Ok(false);
             }
-            // The peer may have changed since startup or a failed method call.
-            // Check again at Up rather than act on an old snapshot.
+            // Read the peer at Up rather than assume its state or use an old snapshot.
             let started = query()?;
             // BFD may have gone Down while this potentially slow query ran.
             if started || !start_is_current() {
@@ -280,37 +272,16 @@ fn superseded_cancellation(mailbox: &Mailbox, cancel: &StopSignal, error: &io::E
             .is_empty()
 }
 
-#[cfg(test)]
 fn work(mailbox: &Mailbox, mut invoke: impl FnMut(Method) -> io::Result<()>) -> io::Result<()> {
-    work_with_health(mailbox, &mut invoke, || Ok(false))
-}
-
-fn work_with_health(
-    mailbox: &Mailbox,
-    mut invoke: impl FnMut(Method) -> io::Result<()>,
-    mut health: impl FnMut() -> io::Result<bool>,
-) -> io::Result<()> {
     let (mutex, ready) = &**mailbox;
     let mut last_failure = None;
     loop {
         let method = {
             let mut pending = mutex.lock().unwrap_or_else(|error| error.into_inner());
             while pending.methods.is_empty() && !pending.closed {
-                let (next, timeout) = ready
-                    .wait_timeout(pending, Duration::from_secs(1))
+                pending = ready
+                    .wait(pending)
                     .unwrap_or_else(|error| error.into_inner());
-                pending = next;
-                if timeout.timed_out() && pending.methods.is_empty() && !pending.closed {
-                    // RPC health checks and reconnects never hold the engine's lock.
-                    drop(pending);
-                    let reconnected = health();
-                    pending = mutex.lock().unwrap_or_else(|error| error.into_inner());
-                    if matches!(reconnected, Ok(true)) && !pending.closed {
-                        if let Some(desired) = pending.desired {
-                            pending.push(desired);
-                        }
-                    }
-                }
             }
             let Some(method) = pending.methods.pop_front() else {
                 return last_failure.map_or(Ok(()), Err);
@@ -352,82 +323,33 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
-    fn reconnection_reapplies_up_but_never_mutates_during_cold_start() {
-        for established in [false, true] {
-            let mailbox = Mailbox::default();
-            if established {
-                mailbox.0.lock().unwrap().push(Method::Start);
-            }
-            let mut calls = Vec::new();
-            work_with_health(
-                &mailbox,
-                |method| {
-                    calls.push(method);
-                    if calls.len() == 2 {
-                        mailbox.0.lock().unwrap().closed = true;
-                    }
-                    Ok(())
-                },
-                || {
-                    let mut pending = mailbox
-                        .0
-                        .try_lock()
-                        .expect("health check must not hold engine lock");
-                    if !established {
-                        pending.closed = true;
-                    }
-                    Ok(true)
-                },
-            )
-            .unwrap();
-            assert_eq!(
-                calls,
-                if established {
-                    vec![Method::Start, Method::Start]
-                } else {
-                    vec![]
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn down_during_reconnect_supersedes_up_without_blocking_the_mailbox() {
+    fn successful_action_stays_idle_until_another_bfd_action() {
         let mailbox = Mailbox::default();
         mailbox.0.lock().unwrap().push(Method::Start);
         let (called, calls) = mpsc::channel();
-        let (checking, checks) = mpsc::channel();
-        let (release, blocked) = mpsc::channel();
         thread::scope(|scope| {
             let worker_mailbox = &mailbox;
             let worker = scope.spawn(move || {
-                work_with_health(
-                    worker_mailbox,
-                    |method| {
-                        called.send(method).unwrap();
-                        if method == Method::Stop {
-                            worker_mailbox.0.lock().unwrap().closed = true;
-                        }
-                        Ok(())
-                    },
-                    || {
-                        checking.send(()).unwrap();
-                        blocked.recv_timeout(Duration::from_secs(3)).unwrap();
-                        Ok(true)
-                    },
-                )
+                work(worker_mailbox, |method| {
+                    called.send(method).unwrap();
+                    if method == Method::Stop {
+                        worker_mailbox.0.lock().unwrap().closed = true;
+                    }
+                    Ok(())
+                })
             });
             assert_eq!(
                 calls.recv_timeout(Duration::from_secs(3)).unwrap(),
                 Method::Start
             );
-            checks.recv_timeout(Duration::from_secs(3)).unwrap();
-            mailbox
-                .0
-                .try_lock()
-                .expect("reconnect blocked the engine")
-                .push(Method::Stop);
-            release.send(()).unwrap();
+            // A successful action isn't replayed on an idle polling interval.
+            let idle = calls.recv_timeout(Duration::from_millis(1_200));
+            let mut pending = mailbox.0.lock().unwrap();
+            assert_eq!(pending.desired, Some(Method::Start));
+            pending.push(Method::Stop);
+            mailbox.1.notify_one();
+            drop(pending);
+            assert!(matches!(idle, Err(mpsc::RecvTimeoutError::Timeout)));
             assert_eq!(
                 calls.recv_timeout(Duration::from_secs(3)).unwrap(),
                 Method::Stop

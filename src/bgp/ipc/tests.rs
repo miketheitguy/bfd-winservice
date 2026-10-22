@@ -186,24 +186,22 @@ fn serve_fixture(directory: PathBuf, provider: Option<fn() -> io::Result<()>>) {
 }
 
 #[test]
-fn native_control_round_trip_and_probe_never_mutates() {
+fn native_control_round_trip_exposes_only_get_start_and_stop() {
     let fixture = Fixture::start(&user(), WORLD, 0, true);
-    let probe = fixture
-        .call(0)
-        .unwrap_or_else(|error| panic!("{error}: {}", fixture.log()));
-    assert_ne!(probe.instance, 0);
-    assert!(fixture.calls().is_empty());
     for (operation, value) in [(1, 1), (2, 1), (3, 0)] {
         let reply = fixture.call(operation).unwrap();
-        assert_eq!(
-            (reply.instance, reply.status, reply.value),
-            (probe.instance, 0, value)
-        );
+        assert_eq!((reply.status, reply.value), (0, value));
     }
     // Each call uses a new connection; closing it causes no provider operation.
     assert_eq!(fixture.calls(), "Get\nStart\nStop\n");
-    assert_eq!(fixture.call(99).unwrap_err().raw_os_error(), Some(1783));
-    fixture.call(0).unwrap();
+    for operation in [0, 4, 99, u32::MAX] {
+        assert_eq!(
+            fixture.call(operation).unwrap_err().raw_os_error(),
+            Some(1783)
+        );
+    }
+    assert_eq!(fixture.calls(), "Get\nStart\nStop\n");
+    fixture.call(1).unwrap();
     fixture.stop();
 }
 
@@ -211,7 +209,7 @@ fn native_control_round_trip_and_probe_never_mutates() {
 fn native_control_denies_wrong_caller_account_and_missing_service_group() {
     for (account, group) in [(wrong_user().to_owned(), WORLD), (user(), SERVICE_SID)] {
         let fixture = Fixture::start(&account, group, 0, true);
-        for operation in 0..=3 {
+        for operation in 1..=3 {
             assert_eq!(
                 fixture.call(operation).unwrap_err().kind(),
                 io::ErrorKind::PermissionDenied
@@ -236,7 +234,6 @@ fn native_control_pins_server_account_and_group() {
 #[test]
 fn unconfigured_control_authenticates_but_never_calls_provider() {
     let fixture = Fixture::start(&user(), WORLD, 0, false);
-    fixture.call(0).unwrap();
     for operation in 1..=3 {
         assert_eq!(fixture.call(operation).unwrap().status, NOT_CONFIGURED);
     }
@@ -329,7 +326,8 @@ fn bounded_dispatch_discards_a_cancelled_queued_mutation() {
 #[test]
 fn production_entrypoints_require_installed_service_identity() {
     assert!(require_broker_identity().is_err());
-    assert!(Client::new().probe().is_err());
+    assert!(Client::default().started().is_err());
+    assert!(Client::default().invoke(Method::Start).is_err());
     assert!(Listener::new(StopSignal::new().unwrap()).is_err());
 }
 
@@ -378,7 +376,7 @@ fn anonymous_control_and_runtime_management_are_denied() {
     // SAFETY: no native call retains the uniquely owned classic binding.
     local_rpc::check(unsafe { RpcBindingFree(&mut raw) }).unwrap();
     assert!(fixture.calls().is_empty());
-    fixture.call(0).unwrap();
+    fixture.call(1).unwrap();
     fixture.stop();
 }
 
@@ -408,7 +406,6 @@ mod restricted;
 #[ignore = "read-only native MI with the BGP RPC listener and management deny policy"]
 fn native_bgp_rpc_and_provider_security_coexist() {
     let fixture = Fixture::with_provider(&user(), WORLD, 0, true, true);
-    fixture.call(0).unwrap();
     fixture.call(1).unwrap();
     fixture.call(1).unwrap();
     assert_eq!(fixture.calls(), "Get\nGet\n");
@@ -424,7 +421,7 @@ fn installed_broker_rejects_unrelated_rpc_caller() {
     );
     // The installer leaves BGP unconfigured; even a regression cannot select a
     // live peer. Exercise every valid opcode, including Start and Stop.
-    for operation in 0..=3 {
+    for operation in 1..=3 {
         let error =
             call_with_policy(ENDPOINT, "S-1-5-18", BROKER_SID, operation, 2_000, None).unwrap_err();
         assert_eq!(

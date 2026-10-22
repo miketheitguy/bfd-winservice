@@ -21,8 +21,8 @@ page:
 ## BFD authenticates the broker
 
 Ninja discipline checks who actually owns the endpoint. BFD calls the broker's
-`BgpControl` version `1.0` interface at the fixed `ncalrpc` endpoint
-`BfdWinService.Bgp.v1`. It uses the same binding helper as the telemetry query,
+`BgpControl` version `2.0` interface at the fixed `ncalrpc` endpoint
+`BfdWinService.Bgp.v2`. It uses the same binding helper as the telemetry query,
 with the server identities reversed: LocalSystem and the
 `NT SERVICE\BfdBgpBroker` SID must both satisfy the V5 server security
 descriptor. `QOS.Sid` also pins LocalSystem. An endpoint name alone never
@@ -69,11 +69,12 @@ callers or opens peer process tokens.
 
 ### Fixed operations and bounded dispatch
 
-Keep the operation list tight before anyone gets to kick shell: the robust MIDL contract admits only a connection check
-and `Get`, `Start`, or `Stop`, with a fixed 16-byte result containing a
-broker-instance nonce, provider status, and a Boolean value. The nonce detects
-restarts; it is not authentication evidence. There is no custom byte frame or
-application connection sequence. RPC supplies authenticated message protection.
+Keep the operation list tight before anyone gets to kick shell: the robust MIDL
+contract admits only `Get`, `Start`, or `Stop`, with a fixed eight-byte result
+containing 32-bit provider status and Boolean value fields. Each functional call
+authenticates independently. There is no connection probe, broker-instance
+tracking, custom byte frame, or application connection sequence. RPC supplies
+authenticated message protection.
 Neither RPC dispatch nor a transport disconnect independently requests a
 provider mutation.
 

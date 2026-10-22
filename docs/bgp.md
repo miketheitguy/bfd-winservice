@@ -20,8 +20,7 @@ Get the mission prerequisites lined up, turtle crew. Preflight check, buddy: the
 peer must already exist on a Windows Server with Remote Access/BGP configured.
 Install the setup bundle: BGP control requires the installed service identities and is
 unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
-native MI query is started. The broker still starts as a service dependency and
-answers a read-only startup connection check when BGP control is configured.
+native MI query is started. The broker still starts as a service dependency.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
@@ -87,10 +86,10 @@ Start-Service BfdWinService
 Starting BFD starts its broker dependency. Do not stop the broker while BFD is
 running except during coordinated maintenance.
 
-The startup connection check validates the broker's identity and client
-authorization without querying the provider. A missing or unreadable BGP peer
-doesn't prevent BFD startup. Check the initial status-query log and
-later broker results to confirm the configured target is usable.
+BFD startup and the initial handshake send no BGP control requests. The first
+BFD Up triggers a status query; check its result and subsequent broker events
+to confirm the configured target is usable. Every functional RPC call checks
+the broker's identity and authorizes BFD.
 
 ## Verify state changes and actions
 
@@ -99,7 +98,7 @@ the BFD logs and BGP peer status. The worker applies these actions:
 
 | BFD condition | BGP action |
 | --- | --- |
-| Startup and handshake before the first Up | Read status; leave BGP unchanged |
+| Startup and handshake before the first Up | No BGP control calls; leave BGP unchanged |
 | Enter Up, including recovery | Check status; Start if the peer is stopped and the action is still current |
 | Enter Down after BFD has been Up | Stop |
 | Peer signals AdminDown, for example because its BFD service stopped | Never Stop; if BFD's latest action was a Stop, Start the peer |
@@ -157,8 +156,10 @@ changes the peer merely because the RPC caller disconnects or because the broker
 ## Worker retries and broker recovery
 
 The BFD worker retries a failed action while packet processing continues. After
-a broker crash, SCM restarts the broker and the worker reconciles its latest
-requested action. An RPC disconnect alone doesn't stop BGP. A normal
+a broker crash, SCM restarts the broker. A pending failed action can then retry;
+a completed action stays completed. The worker sends no idle probes and doesn't
+detect broker restarts or replay completed actions. The next BFD transition
+requests its normal action. An RPC disconnect alone doesn't stop BGP. A normal
 administrator Stop doesn't trigger automatic restart.
 
 Watch the peer state and events together after restoring a failed path. For
