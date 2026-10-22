@@ -258,6 +258,7 @@ jobs:
             target/installer/*.log
             target/installer/bundle-install-validation.json
             target/installer/upgrade-validation.json
+            target/installer/upgrade-policy-mismatch.json
             target/bundle-build/**/*.log
 
   publish-release:

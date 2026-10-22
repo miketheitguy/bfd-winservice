@@ -77,6 +77,10 @@ function Get-ServicePolicy {
         if ($LASTEXITCODE -ne 0) { throw "Cannot read $name service ACL." }
         $values = @(foreach ($value in @('Start','DelayedAutoStart','ServiceSidType','RequiredPrivileges',
             'FailureActions','FailureActionsOnNonCrashFailures','PreshutdownTimeout','DependOnService')) {
+            # BFD dependencies are checked separately: rollback restores the old
+            # list, while upgrade/repair deliberately clear it. Keep the broker's
+            # dependency policy in this exact-preservation comparison.
+            if ($name -eq 'BfdWinService' -and $value -eq 'DependOnService') { continue }
             [ordered]@{Name=$value;Present=$value -in $key.GetValueNames();Value=$key.GetValue($value)}
         })
         [ordered]@{Name=$name;Account=$service.StartName;Path=$service.PathName;Acl=$descriptor;Values=$values}
@@ -84,10 +88,21 @@ function Get-ServicePolicy {
     ConvertTo-Json -InputObject $policy -Depth 10 -Compress
 }
 function Assert-Preserved {
-    if ((Get-Configuration) -cne $script:configuration -or
-        (Get-ServicePolicy) -cne $script:servicePolicy -or
-        (Get-Content -LiteralPath $sentinel -Raw) -cne $script:sentinelText) {
-        throw 'Upgrade or rollback changed administrator settings, service policy, or generated logs.'
+    param([Parameter(Mandatory)][string]$Phase)
+    if ((Get-Configuration) -cne $script:configuration) {
+        # Configuration contains authentication material; never dump its values.
+        throw "$Phase changed administrator settings (values omitted)."
+    }
+    $actualPolicy = Get-ServicePolicy
+    if ($actualPolicy -cne $script:servicePolicy) {
+        $diagnostic = Join-Path $outputDirectory 'upgrade-policy-mismatch.json'
+        [ordered]@{Phase=$Phase;Expected=($script:servicePolicy | ConvertFrom-Json);
+            Actual=($actualPolicy | ConvertFrom-Json)} |
+            ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $diagnostic -Encoding UTF8
+        throw "$Phase changed service policy; see $diagnostic"
+    }
+    if ((Get-Content -LiteralPath $sentinel -Raw) -cne $script:sentinelText) {
+        throw "$Phase changed the generated log fixture."
     }
 }
 function Assert-UpgradedFirewall {
@@ -135,7 +150,7 @@ try {
         throw 'The failed-upgrade fixture did not reach its deferred failure action.'
     }
     Assert-Version $PreviousVersion
-    Assert-Preserved
+    Assert-Preserved -Phase 'Failed-upgrade rollback'
     $restoredDependencies = @((Get-Service BfdWinService).ServicesDependedOn | ForEach-Object Name)
     if (($restoredDependencies -join [char]0) -cne ($previousBfdDependencies -join [char]0)) { throw 'Failed upgrade did not restore the published service dependencies.' }
     $restoredHashes = @('bfd-winservice.exe','bfd-bgp-broker.exe' | ForEach-Object {
@@ -147,12 +162,12 @@ try {
     $cleanupSetup = $setup
     Assert-Version $ExpectedVersion
     Assert-UpgradedFirewall
-    Assert-Preserved
+    Assert-Preserved -Phase 'Upgrade'
     if (@((Get-Service BfdWinService).ServicesDependedOn).Count -ne 0) { throw 'Upgrade retained the obsolete broker dependency.' }
     Invoke-Setup $setup '/repair' 'upgrade-repair.log'
     Assert-Version $ExpectedVersion
     Assert-UpgradedFirewall
-    Assert-Preserved
+    Assert-Preserved -Phase 'Repair'
     if (@((Get-Service BfdWinService).ServicesDependedOn).Count -ne 0) { throw 'Repair restored the obsolete broker dependency.' }
     $since = Get-Date
     Start-Service BfdBgpBroker
@@ -168,7 +183,8 @@ try {
     if ($events.Count -eq 0) { throw 'Upgraded services did not mutually authenticate through local RPC.' }
     Stop-Service BfdWinService
     Stop-Service BfdBgpBroker
-    Assert-Preserved
+    Assert-Preserved -Phase 'Service restart'
+    if (@((Get-Service BfdWinService).ServicesDependedOn).Count -ne 0) { throw 'Service startup restored the obsolete broker dependency.' }
     Invoke-Setup $setup '/uninstall' 'upgrade-uninstall.log'
     $installed = $false
     if (Get-Service BfdWinService,BfdBgpBroker -ErrorAction SilentlyContinue) { throw 'Upgrade uninstall left a service installed.' }
