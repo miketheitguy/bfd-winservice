@@ -322,8 +322,7 @@ including when a test fails.
 
 ### Publish a GitHub release
 
-Pizza time comes after the release checks, dude. Pushing a version tag or
-manually running the workflow on that tag publishes a
+Pizza time comes after the release checks, dude. Pushing a version tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
 the sanitizer, fuzz, build, hardening, and installation checks pass. The release
 attaches the offline setup bundle and its SHA-256 checksum, using
