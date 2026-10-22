@@ -135,7 +135,11 @@ fn peer_packet(state: State) -> ControlPacket {
 
 #[test]
 fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
-    for kind in [AuthType::MeticulousMd5, AuthType::MeticulousSha1] {
+    for kind in [
+        AuthType::MeticulousMd5,
+        AuthType::KeyedSha1,
+        AuthType::MeticulousSha1,
+    ] {
         let log = test_log("authentication");
         let mut options = options("127.0.0.50", "127.0.0.51", "multihop");
         options.passive = true;

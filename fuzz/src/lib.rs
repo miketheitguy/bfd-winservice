@@ -296,6 +296,7 @@ pub fn check_session(data: &[u8]) {
     let mut session = Session::from_config(config.clone());
     let mut reference = Session::from_config(config);
     let mut now = Instant::now();
+    let sequence_offset = compare_classical_transmission(&mut session, &mut reference, &auth, now);
     for frame in frames.chunks(FRAME_LEN).take(MAX_STEPS) {
         let Some((&action, rest)) = frame.split_first() else {
             continue;
@@ -360,7 +361,40 @@ pub fn check_session(data: &[u8]) {
             }
             _ => unreachable!("three action bits have eight values"),
         }
+        // Exercise both a potential cache refresh and its unchanged retry.
+        // Independent random initial sequences retain a constant offset: a
+        // rejected input must not invalidate only one sender's cache.
+        for _ in 0..2 {
+            assert_eq!(
+                compare_classical_transmission(&mut session, &mut reference, &auth, now),
+                sequence_offset
+            );
+        }
         assert_eq!(Snapshot::of(&session), Snapshot::of(&reference));
+    }
+}
+
+fn compare_classical_transmission(
+    session: &mut Session,
+    reference: &mut Session,
+    auth: &AuthConfig,
+    now: Instant,
+) -> Option<u32> {
+    let packet = session.packet_at(false, now);
+    let expected = reference.packet_at(false, now);
+    assert_eq!(
+        ControlPacket::decode(&packet),
+        ControlPacket::decode(&expected)
+    );
+    match (
+        auth.verify(&packet, None)
+            .expect("sender authenticates its packet"),
+        auth.verify(&expected, None)
+            .expect("reference authenticates its packet"),
+    ) {
+        (Some(actual), Some(expected)) => Some(actual.wrapping_sub(expected)),
+        (None, None) => None,
+        _ => panic!("identical authentication modes disagree on sequence presence"),
     }
 }
 

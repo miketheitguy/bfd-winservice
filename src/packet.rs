@@ -14,9 +14,15 @@ const MAX_PACKET_LEN: usize = HEADER_LEN + 8 + 20;
 const AUTH: u8 = 0x04;
 
 /// Bounded wire storage for runtime transmissions without heap allocation.
+#[derive(Clone)]
 pub(crate) struct PacketBuffer {
     bytes: [u8; MAX_PACKET_LEN],
     length: u8,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static DIGEST_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl std::ops::Deref for PacketBuffer {
@@ -147,6 +153,8 @@ impl AuthConfig {
     }
 
     fn digest(&self, header: &[u8]) -> [u8; 20] {
+        #[cfg(test)]
+        DIGEST_CALLS.with(|count| count.set(count.get() + 1));
         let mut padded_key = [0; 20];
         padded_key[..self.key.len()].copy_from_slice(&self.key);
         let key = &padded_key[..self.kind.hash_len()];

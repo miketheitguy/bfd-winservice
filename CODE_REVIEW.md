@@ -22,7 +22,7 @@ evidence:
 | --- | --- |
 | Test maintenance | [Obsolete and duplicate test cleanup](#test-framework-cleanup--2026-10-22) |
 | Private local RPC | [BGP probe removal](#bgp-control-probe-removal--2026-10-22), [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
-| Protocol requirements | [Meticulous MD5 restoration](#meticulous-keyed-md5--2026-10-22), [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09), and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
+| Protocol requirements | [Keyed SHA1 digest reuse](#keyed-sha1-digest-reuse--2026-10-22), [Meticulous MD5 restoration](#meticulous-keyed-md5--2026-10-22), [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09), and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
 | Service reliability and security | [Independent startup](#independent-service-startup--2026-10-22), [Reliability follow-up](#reliability-follow-up--2026-10-09), and [reliability/security review](#reliability-and-security-review--2026-10-09) |
 | Deployment and observability | [MSI upgrade validation](#msi-upgrade-validation--2026-10-22), [MSI packaging](#msi-packaging-review--2026-10-08), and [state/diagnostic logging](#state-and-diagnostic-logging-review--2026-10-08) |
 | Earlier Rust remediation | [rust-security remediation](#rust-security-remediation--2026-10-08), [rust-check remediation](#rust-check-remediation--2026-10-07), and [review before remediation](#review-before-remediation--2026-10-07) |
@@ -43,6 +43,40 @@ these later changes supersede descriptions in older entries:
 | Shutdown announces once or uses a five-second cap. | Classical communicating sessions announce for the longer Detection Time, bounded by `MaxShutdownAnnounceMs` (default 30 seconds). See [shutdown behavior](docs/protocol.md). |
 | Release images include full PDBs, the service has no native C, or no CI exists. | Production images omit symbols/PDBs; the RPC bridge includes compiled native C; tagged releases run the [Windows MSI workflow](.github/workflows/build-msi.yml). See [build instructions](CONTRIBUTING.md). |
 | One Automatic LocalSystem service is installed with WiX 5, and restricted service SIDs remain unevaluated. | WiX 7 packages delayed-start LocalService BFD with a restricted service SID and a separate LocalSystem broker. See [bundle installation](docs/setup.md#install-with-the-offline-setup-bundle) and [security boundaries](docs/security.md). |
+
+## Keyed SHA1 digest reuse — 2026-10-22
+
+Cowabunga, packet crew. Review baseline: `8ba3c1b`. Rechecked
+[RFC 5880 sections 6.7.4 and 9](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.7.4).
+Classical keyed SHA1 now reuses the last successfully transmitted packet while
+its control fields match and its age is less than one second. That interval is
+a local policy, not an RFC requirement. State changes invalidate the cache even
+if state returns before the next send. Changed contents or expiry advance the
+sequence once; elapsed idle time doesn't skip sequences. Failed sends don't
+commit an entry or sequence.
+
+The cache owns one bounded wire buffer and header, with no additional key copy,
+allocation, unsafe code, shared state, or lock. Authentication settings stay
+immutable for the session. Receive verification remains per packet. Both
+meticulous modes retain per-packet sequence progression. S-BFD keeps unique
+initiator sequences and stateless reflector signing; classical reuse cannot
+weaken its outstanding-probe consumption checks. See the
+[sender policy and replay tradeoff](docs/security/authentication-performance.md#hash-cost-and-sequence-frequency).
+
+Validation: debug, optimized, and Rust/native ASan suites each passed with 213
+library tests, 68 integration tests, and three doctests. Ten library provider
+checks/child entry points and one installed reflector check remain ignored by
+default. Regressions verify digest-call avoidance, expiry, wraparound,
+header/state changes, and failed-send preservation. Native UDP authentication
+and wrapped S-BFD correlation now also cover non-meticulous SHA1. The classical
+fuzz oracle compares authenticated transmission and relative sequence progress
+against a session that skips rejected input; nine harness tests and four ASan
+campaigns of 10,000 runs passed with nonzero coverage. Strict root/fuzz Clippy,
+formatting, API documentation, Markdown checks, and both production executable
+hardening checks passed. An initial sandboxed run blocked existing native
+registry/token/RPC fixtures; the normal-token run passed. Receipts are under
+`target/non-meticulous-sha1`. These checks don't measure deployment CPU savings
+or establish external-peer interoperability.
 
 ## MSI upgrade validation — 2026-10-22
 

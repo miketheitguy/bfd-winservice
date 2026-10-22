@@ -24,11 +24,13 @@ response before another wire timer change. An Up TX increase is advertised in
 the Poll but takes effect only after its Final. See the
 [S-BFD timing reference](../seamless.md#change-timing-and-entity-availability).
 
-`Session::packet` and `packet_at` are convenience APIs that reserve a sequence
-and register a transmission when they return bytes. Library callers using these
+`Session::packet` and `packet_at` are convenience APIs that register a
+transmission when they return bytes. Library callers using these
 APIs must deliver the returned packets. The Windows runtime prepares packets
 without mutation and commits sequence, Poll, and probe tracking only after a
 successful socket send; failed sends don't consume meticulous sequences.
+Classical keyed SHA1 can reuse its last transmitted packet; see
+[digest reuse and sequence policy](../security/authentication-performance.md#hash-cost-and-sequence-frequency).
 
 The runtime encodes packets into fixed 52-byte storage, reuses its receive
 buffer, and verifies keyed authentication without copying the packet or

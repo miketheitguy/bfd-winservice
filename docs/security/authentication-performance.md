@@ -31,20 +31,36 @@ exposure. The classical BFD modes differ as follows:
 
 | Mode | Classical sequence behavior | Performance implication |
 | --- | --- | --- |
-| Keyed SHA-1 (`keyed-sha1`) | Repeated sequences are permitted within the receive window. | In an implementation that caches digests, unchanged authenticated bytes can permit reuse. This service has no such cache. |
+| Keyed SHA-1 (`keyed-sha1`) | Repeated sequences are permitted within the receive window. | Classical sessions reuse an unchanged transmitted packet and its digest for less than one second. Changes or expiry require a new digest. |
 | Meticulous keyed SHA-1 (`meticulous-sha1`) | Every transmitted packet advances the sequence; repeated receive sequences are rejected. | Changing the sequence requires a fresh SHA-1 digest for each transmitted packet. |
 | Meticulous keyed MD5 (`meticulous-md5`) | Uses the same strict sequence progression as meticulous SHA-1. | Each transmitted packet requires a fresh MD5 digest. It retains per-packet work; any CPU advantage depends on the implementation and processor. |
 
-The caching opportunity is an inference from unchanged authenticated bytes;
-whether an implementation uses it is a separate question.
+The [classical session sender](../../src/session.rs) caches only the last
+successfully transmitted keyed-SHA1 packet. It reuses those wire bytes while
+the control fields match and the cache is less than one second old. State
+changes invalidate the cache, including transitions that return to the
+previous state before another send. Poll/Final, diagnostic, discriminator, or
+timing changes require a new sequence and digest. Reuse doesn't extend the
+cache lifetime. The next successful send after expiry advances once; idle
+time doesn't skip sequence numbers. Failed sends don't commit a new sequence
+or cache entry.
 
-In this service, the [packet codec](../../src/packet.rs) computes each outgoing
-keyed digest and verifies each candidate accepted keyed packet. The
-[session sender](../../src/session.rs) advances sequences on successful sends
-for all keyed modes. Both SHA-1 modes therefore perform the same SHA-1 digest
-work here; selecting non-meticulous SHA-1 doesn't enable a cheaper cached path.
-Its classical receive policy still permits repeated sequences, so it doesn't
-satisfy the service's multihop BGP requirement for meticulous authentication.
+The one-second limit is this service's policy. [RFC 5880 section 6.7.4](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.7.4)
+leaves non-meticulous sequence frequency to the implementation and recommends
+advancing it when state or transmitted contents change. The cache belongs to
+one session with immutable authentication settings; it contains transmitted
+bytes, not the key. Reconstructing the session for a different key starts with
+an empty cache.
+
+The [packet codec](../../src/packet.rs) still verifies each candidate accepted
+keyed packet. Both meticulous modes calculate a fresh outgoing digest per
+packet. S-BFD initiators also keep per-probe sequences, even with keyed SHA1,
+so an accepted reply consumes one unique outstanding probe. Stateless
+reflectors continue to authenticate each request and sign each reply.
+
+Reusing keyed-SHA1 packets trades computation for replay exposure within the
+sequence window. It doesn't provide meticulous replay protection or satisfy
+the service's multihop BGP requirement for meticulous authentication.
 
 ## What affects performance
 

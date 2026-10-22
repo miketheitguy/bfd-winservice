@@ -19,6 +19,10 @@ use crate::{
 /// section 7 and RFC 7880 section 8.2), bounded by the u32 wire interval.
 const MAX_BACKOFF_TX_US: u32 = 30_000_000;
 
+// Local keyed-SHA1 policy, not an RFC-mandated interval. Never extend this
+// lifetime when reusing a packet; the next send at/after expiry advances once.
+const KEYED_SHA1_REUSE: Duration = Duration::from_secs(1);
+
 /// One validated classical or S-BFD initiator session, driven by its caller.
 /// Reflector options provide logging context; use Reflector for stateless replies.
 pub struct Session {
@@ -40,6 +44,7 @@ pub struct Session {
     last_valid: Option<Instant>,
     received_auth_seq: Option<u32>,
     transmit_auth_seq: u32,
+    cached_sha1: Option<PreparedPacket>,
     sent_auth_sequences: VecDeque<(u32, Instant)>,
     first_transmitted: Option<Instant>,
     communicating: bool,
@@ -87,10 +92,10 @@ pub(crate) enum Transmission {
 }
 
 /// Owned wire bytes, borrowed for socket I/O and committed only on success.
+#[derive(Clone)]
 pub(crate) struct PreparedPacket {
     pub(crate) data: crate::packet::PacketBuffer,
-    poll: bool,
-    final_bit: bool,
+    control: ControlPacket,
     sequence: u32,
     generated_at: Instant,
 }
@@ -175,6 +180,7 @@ impl Session {
             last_valid: None,
             received_auth_seq: None,
             transmit_auth_seq: rand::random(),
+            cached_sha1: None,
             sent_auth_sequences: VecDeque::new(),
             first_transmitted: None,
             communicating: false,
@@ -495,6 +501,9 @@ impl Session {
         }
         self.last_received = Some(now);
         self.communicating = true;
+        if previous_state != self.state {
+            self.cached_sha1 = None;
+        }
         Ok(Received {
             reply_final: packet.poll,
             state_changed: previous_state != self.state,
@@ -555,6 +564,7 @@ impl Session {
         if changed {
             self.state = State::Down;
             self.diagnostic = Diagnostic::DetectionExpired;
+            self.cached_sha1 = None;
         }
         let retry_expired = self.state == State::Down
             && self.first_transmitted.is_some_and(|first| {
@@ -580,12 +590,15 @@ impl Session {
 
     /// Set AdminDown locally and clear Poll; performs no transport or BGP I/O.
     pub fn admin_down(&mut self) {
+        if self.state != State::AdminDown {
+            self.cached_sha1 = None;
+        }
         self.state = State::AdminDown;
         self.diagnostic = Diagnostic::AdminDown;
         self.poll = Poll::Idle;
     }
 
-    /// Encode the current state, reserving an authentication sequence on every call.
+    /// Encode the current state and record the generated packet as transmitted.
     ///
     /// A Final packet clears the wire Poll bit without completing the local Poll
     /// sequence. This method performs no I/O or transmission-permission check.
@@ -596,7 +609,11 @@ impl Session {
 
     /// Encodes a control packet using a monotonic generation time for S-BFD tracking.
     /// Keyed responses must match an unconsumed generated sequence before its expiry.
-    /// Generating a packet reserves its sequence even if a later socket send fails.
+    /// Classical keyed SHA1 reuses unchanged packets for less than one second;
+    /// content/state changes or expiry advance its sequence on the next packet.
+    /// S-BFD probes and meticulous modes retain per-packet sequence progression.
+    /// Unlike the runtime's prepare/commit path, this records generation even if
+    /// a later socket send fails.
     pub fn packet_at(&mut self, final_bit: bool, now: Instant) -> Vec<u8> {
         let kind = if final_bit {
             Transmission::Final
@@ -627,23 +644,45 @@ impl Session {
             required_min_rx_us: if seamless { 0 } else { self.timing.min_rx_us },
             required_min_echo_rx_us: 0,
         };
+        if let Some(cached) = &self.cached_sha1 {
+            if cached.control == packet
+                && now
+                    .checked_duration_since(cached.generated_at)
+                    .is_some_and(|age| age < KEYED_SHA1_REUSE)
+            {
+                return PreparedPacket {
+                    generated_at: now,
+                    ..cached.clone()
+                };
+            }
+        }
         PreparedPacket {
             data: packet.encode_buffer(&self.auth, self.transmit_auth_seq),
-            poll: packet.poll,
-            final_bit,
+            control: packet,
             sequence: self.transmit_auth_seq,
             generated_at: now,
         }
     }
 
     pub(crate) fn record_transmission(&mut self, packet: &PreparedPacket) {
-        if packet.final_bit {
+        if packet.control.final_bit {
             self.pending_final = false;
         }
-        if packet.poll {
+        if packet.control.poll {
             self.poll = Poll::Sent(self.poll.held_tx());
         }
         let seamless = self.options.session_type == SessionType::SbfdInitiator;
+        if self.options.session_type == SessionType::Classical
+            && self.auth.kind() == AuthType::KeyedSha1
+            && self
+                .cached_sha1
+                .as_ref()
+                .is_none_or(|cached| cached.sequence != packet.sequence)
+        {
+            // Cache only committed wire bytes, never keys or unsent state. A
+            // hit keeps the original generation time, bounding sequence reuse.
+            self.cached_sha1 = Some(packet.clone());
+        }
         if seamless || self.options.mode == Mode::Multihop {
             self.first_transmitted.get_or_insert(packet.generated_at);
         }
@@ -660,7 +699,8 @@ impl Session {
             self.sent_auth_sequences
                 .push_back((packet.sequence, packet.generated_at));
         }
-        // Meticulous authentication advances by exactly one per successful send.
+        // Reserve the next sequence after this committed packet. Classical
+        // keyed SHA1 can reuse the cached previous packet until it changes/ages.
         self.transmit_auth_seq = packet.sequence.wrapping_add(1);
     }
 
@@ -767,8 +807,173 @@ mod tests {
             session.record_transmission(&packet);
             assert_eq!(session.poll, Poll::Sent(None));
             let packet = session.prepare_packet(Transmission::Periodic, now);
+            let expected = if kind == AuthType::KeyedSha1 {
+                u32::MAX
+            } else {
+                0
+            };
+            assert_eq!(
+                session.auth.verify(&packet.data, None).unwrap(),
+                Some(expected)
+            );
+            let packet = session.prepare_packet(Transmission::Periodic, now + KEYED_SHA1_REUSE);
             assert_eq!(session.auth.verify(&packet.data, None).unwrap(), Some(0));
         }
+    }
+
+    #[test]
+    fn classical_sha1_reuses_digest_until_fixed_expiry_and_commits_only_sent_changes() {
+        let mut session = session();
+        session.auth = AuthConfig::new(AuthType::KeyedSha1, 9, b"secret".to_vec()).unwrap();
+        session.transmit_auth_seq = u32::MAX;
+        let now = Instant::now();
+        let first = session.prepare_packet(Transmission::Periodic, now);
+        session.record_transmission(&first);
+        for millis in [1, 300, 600, 999] {
+            let calls = crate::packet::DIGEST_CALLS.with(std::cell::Cell::get);
+            let reused =
+                session.prepare_packet(Transmission::Periodic, now + Duration::from_millis(millis));
+            assert_eq!(&*reused.data, &*first.data);
+            assert_eq!(
+                crate::packet::DIGEST_CALLS.with(std::cell::Cell::get),
+                calls
+            );
+            session.record_transmission(&reused);
+        }
+        let expired = session.prepare_packet(Transmission::Periodic, now + KEYED_SHA1_REUSE);
+        assert_eq!(
+            session.auth.verify(&expired.data, Some(u32::MAX)).unwrap(),
+            Some(0)
+        );
+        // An unsent refresh reserves no sequence and cannot extend the old cache.
+        let retry = session.prepare_packet(Transmission::Periodic, now + KEYED_SHA1_REUSE);
+        assert_eq!(&*retry.data, &*expired.data);
+        session.record_transmission(&retry);
+        session.diagnostic = Diagnostic::AdminDown;
+        let unsent =
+            session.prepare_packet(Transmission::Periodic, now + Duration::from_millis(1100));
+        assert_eq!(session.auth.verify(&unsent.data, Some(0)).unwrap(), Some(1));
+        session.diagnostic = Diagnostic::None;
+        let calls = crate::packet::DIGEST_CALLS.with(std::cell::Cell::get);
+        let reused =
+            session.prepare_packet(Transmission::Periodic, now + Duration::from_millis(1999));
+        assert_eq!(&*reused.data, &*retry.data);
+        assert_eq!(
+            crate::packet::DIGEST_CALLS.with(std::cell::Cell::get),
+            calls
+        );
+        let refreshed = session.prepare_packet(Transmission::Periodic, now + KEYED_SHA1_REUSE * 2);
+        assert_eq!(
+            session.auth.verify(&refreshed.data, Some(0)).unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn classical_sha1_refreshes_for_changed_control_fields_and_final_replies() {
+        type Change = (&'static str, fn(&mut Session), Transmission);
+        let changes: &[Change] = &[
+            ("state", Session::admin_down, Transmission::Periodic),
+            (
+                "diagnostic",
+                |s| s.diagnostic = Diagnostic::NeighborDown,
+                Transmission::Periodic,
+            ),
+            (
+                "local discriminator",
+                |s| s.local_discriminator += 1,
+                Transmission::Periodic,
+            ),
+            (
+                "remote discriminator",
+                |s| s.remote_discriminator += 1,
+                Transmission::Periodic,
+            ),
+            (
+                "TX interval",
+                |s| s.timing.min_tx_us += 1,
+                Transmission::Periodic,
+            ),
+            (
+                "RX interval",
+                |s| s.timing.min_rx_us += 1,
+                Transmission::Periodic,
+            ),
+            (
+                "multiplier",
+                |s| s.timing.detect_mult += 1,
+                Transmission::Periodic,
+            ),
+            (
+                "Poll",
+                |s| s.poll = Poll::Pending(None),
+                Transmission::Periodic,
+            ),
+            ("Final", |_| {}, Transmission::Final),
+        ];
+        for (name, change, transmission) in changes {
+            let mut session = session();
+            session.auth = AuthConfig::new(AuthType::KeyedSha1, 9, b"secret".to_vec()).unwrap();
+            session.transmit_auth_seq = 100;
+            session.state = State::Up;
+            session.remote_discriminator = 99;
+            let now = Instant::now();
+            let first = session.prepare_packet(Transmission::Periodic, now);
+            session.record_transmission(&first);
+            change(&mut session);
+            let calls = crate::packet::DIGEST_CALLS.with(std::cell::Cell::get);
+            let changed = session.prepare_packet(*transmission, now);
+            assert_eq!(
+                crate::packet::DIGEST_CALLS.with(std::cell::Cell::get),
+                calls + 1,
+                "{name}"
+            );
+            assert_eq!(
+                session.auth.verify(&changed.data, Some(100)).unwrap(),
+                Some(101),
+                "{name}"
+            );
+            assert_ne!(
+                ControlPacket::decode(&first.data).unwrap(),
+                ControlPacket::decode(&changed.data).unwrap(),
+                "{name}"
+            );
+            session.record_transmission(&changed);
+            // Returning to an ordinary packet after a Final is also a content change.
+            if matches!(transmission, Transmission::Final) {
+                let periodic = session.prepare_packet(Transmission::Periodic, now);
+                assert_eq!(
+                    session.auth.verify(&periodic.data, Some(101)).unwrap(),
+                    Some(102)
+                );
+                assert!(!periodic.control.final_bit);
+            }
+        }
+    }
+
+    #[test]
+    fn classical_sha1_state_changes_invalidate_even_when_wire_contents_return() {
+        let mut session = session();
+        session.auth = AuthConfig::new(AuthType::KeyedSha1, 0, b"secret".to_vec()).unwrap();
+        session.transmit_auth_seq = 100;
+        let now = Instant::now();
+        session
+            .receive(&test_packet(State::Init).encode(&session.auth, 100), now)
+            .unwrap();
+        session.diagnostic = Diagnostic::NeighborDown;
+        let first = session.prepare_packet(Transmission::Periodic, now);
+        session.record_transmission(&first);
+        for (state, sequence) in [(State::Down, 101), (State::Init, 102)] {
+            session
+                .receive(&test_packet(state).encode(&session.auth, sequence), now)
+                .unwrap();
+        }
+        let recovered = session.prepare_packet(Transmission::Periodic, now);
+        assert_eq!(recovered.control, first.control);
+        assert_eq!(
+            session.auth.verify(&recovered.data, Some(100)).unwrap(),
+            Some(101)
+        );
     }
 
     #[test]
@@ -795,30 +1000,38 @@ mod tests {
 
     #[test]
     fn seamless_authentication_correlates_wrapped_sequences_and_consumes_each_once() {
-        let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
-        options.session_type = SessionType::SbfdInitiator;
-        options.discriminator = Some(7);
-        options.remote_discriminator = Some(99);
-        options.auth = AuthType::MeticulousSha1;
-        options.auth_key = Some("secret".into());
-        let auth = options.validate().unwrap();
-        let mut reflector_options = Options::reflector(options.peer, 99);
-        reflector_options.auth = options.auth;
-        reflector_options.auth_key = options.auth_key.clone();
-        let reflector = crate::seamless::Reflector::new(reflector_options, auth.clone()).unwrap();
-        let mut session = Session::new(options, auth.clone()).unwrap();
-        session.transmit_auth_seq = u32::MAX;
-        let now = Instant::now();
-        let first = session.packet_at(false, now);
-        let second = session.packet_at(false, now);
-        assert_eq!(auth.verify(&first, None).unwrap(), Some(u32::MAX));
-        assert_eq!(auth.verify(&second, None).unwrap(), Some(0));
-        for request in [&second, &first] {
-            let reply = reflector.respond(request).unwrap();
-            session.receive(&reply, now).unwrap();
-            assert!(session.receive(&reply, now).is_err());
+        for kind in [
+            AuthType::MeticulousMd5,
+            AuthType::KeyedSha1,
+            AuthType::MeticulousSha1,
+        ] {
+            let mut options =
+                Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
+            options.session_type = SessionType::SbfdInitiator;
+            options.discriminator = Some(7);
+            options.remote_discriminator = Some(99);
+            options.auth = kind;
+            options.auth_key = Some("secret".into());
+            let auth = options.validate().unwrap();
+            let mut reflector_options = Options::reflector(options.peer, 99);
+            reflector_options.auth = options.auth;
+            reflector_options.auth_key = options.auth_key.clone();
+            let reflector =
+                crate::seamless::Reflector::new(reflector_options, auth.clone()).unwrap();
+            let mut session = Session::new(options, auth.clone()).unwrap();
+            session.transmit_auth_seq = u32::MAX;
+            let now = Instant::now();
+            let first = session.packet_at(false, now);
+            let second = session.packet_at(false, now);
+            assert_eq!(auth.verify(&first, None).unwrap(), Some(u32::MAX));
+            assert_eq!(auth.verify(&second, None).unwrap(), Some(0));
+            for request in [&second, &first] {
+                let reply = reflector.respond(request).unwrap();
+                session.receive(&reply, now).unwrap();
+                assert!(session.receive(&reply, now).is_err());
+            }
+            assert_eq!(session.state(), State::Up);
         }
-        assert_eq!(session.state(), State::Up);
     }
 
     #[test]
