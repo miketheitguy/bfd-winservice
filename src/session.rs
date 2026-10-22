@@ -952,6 +952,78 @@ mod tests {
     }
 
     #[test]
+    fn classical_sha1_state_notifications_advance_sequences_for_every_transition() {
+        #[derive(Clone, Copy)]
+        enum Event {
+            Peer(State),
+            Timeout,
+            AdminDown,
+        }
+        let states = [State::AdminDown, State::Down, State::Init, State::Up];
+        for local in states {
+            for event in states
+                .map(Event::Peer)
+                .into_iter()
+                .chain([Event::Timeout, Event::AdminDown])
+            {
+                if matches!(event, Event::Timeout) && !matches!(local, State::Init | State::Up) {
+                    continue;
+                }
+                let mut session = session();
+                session.auth = AuthConfig::new(AuthType::KeyedSha1, 0, b"secret".to_vec()).unwrap();
+                session.transmit_auth_seq = u32::MAX;
+                session.state = local;
+                session.diagnostic = if local == State::AdminDown {
+                    Diagnostic::AdminDown
+                } else {
+                    Diagnostic::None
+                };
+                session.remote_discriminator = test_packet(State::Down).my_discriminator;
+                session.remote_min_tx_us = 200_000;
+                session.remote_detect_mult = 3;
+                let now = Instant::now();
+                session.last_valid = Some(now);
+                session.last_received = Some(now);
+                let first = session.prepare_packet(Transmission::StateChange, now);
+                session.record_transmission(&first);
+                let mut sent_at = now;
+                match event {
+                    Event::Peer(remote) => {
+                        let received = session
+                            .receive(&test_packet(remote).encode(&session.auth, 100), now)
+                            .unwrap();
+                        assert_eq!(received.state_changed, session.state != local);
+                    }
+                    Event::Timeout => {
+                        sent_at += session.detection_time();
+                        assert!(sent_at.duration_since(now) < KEYED_SHA1_REUSE);
+                        assert!(session.expire(sent_at));
+                    }
+                    Event::AdminDown => session.admin_down(),
+                }
+                let expected_sequence = if session.state != local { 0 } else { u32::MAX };
+                let notification = session.prepare_packet(Transmission::StateChange, sent_at);
+                assert_eq!(
+                    session
+                        .auth
+                        .verify(&notification.data, Some(u32::MAX))
+                        .unwrap(),
+                    Some(expected_sequence),
+                    "{local:?} -> {:?}",
+                    session.state
+                );
+                assert_eq!(notification.control.state, session.state);
+                // An unsent notification can be retried without skipping a sequence.
+                let retry = session.prepare_packet(Transmission::StateChange, sent_at);
+                assert_eq!(&*retry.data, &*notification.data);
+                session.record_transmission(&retry);
+                let repeated = session.prepare_packet(Transmission::StateChange, sent_at);
+                assert_eq!(&*repeated.data, &*notification.data);
+            }
+        }
+    }
+
+    #[test]
     fn classical_sha1_state_changes_invalidate_even_when_wire_contents_return() {
         let mut session = session();
         session.auth = AuthConfig::new(AuthType::KeyedSha1, 0, b"secret".to_vec()).unwrap();
