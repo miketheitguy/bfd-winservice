@@ -124,8 +124,9 @@ Preserve a failing input before rerunning or cleaning outputs. Follow the
 confirmed failure into a focused regression. Ignored working corpora and
 artifacts are not a durable regression suite.
 
-The workflow's separate `fuzz` job runs short campaigns on pull requests, main
-branch pushes, tags, and manual dispatch. It audits the fuzz lockfile and checks
+The workflow's separate `fuzz` job runs short campaigns as part of the
+[full-validation triggers](../development/packaging.md#build-with-github-actions).
+It audits the fuzz lockfile and checks
 the harness before the campaigns. Release publication depends on `fuzz`, `asan`,
 and `build-msi` succeeding. On tags, the release-version script updates the
 service entry in the fuzz lockfile before locked builds. The diagnostic upload

@@ -2,10 +2,9 @@ name: Build Windows bundle
 
 on:
   pull_request:
-  push:
     branches: ['main']
+  push:
     tags: ['v*']
-  workflow_dispatch:
 
 permissions:
   contents: read

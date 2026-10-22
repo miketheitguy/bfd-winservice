@@ -90,8 +90,10 @@ process-lifetime and runs once before the first oracle invocation.
 ## GitHub Actions
 
 The [Build Windows bundle workflow](../.github/workflows/build-msi.yml) runs a
-separate `fuzz` job on pull requests, pushes to `main`, version tags, and manual
-dispatch. The job audits the fuzz lockfile, checks formatting and Clippy, runs
+separate `fuzz` job on pull requests targeting `main` and release-tag pushes
+matching `v*`. Ordinary pushes to `main` don't start full validation. See the
+[workflow trigger policy](../docs/development/packaging.md#build-with-github-actions).
+The job audits the fuzz lockfile, checks formatting and Clippy, runs
 the harness regression tests, and runs all four ASan targets with
 `-Seconds 15 -Runs 10000`. Each campaign stops at whichever budget it reaches
 first, after compilation. Release publication requires successful `asan`,

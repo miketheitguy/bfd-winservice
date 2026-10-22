@@ -196,8 +196,9 @@ See [bundle installation](../setup.md#install-with-the-offline-setup-bundle).
 
 Send the build through its training session before calling it bodacious. The
 [Build Windows bundle workflow](../../.github/workflows/build-msi.yml) runs on pull
-requests, pushes to `main`, and version tags matching `v*`. It also supports
-manual dispatch from a tag or branch. It audits `Cargo.lock` against the RustSec
+requests targeting `main` and release-tag pushes matching `v*`. Ordinary branch
+pushes, including pushes to `main` after a merge, don't trigger the workflow.
+There is no manual-dispatch trigger. It audits `Cargo.lock` against the RustSec
 advisory database with `cargo audit`, then checks version stamping, Rust
 formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
 `rust-toolchain.toml`. The auditor is built with stable Rust outside the
@@ -220,16 +221,16 @@ removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
 service package entries in `Cargo.toml`, `Cargo.lock`, and `fuzz/Cargo.lock` in
 the runner's checkout. The separate fuzz package keeps its own version.
 The executables, MSI, setup bundle, artifact filenames, and installation checks use that
-stamped version. Branch and pull-request builds use the version in `Cargo.toml`.
+stamped version. Pull-request builds use the version in `Cargo.toml`.
 The workflow validates production executable hardening before
-testing installation. Pull-request and branch runs upload validated artifacts
+testing installation. Pull-request runs upload validated artifacts
 and installer logs with a read-only repository token. Release publication
 requires a version tag, successful `asan`, `fuzz`, and `build-msi` jobs, and runs
 in a separate job with `contents: write`.
 No signing or release credentials are available to pull-request validation.
 To enforce validation before merging, configure branch protection to require
-`asan`, `fuzz`, and `build-msi`. Pushes to other branches can be checked by
-manual dispatch.
+`asan`, `fuzz`, and `build-msi`. Open or update a pull request targeting `main`
+to validate a branch. Retry an existing run through GitHub Actions.
 
 The workflow explicitly passes `-AcceptWixEula` for bundle builds, accepting
 the WiX 7 OSMF EULA for extension restore and package compilation.
