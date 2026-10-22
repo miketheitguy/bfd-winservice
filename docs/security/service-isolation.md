@@ -58,7 +58,7 @@ Here's the permissions lineup for installed services and local callers:
 
 | Identity | Permissions and limits |
 | --- | --- |
-| `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the broker control RPC interface. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`; startup removes unused privileges before accepting traffic. |
+| `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the broker control RPC interface. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege`; startup removes unused privileges before accepting traffic. |
 | `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the BGP control RPC interface, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group, then permanently removes all privileges except `SeChangeNotifyPrivilege` before initializing COM/MI, loading its target, or registering RPC. |
 | Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, modify installed files and Parameters, and manage permissions. Account or Administrator membership alone does not satisfy the private channels' service-specific identity checks. |
 | Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot use the private RPC interface, start, stop, reconfigure, or send custom controls to either installed service. |
@@ -68,15 +68,20 @@ Here's the permissions lineup for installed services and local callers:
 ### BFD privilege allowlist
 
 Turtle power comes with a deliberately small privilege list. The MSI sets BFD's
-SCM `RequiredPrivileges` list to `SeChangeNotifyPrivilege` and
-`SeCreateGlobalPrivilege` in a native commit action after the installation
-transaction succeeds. Installation leaves the services stopped, so the allowlist
+SCM `RequiredPrivileges` list to only `SeChangeNotifyPrivilege` in a native
+commit action after the installation transaction succeeds. Installation leaves
+the services stopped, so the allowlist
 is in place before the first normal service start. SCM applies it when Windows
 creates the process. The BFD process also permanently removes unused token
 privileges, including `SeImpersonatePrivilege` and
 `SeAssignPrimaryTokenPrivilege`, before loading configuration, creating sockets,
-or registering local RPC. It retains only `SeChangeNotifyPrivilege` and
-`SeCreateGlobalPrivilege` for directory traversal and global object creation.
+or registering local RPC. It retains only `SeChangeNotifyPrivilege` to bypass
+directory traversal checks; see Microsoft's [privilege
+constants](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants).
+BFD uses unnamed synchronization events and does not create global file-mapping
+or symbolic-link objects. Its RPC and socket paths do not require
+`SeCreateGlobalPrivilege`; see Microsoft's [kernel object namespace
+rules](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces).
 Local RPC authentication keeps that reduced service identity and does not attach
 a caller token to a thread. Access to the broker comes from its RPC interface
 ACL and service identity checks.
@@ -92,9 +97,9 @@ account and group memberships still confer administrative access; privilege
 removal does not sandbox the broker. A smaller privilege list is, like, tubular,
 but it doesn't erase the account's authority.
 
-The MSI preserves the broker's SCM `RequiredPrivileges` configuration. Applying
-the broker's allowlist in process avoids adding a second irreversible SCM policy
-change to the installer commit, preserving rollback of absent and empty policies.
+The MSI also sets the broker's SCM `RequiredPrivileges` list to only
+`SeChangeNotifyPrivilege`. SCM removes other privileges when creating the
+process, before loader initialization. Startup reduction remains a second check.
 The MSI test inspects the running broker token after startup and repair; a
 separate isolated test reads the local provider schema with the reduced token.
 
@@ -102,11 +107,15 @@ separate isolated test reads the local provider schema with the reduced token.
 
 Keep the rollback plan totally tubular, including unusual prior settings.
 Deferred account/SID configuration and rollback preserve the existing privilege
-policy, including an unspecified or empty list. The commit action sets the BFD
-minimum as its last operation that can fail; a rare snapshot-cleanup error is
+policy, including an unspecified or empty list. The protected snapshot records
+both services' exact privilege policies before any mutation. The commit action
+sets both minimum lists; if either change fails, rollback restores both prior
+policies. Clearing a previous explicit list uses SCM's empty-list API request
+and verifies the result. A previously explicit empty registry value retains its
+exact representation after SCM's policy is restored. A snapshot-cleanup error is
 diagnostic and leaves a recovery snapshot that blocks a later repair until an
-administrator removes it. The installer does not reset an unknown prior policy
-to an assumed Windows default.
+administrator removes it. The installer does not substitute an assumed list of
+Windows account privileges for an unspecified prior policy.
 
 ### Console execution
 

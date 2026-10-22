@@ -179,7 +179,7 @@ try {
     $commitActions = @($actions | Where-Object {
         ([int]$_.Type -band 0x600) -eq 0x600 -and ([int]$_.Type -band 0x100) -eq 0
     })
-    Assert-Package ($commitActions.Count -eq 1 -and $commitActions[0].Name -ceq 'CommitServicePolicy') 'No other commit action may fail after the irreversible BFD privilege-policy change.'
+    Assert-Package ($commitActions.Count -eq 1 -and $commitActions[0].Name -ceq 'CommitServicePolicy') 'Only the snapshotted service policy action may commit service privileges.'
     foreach ($name in $policyActions.Keys) {
         $rows = @($actions | Where-Object Name -EQ $name)
         Assert-Package ($rows.Count -eq 1 -and [int]$rows[0].Type -eq $policyActions[$name][0] -and $rows[0].Source -eq 'BrokerExe' -and $rows[0].Target -ceq $policyActions[$name][1]) "Expected elevated transactional fixed-target service action: $name"

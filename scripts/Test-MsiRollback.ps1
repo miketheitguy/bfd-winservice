@@ -1,12 +1,15 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Path)
+param([Parameter(Mandatory)][string]$Path, [switch]$DisposableVm)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
-    throw 'This rollback test runs only on a GitHub-hosted Actions runner.'
+$hostedRunner = $env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
+$authorizedVm = $DisposableVm -and $env:COMPUTERNAME -eq 'BFD-WS2025' -and
+    (Test-Path 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters')
+if (-not $hostedRunner -and -not $authorizedVm) {
+    throw 'Rollback tests require a GitHub-hosted runner or the explicit disposable BFD-WS2025 VM.'
 }
 . (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
 . (Join-Path $PSScriptRoot 'Assert-RollbackPrivileges.ps1')

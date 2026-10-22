@@ -85,8 +85,24 @@ function Get-ServicePolicy {
         })
         [ordered]@{Name=$name;Account=$service.StartName;Path=$service.PathName;Acl=$descriptor;Values=$values}
     })
-    ConvertTo-Json -InputObject $policy -Depth 10 -Compress
+    $policy | ConvertTo-Json -Depth 10 -Compress
 }
+function ConvertTo-CanonicalPolicy {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [array]) {
+        $items = @(foreach ($item in $Value) { ConvertTo-CanonicalPolicy $item })
+        return '[' + ($items -join ',') + ']'
+    }
+    if ($Value -is [pscustomobject]) {
+        $items = @(foreach ($property in ($Value.PSObject.Properties | Sort-Object Name)) {
+            (ConvertTo-Json -InputObject $property.Name -Compress) + ':' + (ConvertTo-CanonicalPolicy $property.Value)
+        })
+        return '{' + ($items -join ',') + '}'
+    }
+    ConvertTo-Json -InputObject $Value -Compress
+}
+
 function Assert-Preserved {
     param([Parameter(Mandatory)][string]$Phase)
     if ((Get-Configuration) -cne $script:configuration) {
@@ -94,9 +110,25 @@ function Assert-Preserved {
         throw "$Phase changed administrator settings (values omitted)."
     }
     $actualPolicy = Get-ServicePolicy
-    if ($actualPolicy -cne $script:servicePolicy) {
+    $expectedPolicy = $script:servicePolicy
+    if ($Phase -ne 'Failed-upgrade rollback') {
+        # A successful upgrade/repair installs both reviewed minima. Failed
+        # upgrade rollback must preserve the baseline's exact previous list.
+        $expected = $script:servicePolicy | ConvertFrom-Json
+        foreach ($service in $expected) {
+            $privileges = $service.Values | Where-Object Name -CEQ 'RequiredPrivileges'
+            $privileges.Present = $true
+            $privileges.Value = [string[]]@('SeChangeNotifyPrivilege')
+        }
+        $expectedPolicy = $expected | ConvertTo-Json -Depth 10 -Compress
+    }
+    # JSON property order can change after a Windows PowerShell round trip.
+    # Compare all values with sorted object keys, retaining array order.
+    $actualCanonical = ConvertTo-CanonicalPolicy ($actualPolicy | ConvertFrom-Json)
+    $expectedCanonical = ConvertTo-CanonicalPolicy ($expectedPolicy | ConvertFrom-Json)
+    if ($actualCanonical -cne $expectedCanonical) {
         $diagnostic = Join-Path $outputDirectory 'upgrade-policy-mismatch.json'
-        [ordered]@{Phase=$Phase;Expected=($script:servicePolicy | ConvertFrom-Json);
+        [ordered]@{Phase=$Phase;Expected=($expectedPolicy | ConvertFrom-Json);
             Actual=($actualPolicy | ConvertFrom-Json)} |
             ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $diagnostic -Encoding UTF8
         throw "$Phase changed service policy; see $diagnostic"
@@ -190,9 +222,10 @@ try {
     if (Get-Service BfdWinService,BfdBgpBroker -ErrorAction SilentlyContinue) { throw 'Upgrade uninstall left a service installed.' }
     if ((Get-Content -LiteralPath $sentinel -Raw) -cne $sentinelText) { throw 'Upgrade uninstall removed a generated log.' }
     [ordered]@{PreviousVersion=$PreviousVersion;Version=$ExpectedVersion;FailedUpgradeRestoredPublishedBytes=$true;
-        ConfigurationPreserved=$true;ServicePolicyPreserved=$true;LogsPreserved=$true;Repair=$true;MutualRpcAuthentication=$true} |
+        ConfigurationPreserved=$true;OtherServicePolicyPreserved=$true;BfdPrivilegesReducedToChangeNotify=$true;BrokerPrivilegesReducedToChangeNotify=$true;
+        LogsPreserved=$true;Repair=$true;MutualRpcAuthentication=$true} |
         ConvertTo-Json | Set-Content (Join-Path $outputDirectory 'upgrade-validation.json') -Encoding UTF8
-    Write-Output 'Published-version rollback, bundle upgrade, settings/log/policy preservation, repair, RPC authentication, and removal passed.'
+    Write-Output 'Published-version rollback, bundle upgrade, both service privilege reductions, other settings/log/policy preservation, repair, RPC authentication, and removal passed.'
 } finally {
     if ($installed) { Invoke-Setup $cleanupSetup '/uninstall' 'upgrade-cleanup.log' }
 }

@@ -83,12 +83,12 @@ config:
 ---
 flowchart LR
     accTitle: Runtime boundaries: BfdWinService.Local.v2 and BfdLocal 2.0
-    accDescr: The broker initiates authenticated local session-status RPC to BFD. BFD initiates a separate BGP control RPC to the broker. The packet engine drives BGP actions; the telemetry cache is observational. The broker retains only SeChangeNotifyPrivilege.
+    accDescr: The broker initiates authenticated local session-status RPC to BFD. BFD initiates a separate BGP control RPC to the broker. The packet engine drives BGP actions; the telemetry cache is observational. Both services retain only SeChangeNotifyPrivilege.
     %% Mirrors service-communication.drawio, page 1.
 
     subgraph rt_bfd["BfdWinService | bfd-winservice.exe"]
         direction TB
-        rt_bfd_token["<b>BFD process identity</b><br/>LocalService + restricted service SID<br/>Two retained privileges"]:::bfd
+        rt_bfd_token["<b>BFD process identity</b><br/>LocalService + restricted service SID<br/>Only SeChangeNotifyPrivilege retained"]:::bfd
         rt_engine["<b>[A] BFD / S-BFD packet engine</b><br/>Owns session state and timers<br/>Validates packets; drives BGP actions"]:::bfd
         rt_publisher["<b>Immutable status publication</b><br/>Coherent ArcSwap snapshot<br/>100 ms change spacing / 1 s refresh target"]:::bfd
         rt_rpc["<b>[F] Authenticated local RPC server</b><br/>BfdWinService.Local.v2 / BfdLocal 2.0<br/>GetSessionStatusV1; broker identity required"]:::gate

@@ -3,7 +3,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Path,
-    [Parameter(Mandatory)][string]$ExpectedVersion
+    [Parameter(Mandatory)][string]$ExpectedVersion,
+    [switch]$DisposableVm,
+    # Prebuilt release test binaries let the disposable VM run without Rust.
+    [string]$TestExecutableDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,9 +14,12 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Assert-RestrictedAcl.ps1')
 . (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
 # Installation changes SCM, HKLM, Event Log, and firewall state. Exercise it only
-# on the disposable machine provided by this workflow, never the developer PC.
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
-    throw 'This installation test runs only on a GitHub-hosted Actions runner.'
+# on a hosted runner or the explicitly provisioned disposable BFD test VM.
+$hostedRunner = $env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
+$authorizedVm = $DisposableVm -and $env:COMPUTERNAME -eq 'BFD-WS2025' -and
+    (Test-Path 'HKLM:\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters')
+if (-not $hostedRunner -and -not $authorizedVm) {
+    throw 'Installation tests require a GitHub-hosted runner or the explicit disposable BFD-WS2025 VM.'
 }
 $resolvedMsi = (Resolve-Path -LiteralPath $Path).Path
 $outputDirectory = Split-Path $resolvedMsi -Parent
@@ -34,6 +40,21 @@ $installed = $false
 function Assert-Installed {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw "MSI installation test failed: $Message" }
+}
+
+function Invoke-InstalledTest {
+    param([string]$Target, [string]$Filter)
+    if ($TestExecutableDirectory) {
+        $testExecutable = Join-Path (Resolve-Path -LiteralPath $TestExecutableDirectory).Path "$Target.exe"
+        $output = @(& $testExecutable $Filter --ignored --exact 2>&1)
+    } elseif ($Target -eq 'unit') {
+        $output = @(cargo test-release --lib $Filter -- --ignored --exact 2>&1)
+    } else {
+        $output = @(cargo test-release --test $Target $Filter -- --ignored --exact 2>&1)
+    }
+    $code = $LASTEXITCODE
+    $output | Write-Output
+    Assert-Installed ($code -eq 0 -and ($output -join "`n") -match 'test result: ok\. 1 passed;') "Installed test failed or did not execute exactly once: $Filter"
 }
 
 function Invoke-Msi {
@@ -59,7 +80,13 @@ function Assert-InstallationSecurity {
         $flags = if ($object -eq $installDirectory) { 'ObjectInherit, ContainerInherit' } else { 'None' }
         Assert-RestrictedAcl -Descriptor $acl -ObjectName $object -FullAccess 0x1f01ff -ReadAccess 0x1200a9 -InheritanceFlags $flags -AdditionalAccess @{$serviceSid=0x1200a9}
     }
-    $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $parameters).Sddl)
+    # Read the protected registry ACL directly. The PowerShell provider can
+    # misreport this existing service-SID-protected key as absent in a VM.
+    $registry = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
+    try {
+        Assert-Installed ($null -ne $registry) 'The installed Parameters key is missing.'
+        $acl = [Security.AccessControl.RawSecurityDescriptor]::new($registry.GetAccessControl().Sddl)
+    } finally { if ($null -ne $registry) { $registry.Dispose() } }
     Assert-RestrictedAcl -Descriptor $acl -ObjectName $parameters -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
     $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $logDirectory).Sddl)
     Assert-RestrictedAcl -Descriptor $acl -ObjectName $logDirectory -FullAccess 0x1f01ff -ReadAccess 0x1200a9 -InheritanceFlags 'ObjectInherit, ContainerInherit' -AdditionalAccess @{$serviceSid=0x1301bf}
@@ -85,13 +112,11 @@ function Assert-ServicePolicy {
         Assert-Installed ($key.GetValue('FailureActionsOnNonCrashFailures', 0) -eq $nonCrash) "Unexpected non-crash recovery setting: $name"
         if ($name -eq 'BfdWinService') {
             Assert-Installed ($key.GetValueKind('PreshutdownTimeout') -eq 'DWord' -and $key.GetValue('PreshutdownTimeout') -eq 125000) 'BFD needs 125 seconds for bounded preshutdown cleanup.'
-            $privileges = @($key.GetValue('RequiredPrivileges'))
-            Assert-Installed ($key.GetValueKind('RequiredPrivileges') -eq 'MultiString' -and
-                $privileges.Count -eq 2 -and
-                @(Compare-Object @('SeChangeNotifyPrivilege','SeCreateGlobalPrivilege') $privileges).Count -eq 0) 'SCM must grant BFD only ChangeNotify and CreateGlobal, never SeImpersonatePrivilege.'
-        } else {
-            Assert-Installed ('RequiredPrivileges' -notin $key.GetValueNames()) 'The installer must leave the broker privilege policy at its existing default.'
         }
+        $privileges = @($key.GetValue('RequiredPrivileges'))
+        Assert-Installed ($key.GetValueKind('RequiredPrivileges') -eq 'MultiString' -and
+            $privileges.Count -eq 1 -and
+            $privileges[0] -ceq 'SeChangeNotifyPrivilege') "SCM must grant only SeChangeNotifyPrivilege: $name"
     }
     $brokerDependencies = @((Get-Service BfdBgpBroker).ServicesDependedOn | ForEach-Object Name)
     Assert-Installed ($brokerDependencies.Count -eq 1 -and $brokerDependencies[0] -eq 'RpcSs') 'The MI broker must depend only on RpcSs, never BFD.'
@@ -163,9 +188,9 @@ function Assert-PrivateRpcRejectsUnrelatedClient {
     try {
         Push-Location (Split-Path $PSScriptRoot -Parent)
         try {
-            cargo test-release --lib bgp::ipc::tests::installed_broker_rejects_unrelated_rpc_caller -- --ignored --exact
+            Invoke-InstalledTest unit bgp::ipc::tests::installed_broker_rejects_unrelated_rpc_caller
             Assert-Installed ($LASTEXITCODE -eq 0) 'Broker RPC did not reject an unrelated caller with access denied.'
-            cargo test-release --lib local_rpc::tests::installed_bfd_rejects_unrelated_rpc_caller -- --ignored --exact
+            Invoke-InstalledTest unit local_rpc::tests::installed_bfd_rejects_unrelated_rpc_caller
             Assert-Installed ($LASTEXITCODE -eq 0) 'BFD status RPC did not reject an unrelated caller with access denied.'
         }
         finally { Pop-Location }
@@ -198,12 +223,19 @@ function Assert-BrokerAuthenticatesBfd {
             $processes = @(Get-CimInstance Win32_Process -Filter "Name='bfd-bgp-broker.exe'")
             Assert-Installed ($processes.Count -eq 1 -and $processes[0].ProcessId -eq $broker.ProcessId) `
                 'Status RPC must run inside the broker service process without a helper.'
+            $previousDisposableVm = $env:BFD_TEST_DISPOSABLE_VM
+            if ($authorizedVm) { $env:BFD_TEST_DISPOSABLE_VM = '1' }
             Push-Location (Split-Path $PSScriptRoot -Parent)
             try {
-                cargo test-release --lib runtime::privileges::tests::installed_broker_token_retains_only_change_notify -- --ignored --exact
+                Invoke-InstalledTest unit runtime::privileges::tests::installed_bfd_token_is_restricted_and_retains_only_change_notify
+                Assert-Installed ($LASTEXITCODE -eq 0) 'The installed BFD token must be restricted and retain only enabled SeChangeNotifyPrivilege.'
+                Invoke-InstalledTest unit runtime::privileges::tests::installed_broker_token_retains_only_change_notify
                 Assert-Installed ($LASTEXITCODE -eq 0) 'The installed broker retained privileges beyond SeChangeNotifyPrivilege.'
             }
-            finally { Pop-Location }
+            finally {
+                Pop-Location
+                $env:BFD_TEST_DISPOSABLE_VM = $previousDisposableVm
+            }
             return
         }
         Start-Sleep -Milliseconds 200
@@ -309,7 +341,7 @@ try {
     try {
         Push-Location (Split-Path $PSScriptRoot -Parent)
         try {
-            cargo test-release --test windows_seamless installed_reflector_accepts_legal_source_port_boundaries -- --ignored --exact
+            Invoke-InstalledTest windows_seamless installed_reflector_accepts_legal_source_port_boundaries
             Assert-Installed ($LASTEXITCODE -eq 0) 'Installed reflector source-port boundaries failed.'
         } finally { Pop-Location }
     } finally {
@@ -333,6 +365,11 @@ try {
     Assert-InstalledFirewall
     $settings = Get-ItemProperty -Path $parameters
     Assert-Installed ($settings.Multihop -eq 1 -and $settings.LogToFile -eq 1 -and $settings.LogFilePath -eq $customLog) 'Repair reset administrator settings.'
+    # The reduced LocalService token must be able to rename a full log and
+    # create its replacement using the service-specific directory ACL.
+    $rotationLimit = 64 * 1024 * 1024
+    $seed = [IO.File]::Open($customLog, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $seed.SetLength($rotationLimit) } finally { $seed.Dispose() }
     $probeStarted = Get-Date
     Start-Service BfdBgpBroker
     Start-Service BfdWinService
@@ -347,7 +384,9 @@ try {
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     Assert-Installed ($text -match '(?m)^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z .*event_id=106 level=Information') 'Missing UTC file event after repair.'
-    Write-Output 'Installation, independent startup/stop, service accounts/SIDs, mutual local RPC authentication, broker authorization/recovery, protected ACLs, versions, firewall, rendered ETW, file logging, and legacy-dependency repair checks passed.'
+    Assert-Installed ((Get-Item -LiteralPath "$customLog.1").Length -eq $rotationLimit -and
+        (Get-Item -LiteralPath $customLog).Length -lt $rotationLimit) 'The installed reduced token could not rotate the full file log.'
+    Write-Output 'Installation, independent startup/stop, service accounts/SIDs, live token privileges, mutual local RPC authentication, broker authorization/recovery, protected ACLs, versions, firewall, rendered ETW, file logging/rotation, and legacy-dependency repair checks passed.'
 }
 finally {
     if ($installed) { Invoke-Msi '/x' 'uninstall.log' }

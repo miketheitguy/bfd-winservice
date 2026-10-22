@@ -24,13 +24,12 @@ the following resources for all users:
   own enabled service SID. BFD uses restricted SID type `3`; its service SID is
   also present in the token's restricting list. The broker retains unrestricted
   SID type `1`.
-- A BFD `RequiredPrivileges` allowlist containing only
-  `SeChangeNotifyPrivilege` and `SeCreateGlobalPrivilege`. A native commit action
-  records the list after the MSI transaction succeeds; services remain stopped
-  until you start them. SCM applies the list when it creates the LocalService
-  process. BFD also permanently removes unused
-  privileges at startup. The broker separately removes all token privileges
-  except `SeChangeNotifyPrivilege` before initializing COM/MI or RPC.
+- A `RequiredPrivileges` allowlist for each service containing only
+  `SeChangeNotifyPrivilege`. A native commit action records both lists after the
+  MSI transaction succeeds; services remain stopped
+  until you start them. SCM applies each list when it creates the service
+  process. Both services also permanently remove unused privileges at startup,
+  before opening network sockets or initializing COM/MI and RPC.
 - Protected service ACLs for both services: SYSTEM and Administrators have full
   control. Authenticated users can query configuration/status, enumerate
   dependents, interrogate status, and read the service ACL. They cannot Start/Stop,

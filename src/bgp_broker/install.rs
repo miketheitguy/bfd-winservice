@@ -26,7 +26,11 @@ const SNAPSHOT_MAGIC: &[u8; 4] = b"BSI4";
 const RECORD_LEN: usize = 8;
 const DEPENDENCIES_OFFSET: usize = SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len();
 const MAX_DEPENDENCY_UNITS: usize = 4096;
-const MAX_SNAPSHOT_BYTES: usize = DEPENDENCIES_OFFSET + 4 + MAX_DEPENDENCY_UNITS * 2;
+const MAX_SNAPSHOT_BYTES: usize = DEPENDENCIES_OFFSET
+    + 4
+    + MAX_DEPENDENCY_UNITS * 2
+    + 4
+    + NAMES.len() * (4 + privileges::MAX_UNITS * 2);
 /// Covers the maximum 60-second announcement, 60-second cleanup, and final logging.
 const BFD_PRESHUTDOWN_MS: u32 = 125_000;
 
@@ -289,6 +293,9 @@ fn append_dependencies(bytes: &mut Vec<u8>, units: &[u16]) -> io::Result<()> {
 struct Snapshot {
     policies: [Option<Policy>; 2],
     bfd_dependencies: Vec<u16>,
+    // Older snapshots have no privilege footer and can still undo deferred
+    // account/SID changes. Commit requires the new exact-policy snapshot.
+    privileges: Option<[privileges::Policy; 2]>,
 }
 
 fn read_snapshot() -> io::Result<Snapshot> {
@@ -340,10 +347,11 @@ fn decode(bytes: &[u8]) -> io::Result<Snapshot> {
             .map_err(io::Error::other)?,
     );
     let count = usize::try_from(count).map_err(io::Error::other)?;
-    if count > MAX_DEPENDENCY_UNITS || count * 2 != bytes.len() - DEPENDENCIES_OFFSET - 4 {
+    if count > MAX_DEPENDENCY_UNITS || count * 2 > bytes.len() - DEPENDENCIES_OFFSET - 4 {
         return Err(io::Error::other("invalid rollback dependency length"));
     }
-    let (words, _) = bytes[DEPENDENCIES_OFFSET + 4..].as_chunks::<2>();
+    let end = DEPENDENCIES_OFFSET + 4 + count * 2;
+    let (words, _) = bytes[DEPENDENCIES_OFFSET + 4..end].as_chunks::<2>();
     let bfd_dependencies: Vec<u16> = words.iter().map(|word| u16::from_le_bytes(*word)).collect();
     validate_dependencies(&bfd_dependencies)?;
     if values[0].is_none() && bfd_dependencies != [0, 0] {
@@ -354,7 +362,66 @@ fn decode(bytes: &[u8]) -> io::Result<Snapshot> {
     Ok(Snapshot {
         policies: values,
         bfd_dependencies,
+        privileges: decode_privileges(&bytes[end..])?,
     })
+}
+
+fn decode_privileges(mut bytes: &[u8]) -> io::Result<Option<[privileges::Policy; 2]>> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if !bytes.starts_with(b"PRV1") {
+        return Err(io::Error::other("invalid rollback privilege footer"));
+    }
+    bytes = &bytes[4..];
+    let mut policies = [None, None];
+    for policy in &mut policies {
+        let (length, rest) = bytes
+            .split_at_checked(4)
+            .ok_or_else(|| io::Error::other("truncated rollback privileges"))?;
+        bytes = rest;
+        let count = u32::from_le_bytes(length.try_into().map_err(io::Error::other)?);
+        if count == u32::MAX {
+            continue;
+        }
+        let count = usize::try_from(count).map_err(io::Error::other)?;
+        if count > privileges::MAX_UNITS {
+            return Err(io::Error::other("oversized rollback privileges"));
+        }
+        let (data, rest) = bytes
+            .split_at_checked(count * 2)
+            .ok_or_else(|| io::Error::other("truncated rollback privileges"))?;
+        bytes = rest;
+        let (words, _) = data.as_chunks::<2>();
+        let units: Vec<u16> = words.iter().map(|word| u16::from_le_bytes(*word)).collect();
+        privileges::validate(&units)?;
+        *policy = Some(units);
+    }
+    if !bytes.is_empty() {
+        return Err(io::Error::other("trailing rollback privilege data"));
+    }
+    Ok(Some(policies))
+}
+
+fn append_privileges(bytes: &mut Vec<u8>, policies: &[privileges::Policy; 2]) -> io::Result<()> {
+    bytes.extend_from_slice(b"PRV1");
+    for policy in policies {
+        match policy {
+            None => bytes.extend_from_slice(&u32::MAX.to_le_bytes()),
+            Some(units) => {
+                privileges::validate(units)?;
+                bytes.extend_from_slice(
+                    &u32::try_from(units.len())
+                        .map_err(io::Error::other)?
+                        .to_le_bytes(),
+                );
+                for unit in units {
+                    bytes.extend_from_slice(&unit.to_le_bytes());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn prepare() -> io::Result<()> {
@@ -362,7 +429,8 @@ pub(super) fn prepare() -> io::Result<()> {
     let mut bytes = Vec::with_capacity(SNAPSHOT_MAGIC.len() + RECORD_LEN * NAMES.len());
     bytes.extend_from_slice(SNAPSHOT_MAGIC);
     let mut bfd_dependencies = vec![0, 0];
-    for name in NAMES {
+    let mut privilege_policies = [None, None];
+    for (index, name) in NAMES.iter().copied().enumerate() {
         let service = match manager.open_service(name, ServiceAccess::QUERY_CONFIG) {
             Ok(service) => service,
             Err(windows_service::Error::Winapi(error)) if error.raw_os_error() == Some(1060) => {
@@ -374,11 +442,13 @@ pub(super) fn prepare() -> io::Result<()> {
             Err(error) => return Err(io::Error::other(error)),
         };
         bytes.extend_from_slice(&query(&service)?.encode());
+        privilege_policies[index] = privileges::query(name)?;
         if name == NAMES[0] {
             bfd_dependencies = dependencies(&service)?;
         }
     }
     append_dependencies(&mut bytes, &bfd_dependencies)?;
+    append_privileges(&mut bytes, &privilege_policies)?;
     let path = snapshot_path()?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -438,7 +508,7 @@ pub(super) fn rollback() -> io::Result<()> {
     let manager = manager()?;
     // Restore every previously existing service, even if restoring the first fails.
     let mut failure = None;
-    for (name, old) in NAMES.iter().zip(snapshot.policies) {
+    for (index, (name, old)) in NAMES.iter().zip(snapshot.policies).enumerate() {
         if let Some(policy) = old {
             let dependencies = if *name == NAMES[0] {
                 Some(snapshot.bfd_dependencies.as_slice())
@@ -450,6 +520,13 @@ pub(super) fn rollback() -> io::Result<()> {
             {
                 failure = Some(error);
             }
+            if let Some(policies) = &snapshot.privileges {
+                if let Err(error) = open(&manager, name)
+                    .and_then(|service| privileges::restore(&service, name, &policies[index]))
+                {
+                    failure = Some(error);
+                }
+            }
         }
     }
     if let Some(error) = failure {
@@ -460,15 +537,23 @@ pub(super) fn rollback() -> io::Result<()> {
 
 pub(super) fn commit() -> io::Result<()> {
     let path = snapshot_path()?;
-    read_snapshot()?;
+    if read_snapshot()?.privileges.is_none() {
+        return Err(io::Error::other(
+            "commit requires an exact service privilege snapshot",
+        ));
+    }
     let manager = manager()?;
-    let service = open(&manager, NAMES[0])?;
+    // Open both handles before changing either policy.
+    let bfd = open(&manager, NAMES[0])?;
+    let broker = open(&manager, NAMES[1])?;
     // MSI stops both services and never starts them. Commit is the final policy
-    // mutation before the next SCM launch, and the broker policy stays unchanged.
-    // Keep the snapshot if SCM rejects this last fallible operation so normal
-    // rollback can restore the other service settings.
+    // mutation before the next SCM launch. A failure after either mutation
+    // retains the exact prior lists for MSI rollback, including absent policies.
     privileges::commit_with(
-        || privileges::set_minimum(&service),
+        || {
+            privileges::set_minimum(&bfd)?;
+            privileges::set_minimum(&broker)
+        },
         || fs::remove_file(&path),
     )
 }
@@ -476,6 +561,41 @@ pub(super) fn commit() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn privilege_snapshot_preserves_absent_empty_and_ordered_lists() {
+        let explicit = "SeChangeNotifyPrivilege\0SeCreateGlobalPrivilege\0\0"
+            .encode_utf16()
+            .collect();
+        for policies in [
+            [None, Some(explicit)],
+            [Some(vec![]), Some(vec![0, 0])],
+            [None, None],
+        ] {
+            let mut bytes = Vec::new();
+            append_privileges(&mut bytes, &policies).unwrap();
+            assert_eq!(decode_privileges(&bytes).unwrap(), Some(policies));
+        }
+        assert_eq!(decode_privileges(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn privilege_snapshot_rejects_truncation_oversize_and_trailing_data() {
+        let mut bytes = Vec::new();
+        append_privileges(&mut bytes, &[None, Some(vec![0, 0])]).unwrap();
+        for length in 1..bytes.len() {
+            assert!(decode_privileges(&bytes[..length]).is_err());
+        }
+        bytes.push(0);
+        assert!(decode_privileges(&bytes).is_err());
+        let mut oversized = b"PRV1".to_vec();
+        oversized.extend_from_slice(&(privileges::MAX_UNITS as u32 + 1).to_le_bytes());
+        assert!(decode_privileges(&oversized).is_err());
+        let mut invalid = Vec::new();
+        append_privileges(&mut invalid, &[Some(vec![0, 0]), None]).unwrap();
+        invalid[8..12].copy_from_slice(&[1, 0, 1, 0]);
+        assert!(decode_privileges(&invalid).is_err());
+    }
+
     #[test]
     fn target_policies_restrict_only_bfd_and_keep_broker_system_authority() {
         let bfd = bfd_policy();

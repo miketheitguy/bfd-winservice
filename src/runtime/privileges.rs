@@ -18,9 +18,9 @@ use windows_sys::Win32::{
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
-/// Directory traversal and global object creation remain available to RPC,
-/// file logging, and Winsock. No BFD operation needs any other privilege.
-const RETAINED: [&str; 2] = ["SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege"];
+/// Directory traversal remains available. Local RPC, file logging, and Winsock
+/// operate without any other token privilege.
+const RETAINED: [&str; 1] = ["SeChangeNotifyPrivilege"];
 
 /// Permanently removes every other privilege from the process token, including
 /// SeImpersonatePrivilege and SeAssignPrimaryTokenPrivilege, before the service
@@ -198,6 +198,25 @@ mod tests {
     #[test]
     #[ignore = "requires the installed broker on a disposable MSI test runner"]
     fn installed_broker_token_retains_only_change_notify() {
+        let token = installed_service_token(crate::bgp::ipc::BROKER_NAME);
+        crate::service_identity::require_identity(
+            token.as_raw_handle(),
+            crate::bgp::ipc::BROKER_SID,
+            "S-1-5-18",
+        )
+        .unwrap();
+        assert_only_change_notify(&token);
+    }
+
+    #[test]
+    #[ignore = "requires the installed BFD service on a disposable MSI test runner"]
+    fn installed_bfd_token_is_restricted_and_retains_only_change_notify() {
+        let token = installed_service_token(crate::config::SERVICE_NAME);
+        crate::service_identity::require_restricted_bfd_token(token.as_raw_handle()).unwrap();
+        assert_only_change_notify(&token);
+    }
+
+    fn installed_service_token(name: &str) -> OwnedHandle {
         use windows_service::{
             service::{ServiceAccess, ServiceState},
             service_manager::{ServiceManager, ServiceManagerAccess},
@@ -205,15 +224,18 @@ mod tests {
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
-        assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-        assert_eq!(
-            std::env::var("RUNNER_ENVIRONMENT").as_deref(),
-            Ok("github-hosted")
+        let hosted_runner = std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+            && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted");
+        let disposable_vm = std::env::var("BFD_TEST_DISPOSABLE_VM").as_deref() == Ok("1")
+            && std::env::var("COMPUTERNAME").as_deref() == Ok("BFD-WS2025");
+        assert!(
+            hosted_runner || disposable_vm,
+            "installed token tests require a hosted runner or the explicit disposable BFD-WS2025 VM"
         );
         let manager =
             ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).unwrap();
         let service = manager
-            .open_service(crate::bgp::ipc::BROKER_NAME, ServiceAccess::QUERY_STATUS)
+            .open_service(name, ServiceAccess::QUERY_STATUS)
             .unwrap();
         let status = service.query_status().unwrap();
         assert_eq!(status.current_state, ServiceState::Running);
@@ -229,13 +251,19 @@ mod tests {
             unsafe { OpenProcessToken(process.as_raw_handle(), TOKEN_QUERY, &mut raw_token) };
         assert_ne!(opened, 0);
         // SAFETY: the successful open transfers a uniquely owned token handle.
-        let token = unsafe { OwnedHandle::from_raw_handle(raw_token) };
-        let names: Vec<_> = privileges(&token)
-            .unwrap()
+        unsafe { OwnedHandle::from_raw_handle(raw_token) }
+    }
+
+    fn assert_only_change_notify(token: &OwnedHandle) {
+        use windows_sys::Win32::Security::SE_PRIVILEGE_ENABLED;
+
+        let entries = privileges(token).unwrap();
+        let names: Vec<_> = entries
             .iter()
             .map(|entry| privilege_name(&entry.Luid).unwrap())
             .collect();
         assert_eq!(names, ["SeChangeNotifyPrivilege"]);
+        assert_ne!(entries[0].Attributes & SE_PRIVILEGE_ENABLED, 0);
     }
 
     #[cfg(not(miri))]
@@ -284,10 +312,7 @@ mod tests {
                 // SAFETY: successful open transfers ownership.
                 unsafe { OwnedHandle::from_raw_handle(raw) }
             };
-            for entry in privileges(&token).unwrap() {
-                let name = privilege_name(&entry.Luid).unwrap();
-                assert!(RETAINED.contains(&name.as_str()), "{name} remained");
-            }
+            assert_only_change_notify(&token);
             assert!(drop_privileges().unwrap().is_empty());
             // Sockets and their events still work without the removed privileges.
             let mut options = crate::config::Options::new(
