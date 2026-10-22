@@ -94,6 +94,7 @@ type GetInstance = unsafe extern "system" fn(
     *mut *const u16,
     *mut *const MI_Instance,
 ) -> MI_Result;
+#[cfg(test)]
 type SessionGetClass = unsafe extern "system" fn(
     *mut MI_Session,
     u32,
@@ -111,6 +112,7 @@ type GetClass = unsafe extern "system" fn(
     *mut *const u16,
     *mut *const MI_Instance,
 ) -> MI_Result;
+#[cfg(test)]
 type ClassGetElement = unsafe extern "system" fn(
     *const MI_Class,
     *const u16,
@@ -122,6 +124,7 @@ type ClassGetElement = unsafe extern "system" fn(
     *mut u32,
     *mut u32,
 ) -> MI_Result;
+#[cfg(test)]
 type GetQualifier = unsafe extern "system" fn(
     *const MI_QualifierSet,
     *const u16,
@@ -223,8 +226,7 @@ impl Application {
             )
         };
         check(result, "set local MI impersonation level")?;
-        // Values qualifiers are localized. Request English so status labels
-        // have the same meaning even on a server with a different UI language.
+        // Request English provider diagnostics for consistent event messages.
         for name in [
             w!("__MI_DESTINATIONOPTIONS_UI_LOCALE"),
             w!("__MI_DESTINATIONOPTIONS_DATA_LOCALE"),
@@ -234,7 +236,7 @@ impl Application {
                 let set: DestinationSetString = entry((*destination.0.ft).SetString, "SetString")?;
                 set(&mut destination.0, name, w!("en-US"), 0)
             };
-            check(result, "set MI status metadata locale")?;
+            check(result, "set MI provider locale")?;
         }
         let mut session = MI_Session::default();
         // SAFETY: application is live; SDK NewSession signature and writable
@@ -433,13 +435,15 @@ struct Operation {
 }
 
 impl Operation {
+    #[cfg(test)]
     fn finish(&mut self) -> io::Result<()> {
-        self.finish_with(|_| Ok(()))
+        self.finish_with(true, |_| Ok(()))
     }
 
     // The visitor must consume all borrowed data during the callback.
     fn finish_with(
         &mut self,
+        return_value_required: bool,
         mut visit: impl FnMut(*const MI_Instance) -> io::Result<()>,
     ) -> io::Result<()> {
         let mut returned_value = false;
@@ -448,12 +452,12 @@ impl Operation {
         self.drain(next, |instance| {
             // SAFETY: drain lends a live instance until the next result fetch.
             unsafe {
-                return_value(instance)?;
+                return_value(instance, return_value_required)?;
             }
             returned_value = true;
             visit(instance)
         })?;
-        if returned_value {
+        if returned_value || !return_value_required {
             Ok(())
         } else {
             Err(io::Error::other("CIM method returned no ReturnValue"))
@@ -555,8 +559,10 @@ fn cleanup(result: MI_Result, context: &str, log: &Logger) {
 }
 
 /// # Safety
-/// `instance` must be a live MI instance with a valid function table.
-unsafe fn return_value(instance: *const MI_Instance) -> io::Result<()> {
+/// `instance` must be a live MI instance with a valid function table. If
+/// `required` is false, the caller must verify the action's resulting peer state
+/// after successful MI completion; absent output alone does not prove success.
+unsafe fn return_value(instance: *const MI_Instance, required: bool) -> io::Result<()> {
     let mut value = MI_Value::default();
     let mut kind = 0;
     let mut flags = 0;
@@ -573,6 +579,9 @@ unsafe fn return_value(instance: *const MI_Instance) -> io::Result<()> {
             ptr::null_mut(),
         )
     };
+    if result == MI_RESULT_NO_SUCH_PROPERTY && !required {
+        return Ok(());
+    }
     check(result, "read CIM ReturnValue")?;
     if kind != MI_UINT32 || flags & MI_FLAG_NULL != 0 {
         return Err(io::Error::other("CIM ReturnValue is not a non-null uint32"));
@@ -636,6 +645,7 @@ unsafe fn element(
 
 /// # Safety
 /// qualifiers must be borrowed from a live MI_Class; name must be terminated.
+#[cfg(test)]
 unsafe fn qualifier_strings(
     qualifiers: &MI_QualifierSet,
     name: *const u16,
@@ -684,6 +694,7 @@ unsafe fn qualifier_strings(
 
 /// # Safety
 /// class must be a live MI class; property must be terminated UTF-16.
+#[cfg(test)]
 unsafe fn enum_mapping(
     class: *const MI_Class,
     property: *const u16,
@@ -730,24 +741,23 @@ unsafe fn enum_mapping(
         .collect()
 }
 
-fn status_started(code: u32, mapping: &[(u32, String)]) -> io::Result<bool> {
-    let label = mapping
-        .iter()
-        .find(|(value, _)| *value == code)
-        .map(|(_, label)| label.as_str())
-        .ok_or_else(|| io::Error::other(format!("unknown BGP ConnectivityStatus={code}")))?;
-    match label {
-        "Stopped" => Ok(false),
-        "Connecting" | "Connected" | "Disconnected" => Ok(true),
+fn status_started(code: u32) -> io::Result<bool> {
+    // RemoteAccess/PS_BgpPeer_v1.0.cdxml defines Bgp.ConnectivityStatus as
+    // Idle=1, Connecting=2, Connected=3, Stopped=4. BgpPeerConfig does not
+    // necessarily expose ValueMap/Values CIM qualifiers. Idle is enabled, so
+    // only Stopped permits Start; unknown values must not authorize a change.
+    match code {
+        1..=3 => Ok(true),
+        4 => Ok(false),
         _ => Err(io::Error::other(format!(
-            "unrecognized BGP ConnectivityStatus label {label:?}"
+            "unknown BGP ConnectivityStatus={code}"
         ))),
     }
 }
 
 /// # Safety
 /// instance must be a live MI method result for the duration of this call.
-unsafe fn peer_status(instance: *const MI_Instance, mapping: &[(u32, String)]) -> io::Result<bool> {
+unsafe fn peer_status(instance: *const MI_Instance) -> io::Result<bool> {
     // SAFETY: caller lends the live method result for this call.
     let output = unsafe { element(instance, w!("cmdletOutput"), MI_INSTANCEA)? };
     // SAFETY: element checked the MI_INSTANCEA union discriminator.
@@ -764,9 +774,10 @@ unsafe fn peer_status(instance: *const MI_Instance, mapping: &[(u32, String)]) -
     }
     // SAFETY: embedded peer and properties remain owned by the live result.
     let code = unsafe { element(peer, w!("ConnectivityStatus"), MI_UINT32)?.uint32 };
-    status_started(code, mapping)
+    status_started(code)
 }
 
+#[cfg(test)]
 fn schema_operation(
     session: &mut Session,
     options: &mut OperationOptions,
@@ -806,25 +817,6 @@ pub(super) fn started(peer: &str, domain: Option<&str>, log: &Logger) -> io::Res
     let mut session = application.session()?;
     let parameters = application.parameters(Method::Get, peer, domain)?;
     let mut options = application.options()?;
-    // Resolve enum values from the target provider's schema rather than assume
-    // numeric values that Microsoft does not specify in the public class docs.
-    let mapping = {
-        let mut schema = schema_operation(
-            &mut session,
-            &mut options,
-            w!("root/Microsoft/Windows/RemoteAccess"),
-            w!("BgpPeerConfig"),
-        )?;
-        let mut mapping = None;
-        // SAFETY: class operation; exact SDK GetClass result-accessor signature.
-        let next: GetClass = unsafe { entry((*schema.handle.ft).GetClass, "GetClass") }?;
-        schema.drain(next, |class| {
-            // SAFETY: drain lends a live schema until next fetch/Close.
-            mapping = Some(unsafe { enum_mapping(class, w!("ConnectivityStatus")) }?);
-            Ok(())
-        })?;
-        mapping.ok_or_else(|| io::Error::other("BGP peer schema was not returned"))?
-    };
     let mut handle = MI_Operation::default();
     // SAFETY: live handles, static terminated strings, exact SDK Invoke ABI;
     // Get reads configuration only; no callbacks means synchronous retrieval.
@@ -855,14 +847,14 @@ pub(super) fn started(peer: &str, domain: Option<&str>, log: &Logger) -> io::Res
         log: session.log.clone(),
     };
     let mut started = None;
-    operation.finish_with(|instance| {
+    operation.finish_with(true, |instance| {
         if started.is_some() {
             return Err(io::Error::other(
                 "BGP status query must return exactly one peer",
             ));
         }
         // SAFETY: method result is lent by finish_with for this callback only.
-        started = Some(unsafe { peer_status(instance, &mapping) }?);
+        started = Some(unsafe { peer_status(instance) }?);
         Ok(())
     })?;
     started.ok_or_else(|| io::Error::other("BGP status query returned no peer"))
@@ -913,7 +905,27 @@ pub(super) fn invoke(
         class_result: false,
         log: session.log.clone(),
     };
-    operation.finish()
+    // RRAS Start/Stop can complete successfully with an empty result instance
+    // even though their schema declares a uint32 return. Always drain and check
+    // MI completion, reject any explicit invalid/nonzero ReturnValue, then read
+    // the selected peer back before reporting the mutation as successful.
+    operation.finish_with(false, |_| Ok(()))?;
+    let expected_started = match method {
+        Method::Start => true,
+        Method::Stop => false,
+        Method::Get => return Err(io::Error::other("Get is not a BGP state-change action")),
+    };
+    verify_action_state(method, expected_started, started(peer, domain, log)?)
+}
+
+fn verify_action_state(method: Method, expected: bool, actual: bool) -> io::Result<()> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "BGP {method:?} completed but peer started={actual}; expected {expected}"
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -956,20 +968,16 @@ mod tests {
     }
 
     #[test]
-    fn connectivity_mapping_distinguishes_stopped_from_running_without_assuming_ids() {
-        let mapping = vec![
-            (71, "Stopped".into()),
-            (42, "Connecting".into()),
-            (99, "Connected".into()),
-            (12, "Disconnected".into()),
-            (3, "Unknown".into()),
-        ];
-        assert!(!status_started(71, &mapping).unwrap());
-        for code in [42, 99, 12] {
-            assert!(status_started(code, &mapping).unwrap());
+    fn connectivity_status_uses_remoteaccess_contract_and_rejects_unknown_values() {
+        // These are the enum values shipped in PS_BgpPeer_v1.0.cdxml, not
+        // inferred from optional/localized CIM qualifiers.
+        for code in [1, 2, 3] {
+            assert!(status_started(code).unwrap());
         }
-        assert!(status_started(0, &mapping).is_err());
-        assert!(status_started(3, &mapping).is_err());
+        assert!(!status_started(4).unwrap());
+        for code in [0, 5, u32::MAX] {
+            assert!(status_started(code).is_err());
+        }
     }
 
     #[cfg(not(miri))]
@@ -1007,10 +1015,20 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
+    #[ignore = "requires installed RRAS and BFD_TEST_RRAS_PEER; reads the configured peer only"]
+    fn native_mi_reads_configured_rras_peer() {
+        let peer = std::env::var("BFD_TEST_RRAS_PEER")
+            .expect("set BFD_TEST_RRAS_PEER to an existing RRAS BGP peer name");
+        let _com = super::super::com::ComHost::initialize().unwrap();
+        let log = Logger::new(false).unwrap();
+        let _started = started(&peer, None, &log).unwrap();
+    }
+
+    #[cfg(not(miri))]
+    #[test]
     fn native_mi_parses_embedded_bgp_status_and_rejects_ambiguous_results() {
         let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
-        let mapping = vec![(7, "Stopped".into()), (8, "Connecting".into())];
-        for code in [7, 8, 9] {
+        for code in [0, 1, 2, 3, 4, 5, u32::MAX] {
             let mut peer = application.parameters(Method::Get, "test", None).unwrap();
             let value = MI_Value { uint32: code };
             // SAFETY: live instance, static name, matching initialized union.
@@ -1038,9 +1056,9 @@ mod tests {
                         .unwrap_or_else(|error| panic!("count={count} code={code}: {error}"));
                 }
                 // SAFETY: live locally allocated method-result fixture.
-                let status = unsafe { peer_status(result.0, &mapping) };
-                if count == 1 && code != 9 {
-                    assert_eq!(status.unwrap(), code == 8);
+                let status = unsafe { peer_status(result.0) };
+                if count == 1 && (1..=4).contains(&code) {
+                    assert_eq!(status.unwrap(), code != 4);
                 } else {
                     assert!(status.is_err());
                 }
@@ -1153,7 +1171,7 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
-    fn native_mi_checks_cim_return_code_and_type() {
+    fn native_mi_checks_return_code_and_requires_status_output() {
         let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
         for (value, kind, succeeds) in [
             (MI_Value { uint32: 0 }, MI_UINT32, true),
@@ -1166,7 +1184,27 @@ mod tests {
                 parameters.add(w!("ReturnValue"), &value, kind).unwrap();
             }
             // SAFETY: live locally allocated MI instance.
-            assert_eq!(unsafe { return_value(parameters.0) }.is_ok(), succeeds);
+            for required in [false, true] {
+                // SAFETY: live locally allocated MI instance; optional action
+                // output is followed by state verification in invoke.
+                let result = unsafe { return_value(parameters.0, required) };
+                assert_eq!(result.is_ok(), succeeds);
+            }
+        }
+        let empty = application.parameters(Method::Start, "test", None).unwrap();
+        // Status queries require output; actions allow the empty result emitted
+        // by RRAS only because invoke subsequently verifies the selected peer.
+        // SAFETY: live locally allocated MI instance.
+        assert!(unsafe { return_value(empty.0, true) }.is_err());
+        // SAFETY: live locally allocated MI instance.
+        assert!(unsafe { return_value(empty.0, false) }.is_ok());
+    }
+
+    #[test]
+    fn successful_completion_without_the_requested_peer_state_is_an_error() {
+        for (method, expected) in [(Method::Start, true), (Method::Stop, false)] {
+            assert!(verify_action_state(method, expected, expected).is_ok());
+            assert!(verify_action_state(method, expected, !expected).is_err());
         }
     }
 }

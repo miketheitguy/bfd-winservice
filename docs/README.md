@@ -65,6 +65,8 @@ cap: these records and instructions serve different jobs:
 | [Dated correctness reviews](../CODE_REVIEW.md) | Recorded review findings, checks, revisions, and limits |
 | [Code, tests, and documentation alignment audit](alignment-audit-2026-10-21.md) | Findings, fixes, release validation, and remaining coverage limits |
 | [v2.0.1 release notes](releases/2.0.1.md) | Patch compatibility rationale and corrected deployment behavior |
+| [Windows BGP withdrawal and recovery validation](windows-bgp-interop-2026-10-22.md) | RRAS compatibility defects, route-table checks, event messages, and measured recovery |
+| [v2.0.2 release notes](releases/2.0.2.md) | Automatic RRAS recovery fixes and patch compatibility rationale |
 | [Documentation audit](documentation-audit.md) | Documentation findings, corrections, review coverage, and validation scope |
 | [Archived Rust skills audit](archive/RUST_SKILLS_VALIDATION_2026-10-01.md) | Historical findings retained with their original evidence and supersession warning |
 | [AGENTS instructions](../AGENTS.md) and [CLAUDE instructions](../CLAUDE.md) | Repository-specific instructions for coding agents |

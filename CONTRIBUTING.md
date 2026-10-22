@@ -943,7 +943,16 @@ Model (CIM) schema test requires namespace access and is opt-in. Run it separate
 cargo test native_mi_reads_enum_qualifiers_from_local_class_schema -- --ignored
 ```
 
-The default suite leaves both this schema test and the native RPC/MI coexistence
+On a server with RRAS BGP configured, check the native status query against an
+existing peer. This test reads the peer without starting or stopping it:
+
+```powershell
+$env:BFD_TEST_RRAS_PEER = 'YOUR_EXISTING_PEER_NAME'
+cargo test --locked --lib native_mi_reads_configured_rras_peer -- --ignored
+Remove-Item Env:BFD_TEST_RRAS_PEER
+```
+
+The default suite leaves these provider tests and the native RPC/MI coexistence
 test opt-in. It also contains ignored RPC child fixtures that parent tests launch
 automatically; do not run those fixtures directly. Install
 [Miri](https://github.com/rust-lang/miri#using-miri) for the repository's pinned

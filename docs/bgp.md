@@ -272,9 +272,9 @@ victory lap.
 
 The broker calls [`PS_BgpPeer`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/ps-bgppeer) in `root\Microsoft\Windows\RemoteAccess` through Rust bindings to `mi.dll` and the [MI client API](https://learn.microsoft.com/en-us/windows/win32/api/mi/nf-mi-mi_session_invoke).
 
-At startup, [`PS_BgpPeer.Get`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/get-ps-bgppeer) reads the selected peer. English enum metadata maps `Stopped` to stopped and `Connected`/`Connecting`/`Disconnected` to started. The BFD handshake runs independently.
+At startup, [`PS_BgpPeer.Get`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/get-ps-bgppeer) reads the selected peer. The broker uses the `Bgp.ConnectivityStatus` contract in the Windows RemoteAccess module's `PS_BgpPeer_v1.0.cdxml`: `Idle=1`, `Connecting=2`, and `Connected=3` mean started; `Stopped=4` means stopped. This also works when the CIM property omits enum qualifiers. An unknown status returns an error and does not authorize Start. The BFD handshake runs independently.
 
-Each method receives a one-element `Name` string array and, when configured, `RoutingDomain`. [`Stop`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/stop-ps-bgppeer) also receives `Force=true`. Success requires MI completion success and Common Information Model (CIM) `ReturnValue=0`. Start checks for supersession before and after its status query; provider calls are not atomic with BFD state changes.
+Each method receives a one-element `Name` string array and, when configured, `RoutingDomain`. [`Stop`](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ramgmtpsprov/stop-ps-bgppeer) also receives `Force=true`. All calls require successful MI completion. A status query also requires a non-null unsigned 32-bit `ReturnValue=0` and exactly one peer. Start and Stop can return empty output on RRAS; the broker reads the peer back and requires the requested started or stopped state before reporting success. Any explicit invalid or nonzero `ReturnValue` remains an error. Start checks for supersession before and after its status query; provider calls are not atomic with BFD state changes.
 
 </details>
 
