@@ -4,7 +4,6 @@ Cowabunga, install crew. Use this guide to install, configure, and verify a
 classical Bidirectional Forwarding Detection (BFD) session on Windows. The
 offline setup bundle provisions both services, the native Microsoft Visual C++
 runtime, and their security settings. The service monitors one local/peer pair.
-For foreground execution, follow [Run BFD in a console](console.md).
 
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
@@ -16,7 +15,6 @@ Choose the path for your deployment:
 
 - For Windows services, [install the setup bundle](#install-with-the-offline-setup-bundle), then
   [configure and verify the service](#configure-and-verify-the-windows-service).
-- For foreground execution, follow [Run BFD in a console](console.md).
 - For removal, use the [setup bundle uninstall procedure](#remove-a-setup-bundle-installation) or
   the [legacy manual removal procedure](reference/legacy-installation.md).
 
@@ -286,10 +284,10 @@ the deployment details.
 
 <a id="prepare-installation-files"></a>
 
-## Run in a console
+## Migrate a foreground deployment
 
-For loose-file prerequisites and foreground execution, follow
-[Run BFD in a console](console.md).
+For an older foreground deployment, follow [Migrate to services](console.md).
+BFD runs only through SCM and accepts no command-line arguments.
 
 ## Remove a legacy manual installation
 

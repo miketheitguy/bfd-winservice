@@ -41,16 +41,18 @@ deployment behavior that still needs a provisioned Windows Server.
 
 ## Build the executable
 
-Bodacious builds start with the compiler output. Build and inspect the help:
+Bodacious builds start with the compiler output. Build and inspect the file version:
 
 ```powershell
 cargo build --locked --release
-.\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe --help
+(Get-Item '.\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe').VersionInfo |
+    Select-Object FileVersion, ProductVersion
 ```
 
 A successful build creates
-`target\x86_64-pc-windows-msvc\release\bfd-winservice.exe`. The help lists
-`--console`, `--help`, and `--version`; session settings come from the registry.
+`target\x86_64-pc-windows-msvc\release\bfd-winservice.exe`. BFD accepts no
+command-line arguments and runs only through SCM. Session settings come from
+the registry; file properties contain the version.
 Event Tracing for Windows (ETW) metadata and English messages are embedded during
 the build using the SDK's `mc.exe` and `rc.exe`. Windows file properties also
 contain file and product versions generated from `Cargo.toml`.

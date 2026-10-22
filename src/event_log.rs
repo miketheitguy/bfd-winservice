@@ -189,15 +189,15 @@ impl Record {
     pub(crate) fn identity(&self) -> (u16, u8) {
         (self.event.Id, self.event.Level)
     }
-    pub(crate) fn service_started(console: bool) -> Self {
+    pub(crate) fn service_started() -> Self {
         Self {
             event: &SERVICE_STARTED,
-            payload: vec![u8::from(console)],
+            payload: vec![0],
             text: None,
         }
     }
-    pub(crate) fn service_stopped(console: bool, exit_code: u32) -> Self {
-        let mut payload = vec![u8::from(console)];
+    pub(crate) fn service_stopped(exit_code: u32) -> Self {
+        let mut payload = vec![0];
         payload.extend_from_slice(&exit_code.to_le_bytes());
         Self {
             event: &SERVICE_STOPPED,
@@ -205,8 +205,8 @@ impl Record {
             text: None,
         }
     }
-    pub(crate) fn service_failed(console: bool, error: &str) -> Self {
-        let mut payload = vec![u8::from(console)];
+    pub(crate) fn service_failed(error: &str) -> Self {
+        let mut payload = vec![0];
         append_unicode(&mut payload, error);
         Self {
             event: &SERVICE_FAILED,
@@ -214,8 +214,8 @@ impl Record {
             text: None,
         }
     }
-    pub(crate) fn service_warning(console: bool, warning: &str) -> Self {
-        let mut payload = vec![u8::from(console)];
+    pub(crate) fn service_warning(warning: &str) -> Self {
+        let mut payload = vec![0];
         append_unicode(&mut payload, warning);
         Self {
             event: &SERVICE_WARNING,
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn service_warning_payload_and_text_use_the_warning_level() {
-        let record = Record::service_warning(false, "configure AllowedPeers");
+        let record = Record::service_warning("configure AllowedPeers");
         assert_eq!(record.identity(), (4, 3));
         let mut expected = vec![0];
         append_unicode(&mut expected, "configure AllowedPeers");
@@ -730,13 +730,13 @@ mod tests {
     #[cfg(not(miri))]
     fn native_provider_registration_and_lifecycle_writes_succeed() {
         let provider = Provider::register().unwrap();
-        provider.emit(&Record::service_started(true)).unwrap();
+        provider.emit(&Record::service_started()).unwrap();
         provider
-            .emit(&Record::service_failed(true, "synthetic ETW smoke test"))
+            .emit(&Record::service_failed("synthetic ETW smoke test"))
             .unwrap();
         provider
-            .emit(&Record::service_warning(true, "synthetic ETW warning"))
+            .emit(&Record::service_warning("synthetic ETW warning"))
             .unwrap();
-        provider.emit(&Record::service_stopped(true, 1)).unwrap();
+        provider.emit(&Record::service_stopped(1)).unwrap();
     }
 }

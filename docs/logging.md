@@ -11,25 +11,23 @@ service identity check, even when BFD is `Down`.
 
 ## Log destinations
 
-Pick where the turtle team gets its diagnostic receipts. In Windows Service
-Control Manager (SCM) mode, the service uses Event Tracing for Windows (ETW) to
-publish Operational events. In console mode, it writes to standard output
-(STDOUT). The service supports these destinations:
+Pick where the turtle team gets its diagnostic receipts. The Windows service
+uses Event Tracing for Windows (ETW) to publish Operational events and supports
+optional file output:
 
 | Destination | When used | Content |
 | --- | --- | --- |
-| `BFD-Service/Operational` | SCM mode, with manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, authentication failures, and broker readiness/provider/status messages |
-| STDOUT | `--console` | BFD log messages; no ETW registration |
-| `LogFilePath` | Either mode, with `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
+| `BFD-Service/Operational` | Manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, authentication failures, and broker readiness/provider/status messages |
+| `LogFilePath` | `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
 
-### Console and packet text
+<a id="console-and-packet-text"></a>
+
+### Packet text
 
 Keep the noise mellow: ordinary send errors are logged at most once per second.
 Generic discard reasons require `Verbose=1` and have a separate one-second
-limit. These messages go to STDOUT or the configured file; they do not produce
+limit. These messages go to the configured file; they do not produce
 Operational events.
-
-If a STDOUT write fails, the shared writer disables further console writes and attempts one standard error (STDERR) diagnostic. File logging, BFD execution, and Border Gateway Protocol (BGP) control continue. A failed diagnostic write is ignored.
 
 ### Rotation, loss, and timestamps
 
@@ -61,8 +59,9 @@ events](monitoring.md).
 ## Configure file logging
 
 Get the log destination ready before pizza time. Time to lock in: run the
-commands in **PowerShell as Administrator**. Provision the session and copy the
-logging script using [Set up a BFD session](setup.md) first. For a custom
+commands in **PowerShell as Administrator**. Install the bundle and provision the
+session using [Set up a BFD session](setup.md) first. The bundle installs the
+logging setup script. For a custom
 destination, review
 [File paths, permissions, and timestamps](#file-paths-permissions-and-timestamps)
 before enabling output.
@@ -71,9 +70,8 @@ before enabling output.
 
 ### 1. Optional: Provision the defaults
 
-The MSI already provisions the log folder and default registry values. For a
-loose-file console deployment, the [logging setup
-script](../scripts/Initialize-Logging.ps1) creates
+The MSI provisions the log folder and default registry values. The [logging
+setup script](../scripts/Initialize-Logging.ps1) creates
 `C:\ProgramData\BfdWinService` and sets the defaults without creating or writing
 `trace.log`. To initialize or deliberately reset those settings, run:
 
@@ -110,17 +108,16 @@ location, replace the path with an absolute file path.
 
 ### 3. Verify file output
 
-Start the service or console process, or restart it if already running, to load the settings. Inspect the default file after startup:
+Start the service, or restart it if already running, to load the settings. Inspect the default file after startup:
 
 ```powershell
 Get-Content 'C:\ProgramData\BfdWinService\trace.log' -Tail 20
 ```
 
 Timestamp vibe check, turtle crew: each line needs a UTC timestamp ending in
-`Z`. Console output uses Unix milliseconds; redirecting STDOUT to a file
-preserves that console format.
+`Z`.
 
-To disable file output, set `LogToFile` to DWORD `0` and restart execution. See the [configuration reference](configuration.md#logging-and-bgp) for the setting types and defaults.
+To disable file output, set `LogToFile` to DWORD `0` and restart the service. See the [configuration reference](configuration.md#logging-and-bgp) for the setting types and defaults.
 
 ## File paths, permissions, and timestamps
 
@@ -301,17 +298,17 @@ forwarding-plane/path notifications.
 See [States and diagnostics](protocol.md#states-and-diagnostics)
 for the transition rules.
 
-### Service and console output
+<a id="service-and-console-output"></a>
 
-In SCM mode, the output worker submits each state or diagnostic record to ETW
+### Service output
+
+The output worker submits each state or diagnostic record to ETW
 and writes its text representation to the file when `LogToFile=1`. Both outputs
 use the same event ID and severity. File entries include `event_id`, `level`,
 and `scope=Local` or `scope=Remote`, followed by the state or diagnostic context.
 Each entry starts with the writer's UTC timestamp.
 
-With `--console`, the same event text goes to STDOUT and the enabled file.
-Console mode doesn't register or write to ETW. With `LogToFile=0`, neither mode
-opens or writes `LogFilePath`.
+With `LogToFile=0`, BFD leaves `LogFilePath` untouched.
 
 S-BFD initiators use these events for valid responses, Up, and detection expiry.
 An AdminDown response keeps communication active while the target entity is in
@@ -351,7 +348,7 @@ event 4 carries a text message in these cases:
 
 Event 105 includes the packet source address/port, configured authentication type/key ID, local discriminator, and rejection reason. It is limited to once per second per process, independently of verbose logging. Keys, passwords, digests, and packet payloads are omitted. Malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate this event.
 
-The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](../events/BFD-Service.man) follows Microsoft's [instrumentation manifest format](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). Lifecycle Mode `0` renders as `Windows service`; console startup text uses `mode=console`.
+The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](../events/BFD-Service.man) follows Microsoft's [instrumentation manifest format](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). Lifecycle Mode remains `0`, rendered as `Windows service`, preserving the existing ETW payload layout.
 
 ## Logging failures
 

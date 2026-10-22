@@ -8,70 +8,15 @@ before packaging. Commands run from the repository root on the
 
 ## Prepare installation files
 
-Pack the whole turtle team from the same checkout. Keep the deployment bundle
-dialed in: give administrators these files from the same source revision:
+Give administrators the offline setup bundle and its SHA-256 file from the same
+tested checkout. The bundle contains both daemon executables, the Event Log
+manifest, the logging setup script, and Microsoft's pinned native x64 runtime.
 
-- `bfd-winservice.exe`: the release executable.
-- `bfd-bgp-broker.exe`: the privileged BGP broker, installed by the MSI.
-- `BFD-Service.man`: the Event Log provider manifest.
-- `Initialize-Logging.ps1`: the script that provisions logging defaults.
-- `VC_redist.x64.exe` and its `.sha256` file: the verified native x64 runtime
-  prerequisite, required before loose executables can run.
-
-Copy them into a deployment folder. Verify the runtime pin and both executable
-toolset receipts before supplying loose files:
-
-```powershell
-.\scripts\Test-VcRedist.ps1
-$runtimeVersion = (Get-Content 'installer/redist/VC_redist.x64.json' -Raw |
-    ConvertFrom-Json).FileVersion
-foreach ($name in @('bfd-winservice','bfd-bgp-broker')) {
-    .\scripts\Test-NativeRuntime.ps1 `
-        -Path "target/x86_64-pc-windows-msvc/release/$name.exe" `
-        -RuntimeVersion $runtimeVersion
-}
-$deploymentDirectory = Join-Path $PWD 'target\deployment'
-New-Item -ItemType Directory -Path $deploymentDirectory -Force
-Copy-Item `
-    -LiteralPath '.\target\x86_64-pc-windows-msvc\release\bfd-winservice.exe' `
-    -Destination $deploymentDirectory
-Copy-Item `
-    -LiteralPath '.\target\x86_64-pc-windows-msvc\release\bfd-bgp-broker.exe' `
-    -Destination $deploymentDirectory
-Copy-Item -LiteralPath '.\events\BFD-Service.man' `
-    -Destination $deploymentDirectory
-Copy-Item -LiteralPath '.\scripts\Initialize-Logging.ps1' `
-    -Destination $deploymentDirectory
-Copy-Item -LiteralPath 'installer/redist/VC_redist.x64.exe',
-    'installer/redist/VC_redist.x64.exe.sha256' -Destination $deploymentDirectory
-Get-ChildItem -LiteralPath $deploymentDirectory | Select-Object Name
-```
-
-PowerShell displays the deployment folder and these filenames:
-
-```text
-Name
-----
-BFD-Service.man
-bfd-bgp-broker.exe
-bfd-winservice.exe
-Initialize-Logging.ps1
-VC_redist.x64.exe
-VC_redist.x64.exe.sha256
-```
-
-Deliver the folder's contents with the [setup guide](../setup.md).
-Administrators don't need Rust, the MSVC toolchain, or the Windows SDK to
-follow that guide.
-
-Loose files support console execution. Use the setup bundle for SCM execution: it
-provisions the LocalService BFD process, Automatic (Delayed Start) LocalSystem broker, enabled
-service SIDs, independent service startup, and scoped registry/file/log ACLs. Native MI
-code is confined to `src/bgp_broker/mi.rs`; the BFD worker uses `src/bgp/ipc.rs`.
-Broker operations accept only fixed Get/Start/Stop frames and load their target
-from protected configuration. Protocol, authorization, reconnect, disconnect
-cleanup, and asynchronous-call cancellation tests use isolated native `ncalrpc`
-endpoints and fake provider operations, with no service installation or BGP changes.
+The MSI provisions the LocalService BFD process, Automatic (Delayed Start)
+LocalSystem broker, service SIDs, privilege allowlists, and scoped ACLs. Both
+services validate their actual SCM-issued tokens before accepting work. Loose
+executables alone do not provision this boundary. Administrators don't need
+Rust, the MSVC toolchain, or the Windows SDK to install the bundle.
 
 ## Build the offline setup bundle
 
@@ -110,8 +55,8 @@ To reproduce a tagged release locally, stamp its version before building:
 The stamping script updates only the `bfd-winservice` version in `Cargo.toml`,
 `Cargo.lock`, and `fuzz/Cargo.lock`; dependency versions remain locked. It rejects malformed tags,
 prerelease or build metadata, leading zeros, and versions beyond MSI limits.
-Before packaging, the script checks the executable's `--version` output and
-Windows file and product versions against the Cargo version. It also checks the
+Before packaging, the script reads Windows file and product versions without
+executing the service and checks them against the Cargo version. It also checks the
 MSI's `ProductVersion` and packaged executable version. `-SkipBuild` rejects an
 executable from another version; rebuild it before packaging.
 
@@ -243,7 +188,8 @@ executable so it doesn't rebuild or replace the packaged production images.
 The separate ASan job uses its development-derived profile and isolated output
 directory; its artifacts never supply the MSI payload.
 
-The installation test runs only on a GitHub-hosted runner. It checks fresh
+The installation test runs on a GitHub-hosted runner or, with `-DisposableVm`,
+the provisioned disposable `BFD-WS2025` Hyper-V guest. It checks fresh
 installation, actual service configuration, registry types, firewall rules,
 rendered Operational events, disabled/enabled file output, repair without
 resetting settings, administrator service start/stop, installed service ACLs,
@@ -257,16 +203,21 @@ previous service security descriptor and BFD dependency list. Install and repair
 explicitly clear BFD's former broker dependency through SCM. The protected,
 bounded rollback snapshot preserves dependency names, groups, order, and UTF-16
 without changing the commit-only privilege policy. It provisions
-loopback addresses before starting the service. It doesn't run on
-developer machines. It also checks the installed executable's versions and the
+loopback addresses before starting the service. The guard rejects ordinary
+developer hosts. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is
 read-only and can run locally.
 
-The tests check both service accounts and SIDs, mutual telemetry authorization
+The tests check both service accounts, SIDs, SCM privilege lists, actual
+running token privileges, and mutual telemetry authorization
 using the actual service tokens, denial of authenticated unrelated clients
 on both private RPC interfaces after install, broker recovery, and repair, both
 executable versions, delayed start and recovery settings, SCM recovery after a
 broker crash, and log writes through the BFD service SID.
+`Test-ServicePrivilegePolicy.ps1` runs before the independent-start checks. It
+temporarily broadens each stopped service's SCM allowlist, requires startup
+rejection and the token-policy diagnostic, then restores the minimum and checks
+recovery. Executable version checks read PE metadata without launching a daemon.
 Startup fixtures start BFD with BGP configured while the broker is stopped,
 stop the broker without stopping BFD, and start the broker while BFD is stopped.
 Repair fixtures seed the former broker dependency and require its removal.
@@ -281,7 +232,7 @@ privilege policy, an empty request through SCM, a pre-existing empty registry
 value, an explicit privilege list, and a restricted service SID. The empty registry
 value is seeded only on a stopped test service on the disposable runner; the test
 never starts that fixture. It
-runs only on a disposable GitHub-hosted runner.
+runs only on a GitHub-hosted runner or the explicitly selected disposable VM.
 
 After MSI validation and removal, `Test-BundleInstall.ps1` installs the setup
 bundle and checks runtime availability, both service accounts and executable
@@ -338,8 +289,8 @@ Use a GitHub tag in the form `vMAJOR.MINOR.PATCH` as the release version source.
 The MSI workflow accepts three numeric components without leading zeros,
 prerelease identifiers, or build metadata. MSI limits the major and minor
 components to 255 and the patch component to 65535.
-The executable's `--version` output, Windows file and product version strings,
-MSI `ProductVersion`, and installed-app `DisplayVersion` use the numeric part
+Windows file and product version strings, MSI `ProductVersion`, and
+installed-app `DisplayVersion` use the numeric part
 of the tag, such as `1.2.0`.
 Windows numeric file and product versions
 append a fourth field of `0`, such as `1.2.0.0`. You do not need to commit a
@@ -352,8 +303,11 @@ To release a tested commit:
 1. Choose the next version tag using [Choose a release version](../../CONTRIBUTING.md#choose-a-release-version).
    The commands use `v1.2.0` as an example. Keep the existing tag when retrying
    a release from the same commit.
-2. Commit the tested release changes. Confirm that the commit contains the
-   release workflow.
+2. Add `docs/releases/VERSION.md` with the compatibility decision, migration
+   steps, and validation limits. Update the README, documentation index, and
+   any migration guide to identify the release that introduces a changed
+   contract. Commit the tested changes
+   and confirm that the commit contains the release workflow and notes.
 3. Create the version tag from that commit, for example:
 
    ```powershell

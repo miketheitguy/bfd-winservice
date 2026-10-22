@@ -2,7 +2,7 @@
 
 Cowabunga, service crew. Check the token before the mission starts. Windows
 admins and developers, let's check which permissions each process actually gets,
-dude. This reference explains installed service identities, privilege reduction,
+dude. This reference explains installed service identities, privilege validation,
 protected objects, and the broker's Component Object Model (COM) and Management
 Infrastructure (MI) provider boundary. Use it to distinguish service isolation
 from local administrative access. For channel authentication, see
@@ -45,7 +45,7 @@ semantics](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/n
 
 Channel Donatello: inspect the token before opening resources. Identity
 preflight, buddy: before loading configuration, creating sockets, or registering
-local RPC in service mode, BFD checks its own process token. `TokenUser` must be
+local RPC, BFD checks its own process token. `TokenUser` must be
 LocalService. The BFD SID must be enabled and not deny-only in `TokenGroups`;
 both that SID and the write-restricted marker `S-1-5-33` must appear in
 `TokenRestrictedSids`. These queries never attach a token to a thread or require
@@ -58,8 +58,8 @@ Here's the permissions lineup for installed services and local callers:
 
 | Identity | Permissions and limits |
 | --- | --- |
-| `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the broker control RPC interface. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege`; startup removes unused privileges before accepting traffic. |
-| `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the BGP control RPC interface, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group, then permanently removes all privileges except `SeChangeNotifyPrivilege` before initializing COM/MI, loading its target, or registering RPC. |
+| `BfdWinService`: LocalService with restricted `NT SERVICE\BfdWinService` SID | Receives and sends BFD packets, hosts the private local RPC interface, reads Parameters, writes its configured logs, and requests fixed-target BGP actions through the broker control RPC interface. The service SID participates in normal and restricting write checks. SCM limits its process token to `SeChangeNotifyPrivilege`; startup rejects a token that has any other privilege or lacks the enabled required privilege. |
+| `BfdBgpBroker`: LocalSystem with unrestricted `NT SERVICE\BfdBgpBroker` SID | Queries BFD telemetry on a worker inside the existing broker process, owns the BGP control RPC interface, and invokes the local Windows BGP management provider. Startup checks LocalSystem in `TokenUser` and the enabled broker service group, then verifies only enabled `SeChangeNotifyPrivilege` is present before initializing COM/MI, loading its target, or registering RPC. |
 | Elevated Administrators and SYSTEM | Can install, start, stop, and reconfigure either service, modify installed files and Parameters, and manage permissions. Account or Administrator membership alone does not satisfy the private channels' service-specific identity checks. |
 | Authenticated non-administrator local users | Can query service configuration/status, enumerate dependents, interrogate the service, and read its service ACL. Can read event/file logs under the applicable Windows permissions. Cannot use the private RPC interface, start, stop, reconfigure, or send custom controls to either installed service. |
 | Other LocalService processes | Share BFD's account but not its service SID. Cannot authenticate as BFD to the broker or satisfy the broker identity required by BFD's local RPC interface. |
@@ -72,11 +72,16 @@ SCM `RequiredPrivileges` list to only `SeChangeNotifyPrivilege` in a native
 commit action after the installation transaction succeeds. Installation leaves
 the services stopped, so the allowlist
 is in place before the first normal service start. SCM applies it when Windows
-creates the process. The BFD process also permanently removes unused token
-privileges, including `SeImpersonatePrivilege` and
-`SeAssignPrimaryTokenPrivilege`, before loading configuration, creating sockets,
-or registering local RPC. It retains only `SeChangeNotifyPrivilege` to bypass
-directory traversal checks; see Microsoft's [privilege
+creates the process. Changes take effect on the next service start; SCM retains
+`SeChangeNotifyPrivilege` even if it is not explicitly requested. The explicit
+list records this installation's intended minimum. See Microsoft's
+[required service privileges](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_required_privileges_infow).
+BFD then queries the actual token with `TOKEN_QUERY` and
+requires exactly enabled `SeChangeNotifyPrivilege`. A missing or disabled
+required privilege, an extra privilege even if disabled, or a query error fails
+startup before loading configuration, creating sockets, or registering RPC.
+BFD never repairs its token or requests `TOKEN_ADJUST_PRIVILEGES`. The retained
+privilege bypasses directory traversal checks; see Microsoft's [privilege
 constants](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants).
 BFD uses unnamed synchronization events and does not create global file-mapping
 or symbolic-link objects. Its RPC and socket paths do not require
@@ -88,20 +93,46 @@ ACL and service identity checks.
 
 ### Broker privilege allowlist
 
-A privileged broker still needs ninja discipline. The LocalSystem broker
-permanently removes every token privilege except `SeChangeNotifyPrivilege` after
-verifying its service identity and before initializing COM/MI, loading its
-target, or registering RPC. Failure to reduce the token fails startup. Provider
-calls use the broker's own account without `SeImpersonatePrivilege`. Its SYSTEM
-account and group memberships still confer administrative access; privilege
-removal does not sandbox the broker. A smaller privilege list is, like, tubular,
-but it doesn't erase the account's authority.
+A privileged broker still needs ninja discipline. The MSI sets the LocalSystem
+broker's SCM `RequiredPrivileges` list to only `SeChangeNotifyPrivilege`. SCM
+removes other privileges before process creation. After verifying its service
+identity, the broker uses the same read-only token validation as BFD before
+initializing COM/MI, loading its target, or registering RPC. An unexpected token
+fails startup; the broker does not adjust privileges.
 
-The MSI also sets the broker's SCM `RequiredPrivileges` list to only
-`SeChangeNotifyPrivilege`. SCM removes other privileges when creating the
-process, before loader initialization. Startup reduction remains a second check.
-The MSI test inspects the running broker token after startup and repair; a
-separate isolated test reads the local provider schema with the reduced token.
+Provider calls use the broker's own account without `SeImpersonatePrivilege`.
+Its SYSTEM account and group memberships still confer administrative access;
+the privilege allowlist does not sandbox the broker. The MSI tests inspect both
+running service tokens after startup and repair. The installed-service
+[policy regression](../../scripts/Test-ServicePrivilegePolicy.ps1) broadens each
+allowlist, verifies startup rejection, restores the minimum, and verifies
+recovery. Isolated native fixtures use
+test-only token reduction to exercise RPC and provider calls with the same
+privilege set, without changing the parent test process.
+
+### Diagnose a startup token-policy failure
+
+If event 3 or broker event 301 reports an unexpected token, inspect the
+installed SCM policy in **PowerShell as Administrator**:
+
+```powershell
+sc.exe qprivs BfdWinService
+sc.exe qprivs BfdBgpBroker
+sc.exe qsidtype BfdWinService
+sc.exe qsidtype BfdBgpBroker
+```
+
+Both privilege queries must show only `SeChangeNotifyPrivilege`. BFD must show
+`RESTRICTED`; the broker must show `UNRESTRICTED`. These commands inspect SCM
+configuration, not the already running process token. The startup validator
+checks the actual token on every start.
+
+For a policy mismatch, stop both services and run
+[setup bundle repair](../setup.md#install-with-the-offline-setup-bundle) using the
+matching service-only build, then restart and verify the startup events. If the
+installed policy matches but startup still fails, investigate the host's token
+and account policy. Keep the expected account, SID, and privilege checks in
+place; repair the deployment rather than adding privileges to bypass rejection.
 
 ### Installation and rollback
 
@@ -117,14 +148,13 @@ diagnostic and leaves a recovery snapshot that blocks a later repair until an
 administrator removes it. The installer does not substitute an assumed list of
 Windows account privileges for an unspecified prior policy.
 
-### Console execution
+### Service-only execution
 
-A console mission uses the launching identity, turtle crew. Foreground
-`--console` execution uses the launching account and removes unused privileges.
-It provides no BGP control. Removing token privileges does not remove account or
-group memberships: an elevated console process still has the launching
-administrator's identity. The LocalService boundary applies to the MSI-installed
-service.
+BFD has no foreground execution path and accepts no command-line arguments,
+including `--console`, `--help`, and `--version`. Starting the executable
+directly fails to connect to SCM. The broker retains only its fixed private MSI
+transaction commands outside normal SCM execution. Read executable versions
+from Windows file properties. See [Migrate to services](../console.md).
 
 ## Service control, configuration, and diagnostic access
 

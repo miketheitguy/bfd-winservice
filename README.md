@@ -13,6 +13,12 @@ trust boundaries, see [Service communication](docs/service-communication.md).
 For probes that establish without a discriminator handshake, configure an
 IPv4/IPv6 [Seamless BFD initiator or reflector](docs/seamless.md).
 
+These guides describe the service-only design introduced in
+[v4.0.0](docs/releases/4.0.0.md). Versions through v3.0.2 retain foreground
+execution and startup privilege reduction. See
+[migration and revision scope](docs/console.md#revision-scope) before upgrading
+an older foreground deployment.
+
 The service uses these Windows names:
 
 | Name | Value |
@@ -30,11 +36,7 @@ setup together:
 - 64-bit Windows 10 or later, or Windows Server 2016 or later, on an
   x64 processor.
 - The x64 offline setup bundle (`BfdWinService-VERSION-x64-setup.exe`) from
-  [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases),
-  or matching `bfd-winservice.exe` and `Initialize-Logging.ps1` files supplied
-  by your service maintainer for console execution. Loose executables also need
-  the native x64 Visual C++ runtime; follow the
-  [loose-file prerequisite procedure](docs/console.md#prepare-installation-files).
+  [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
 - Administrator PowerShell access to install the service and configure registry settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
   configure. See [network requirements](docs/protocol.md).
@@ -52,9 +54,6 @@ to install Microsoft's native x64 Visual C++ runtime and the service.
 The bundle installs the files and Automatic (Delayed Start) services,
 registers the Operational provider, and
 creates firewall rules. The service remains stopped for configuration.
-
-Supplied loose files support [foreground console execution](docs/console.md#start-and-verify-the-console-session).
-Use the setup bundle for service execution and BGP management.
 
 ### 2. Configure a fresh installation
 
@@ -115,10 +114,15 @@ disablement at either end releases a Stop previously issued by BFD; it does not
 stop BGP. Dude, read the [BGP action rules](docs/bgp.md) before connecting a
 production peer.
 
-For foreground execution that writes to standard output (STDOUT), see
-[Run in a console](docs/console.md#start-and-verify-the-console-session). The executable accepts
-`--console`, `--help`, and `--version`; session configuration comes from
-registry values.
+BFD runs only as the installed Windows service and accepts no command-line
+arguments. Read its version from Windows file properties or PowerShell:
+
+```powershell
+(Get-Item 'C:\Program Files\BfdWinService\bfd-winservice.exe').VersionInfo |
+    Select-Object FileVersion, ProductVersion
+```
+
+For an older foreground deployment, follow [Migrate to services](docs/console.md).
 
 ## Documentation
 

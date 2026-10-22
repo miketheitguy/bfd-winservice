@@ -18,8 +18,7 @@ $productVersion = '{0}.{1}.{2}.{3}' -f $info.ProductMajorPart, $info.ProductMino
 if ($fileVersion -cne "$ExpectedVersion.0" -or $productVersion -cne "$ExpectedVersion.0") {
     throw "Executable numeric versions must match $ExpectedVersion.0: $resolvedPath"
 }
-$reportedVersion = @(& $resolvedPath --version)
-if ($LASTEXITCODE -ne 0 -or $reportedVersion.Count -ne 1 -or $reportedVersion[0] -cne "$ExpectedName $ExpectedVersion") {
-    throw "Executable --version must report $ExpectedName $ExpectedVersion."
+if ([IO.Path]::GetFileNameWithoutExtension($resolvedPath) -cne $ExpectedName) {
+    throw "Executable name must match ${ExpectedName}: $resolvedPath"
 }
 Write-Output "Validated executable version ${ExpectedVersion}: $resolvedPath"

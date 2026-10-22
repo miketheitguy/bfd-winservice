@@ -201,13 +201,13 @@ config:
 ---
 flowchart LR
     accTitle: Service lifecycle: startup, status fetching, and administrative shutdown
-    accDescr: SCM starts BFD and the broker independently; only the broker depends on RpcSs. Each service validates and reduces its own token before accepting work. The status supervisor retries while BFD is unavailable and quarantines stalled telemetry while the provider continues. Shutdown preserves native ownership.
+    accDescr: SCM starts BFD and the broker independently; only the broker depends on RpcSs. Each service validates its own SCM-issued token before accepting work. The status supervisor retries while BFD is unavailable and quarantines stalled telemetry while the provider continues. Shutdown preserves native ownership.
     %% Mirrors service-communication.drawio, page 2.
 
     lc_scm["<b>[E] Windows SCM</b><br/>RpcSs → broker; BFD starts separately<br/>Applies installed token policy"]:::external
     subgraph lc_broker["Broker service process"]
         direction TB
-        lc_broker_init["<b>1. Verify broker; initialize provider</b><br/>SYSTEM + enabled broker service SID<br/>Retain SeChangeNotifyPrivilege<br/>Initialize COM / MI; load fixed target"]:::broker
+        lc_broker_init["<b>1. Verify broker; initialize provider</b><br/>SYSTEM + enabled broker service SID<br/>Require enabled SeChangeNotifyPrivilege<br/>Initialize COM / MI; load fixed target"]:::broker
         lc_broker_running["<b>2. Secure BGP RPC; report Running</b><br/>BFD-SID ACL and per-call Authz<br/>Deny runtime management"]:::broker
         lc_monitor["<b>3. Start status supervisor and worker</b><br/>Both are threads inside the broker<br/>Provider work remains independent"]:::broker
         lc_call["<b>Authenticated bind and status query</b><br/>BfdWinService.Local.v2 / BfdLocal 2.0<br/>Fixed BFD identity policy<br/>2 s bind / 2 s call / 8 s supervision"]:::gate
@@ -219,7 +219,7 @@ flowchart LR
     subgraph lc_bfd["BFD service | LocalService + restricted SID"]
         direction TB
         lc_bfd_start["<b>1. SCM starts BFD independently</b><br/>Advance StartPending checkpoints"]:::bfd
-        lc_bfd_guard["<b>2. Verify and reduce the BFD token</b><br/>LocalService + enabled BFD service SID<br/>BFD SID + S-1-5-33 restricting entries<br/>Remove unused privileges"]:::gate
+        lc_bfd_guard["<b>2. Verify the SCM-issued BFD token</b><br/>LocalService + enabled BFD service SID<br/>BFD SID + S-1-5-33 restricting entries<br/>Require only enabled SeChangeNotifyPrivilege"]:::gate
         lc_engine["<b>3. Create engine and status observer</b><br/>Initial immutable snapshot exists<br/>BGP control begins on the first Up"]:::bfd
         lc_listener["<b>4. Register the private RPC interface</b><br/>Deny management; protect endpoint<br/>Authorize each call; copy one snapshot<br/>No packet-loop queries or lock"]:::gate
         lc_bfd_stop["<b>BFD shutdown</b><br/>Close observer; announce AdminDown<br/>Release BFD-owned BGP Stop; finish action<br/>Unregister and drain the RPC interface"]:::note
@@ -234,7 +234,7 @@ flowchart LR
     lc_call -->|"stalled"| lc_quarantine
     lc_scm -->|"start BFD"| lc_bfd
     lc_bfd_start -->|"validate"| lc_bfd_guard
-    lc_bfd_guard -->|"reduced token"| lc_engine
+    lc_bfd_guard -->|"verified token"| lc_engine
     lc_engine -->|"observer"| lc_listener
     lc_listener -->|"ready"| lc_bfd_running
     lc_broker -->|"Session status / ncalrpc"| lc_bfd

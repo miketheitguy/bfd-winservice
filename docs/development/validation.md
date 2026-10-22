@@ -143,6 +143,34 @@ Validate SCM lifecycle, Event Viewer delivery, and actual BGP Start/Stop on the 
 See the [validation guide](../../RUST_SKILLS_VALIDATION.md) and
 [code review](../../CODE_REVIEW.md) for recorded results and test limits.
 
+## Validate installed-service security in a disposable VM
+
+Use a GitHub-hosted runner or the provisioned disposable `BFD-WS2025` Hyper-V
+guest for tests that change services, HKLM, Event Log, firewall, or provider
+state. The installer scripts reject ordinary developer hosts. Run the complete
+fresh-install, rollback, bundle maintenance, and published-version upgrade
+sequence described in [packaging validation](packaging.md#build-with-github-actions).
+These tests install and remove the product; preserve the lab configuration and
+checkpoint before running them.
+
+`Test-MsiInstall.ps1` invokes `Test-ServicePrivilegePolicy.ps1` with both services
+stopped. The policy test broadens each SCM list to include
+`SeImpersonatePrivilege`, requires startup rejection and a matching ETW
+diagnostic, restores only `SeChangeNotifyPrivilege`, and verifies recovery.
+Its `finally` block stops both services and restores the minimum lists.
+The install harness then checks independent startup and actual running tokens
+after startup and repair. Unit tests separately cover missing, disabled, and
+extra privileges, including disabled extras, and confirm queries leave the
+token unchanged. See [service isolation](../security/service-isolation.md).
+
+For Windows/Ubuntu interoperability, run the authentication matrix, isolated
+Windows- and BIRD-controlled withdrawals and recoveries, BGP-only controls,
+service and process interruption cases, adapter and packet faults, logging-disabled
+recovery, and final route/stability checks. Native loopback and installer
+fixtures alone do not establish these results. The
+[service-only validation record](../service-only-validation-2026-10-22.md)
+identifies the tested source, scenario counts, local receipts, and limits.
+
 ## Test with release optimizations
 
 Use the repository alias so the rebuilt standard library and test harness

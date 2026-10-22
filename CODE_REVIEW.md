@@ -20,6 +20,7 @@ evidence:
 
 | Topic | Review entries |
 | --- | --- |
+| Service-only startup | [Working-tree validation after v3.0.2](docs/service-only-validation-2026-10-22.md) |
 | Test maintenance | [Obsolete and duplicate test cleanup](#test-framework-cleanup--2026-10-22) |
 | Private local RPC | [BGP probe removal](#bgp-control-probe-removal--2026-10-22), [Restricted-caller alignment](#rpc-restricting-sid-alignment--2026-10-22), [C exception handling](#native-c-exception-handling--2026-10-16), [BGP control migration](#bgp-control-rpc-migration--2026-10-16), [Rejection recovery](#rpc-status-rejection-recovery--2026-10-15), [session-status implementation](#rpc-session-status-implementation--2026-10-15), and [earlier security review](#local-rpc-security-review--2026-10-15) |
 | Protocol requirements | [Keyed SHA1 digest reuse](#keyed-sha1-digest-reuse--2026-10-22), [Meticulous MD5 restoration](#meticulous-keyed-md5--2026-10-22), [RFC 5880 / RFC 7419 / RFC 7880 validation](#rfc-5880--rfc-7419--rfc-7880-validation--2026-10-09), and [RFC 5880 remediation](#rfc-5880-conformance-remediation--2026-10-08) |
@@ -35,6 +36,8 @@ these later changes supersede descriptions in older entries:
 
 | Older description | Implemented behavior and reference |
 | --- | --- |
+| BFD accepts foreground/help/version flags or logs to STDOUT. | The service-only executable accepts no arguments and runs through SCM. Read versions from PE metadata; see [migration and revision scope](docs/console.md). |
+| Daemons reduce their own process privileges at startup. | SCM supplies the minimum; both daemons validate exactly enabled `SeChangeNotifyPrivilege` with read-only token queries and reject mismatches. See [service token policy](docs/security/service-isolation.md#bfd-privilege-allowlist). |
 | BGP control uses a named pipe, PID/SCM matching, or caller impersonation. | Both service channels use authenticated `ncalrpc`; BGP retains a separate interface and serialized provider worker. See [BGP RPC security](docs/rpc-authentication.md#bgp-control-over-local-rpc). |
 | BGP control uses a connection probe, broker-instance nonce, or restart-triggered replay. | `BgpControl` 2.0 exposes only Get/Start/Stop. BFD sends no startup or idle control calls and retries only outstanding failed actions. See [BGP worker behavior](docs/reference/bgp-provider.md#worker-retries-and-broker-recovery). |
 | BFD depends on a Running broker before it can start. | Both services start independently. BFD has no SCM dependencies; the broker depends only on Windows `RpcSs`. See [installed service settings](docs/reference/installation.md#installed-resources-and-security-settings). |

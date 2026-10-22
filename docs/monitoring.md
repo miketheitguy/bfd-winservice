@@ -128,7 +128,7 @@ ACL or treat an old successful event as current telemetry. Old receipts don't
 get a freshness glow-up, buddy. Matching executables, installed accounts,
 service SIDs, and privilege policy remain required.
 
-For packet communication and session readiness, use events 100–112 separately.
+For packet communication and session readiness, use events 100–113 separately.
 The private RPC endpoint needs no firewall rule or public client configuration.
 
 ## Access permissions

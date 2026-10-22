@@ -36,7 +36,7 @@ impl RunningEngine {
         options.min_tx_us = 100_000;
         options.min_rx_us = 100_000;
         options.max_shutdown_announce_ms = 1;
-        let mut logger = Logger::new(false).unwrap();
+        let mut logger = Logger::new().unwrap();
         let mut engine =
             Engine::from_config(options.into_validated().unwrap(), &mut logger).unwrap();
         let stop = StopSignal::new().unwrap();

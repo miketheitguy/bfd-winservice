@@ -26,6 +26,7 @@ Use the current reference when an older entry describes superseded behavior:
 
 | Historical detail | Current source of truth |
 | --- | --- |
+| Foreground flags, STDOUT logging, or runtime privilege removal | [Service migration](docs/console.md) and [read-only startup validation](docs/security/service-isolation.md#bfd-privilege-allowlist) |
 | Debug symbols, native C instrumentation, or compiler settings | [Build hardening](docs/security/build-hardening.md) |
 | Five-second shutdown announcement cap | [Protocol shutdown limits](docs/protocol.md#supported-modes-and-limits) |
 | BGP named pipes or AdminDown actions | [BGP action rules](docs/bgp.md) and [RPC identity matrix](docs/rpc-authentication.md#bgp-control-over-local-rpc) |
@@ -41,6 +42,11 @@ Follow [development validation](docs/development/validation.md), then record
 which revision and paths you exercised. Native child fixtures are launched by
 their parent tests; don't run those entry points directly. Live SCM, Event
 Viewer, and RRAS behavior require the corresponding installed-host checks.
+
+The [2026-10-22 service-only record](docs/service-only-validation-2026-10-22.md)
+captures host, native Windows VM, installer, and Windows/Ubuntu scenario results
+for the working tree based on v3.0.2. It is a validation record, not a published
+release or a fresh 265-rule assessment.
 
 ### Resolved public API findings
 

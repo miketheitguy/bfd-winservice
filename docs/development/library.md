@@ -4,6 +4,24 @@ Turtle power starts with clear owners, dude. This reference is for Rust
 maintainers changing library APIs, the engine, or native service boundaries.
 See [validation](validation.md) for the required checkout checks.
 
+## Service entry and token policy
+
+The BFD executable accepts no arguments and enters only the SCM dispatcher.
+Its startup verifies the installed LocalService/restricted-service-SID identity,
+then calls `runtime::verify_service_privileges()` before loading configuration
+or opening configured resources. The broker verifies its LocalSystem/service-SID
+identity and the same privilege policy before COM/MI and RPC initialization.
+The validator opens the process token with `TOKEN_QUERY` and requires exactly
+enabled `SeChangeNotifyPrivilege`; it never adjusts privileges. Keep token
+reduction helpers under `cfg(test)` in isolated fixture processes.
+
+For removed CLI and Rust APIs, see
+[Migrate library callers](../console.md#migrate-library-callers). The reusable
+protocol and engine APIs remain available to library callers; the installed
+daemon entry points enforce service execution. Keep the broker's private MSI
+transaction commands intact. See [service isolation](../security/service-isolation.md)
+for the startup and installer contracts.
+
 ## Use the Rust configuration and error APIs
 
 Keep ownership totally tubular and follow the validated API. `Options` contains
@@ -39,7 +57,7 @@ vectors. Use `Transport::receive_into` with a retained `Datagram` to reuse
 receive storage in library code.
 
 Use `Engine::run_until` with a cloneable `runtime::StopSignal` to wait for socket
-events, protocol deadlines, and shutdown. Service control and console handlers
+events, protocol deadlines, and shutdown. Service control handlers
 call `StopSignal::signal` to wake the engine immediately. `Engine::run` remains
 available for callers with a channel receiver; it checks that channel every
 10 milliseconds while idle.

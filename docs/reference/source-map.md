@@ -2,13 +2,15 @@
 
 Follow the code trail before the pizza break. For the code receipts, these files
 implement the authentication, privilege, and native resource boundaries
-described in this guide:
+described in the [security overview](../security.md):
 
 | Path | Relevant implementation |
 | --- | --- |
+| [src/main.rs](../../src/main.rs) and [tests/service_entry.rs](../../tests/service_entry.rs) | Argument rejection, SCM-only BFD entry, and direct-launch regressions |
 | [installer/Package.wxs](../../installer/Package.wxs) | Service accounts, dependencies, SCM control/query ACLs, Parameters ACL, and firewall rules |
 | [src/service.rs](../../src/service.rs) and [src/bgp_broker/service.rs](../../src/bgp_broker/service.rs) | SCM lifecycle, startup identity checks, local RPC lifetime, and private broker COM initialization |
-| [src/runtime/privileges.rs](../../src/runtime/privileges.rs) | BFD and broker process privilege allowlists |
+| [src/runtime/privileges.rs](../../src/runtime/privileges.rs) | Read-only validation of both SCM-issued privilege sets; token adjustment is confined to the test-only [fixture](../../src/runtime/privileges/fixture.rs) |
+| [scripts/Test-ServicePrivilegePolicy.ps1](../../scripts/Test-ServicePrivilegePolicy.ps1) | Disposable-host checks for rejection of excessive SCM privileges and recovery after restoring the minimum |
 | [src/bgp_broker/install.rs](../../src/bgp_broker/install.rs) | Transactional SCM policy, BFD dependency removal, and bounded dependency rollback snapshot |
 | [src/transport.rs](../../src/transport.rs) | `Datagram::validate`, transport construction, `send`, and `send_reply` |
 | [src/session.rs](../../src/session.rs), [src/packet.rs](../../src/packet.rs), and [src/seamless.rs](../../src/seamless.rs) | `receive_checked`, `receive_seamless`, `AuthConfig::verify_decoded`, and `respond_checked` |

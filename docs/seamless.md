@@ -18,12 +18,9 @@ After completing [Before you begin](#before-you-begin), choose
 
 ## Before you begin
 
-Get the ninja gear together before sending probes. Before you send probes, get
-these prerequisites dialed in, buddy:
+Before you send probes, get these prerequisites dialed in, buddy:
 
-- Install the [setup bundle](setup.md#install-with-the-offline-setup-bundle) for service execution,
-  or prepare supplied loose files for console execution using
-  [Prepare installation files](console.md#prepare-installation-files).
+- Install the [setup bundle](setup.md#install-with-the-offline-setup-bundle).
 - Open **PowerShell as Administrator**. These examples use
   `C:\Program Files\BfdWinService`; adjust the path for your installation.
 - Assign a nonzero discriminator to the reflector's local entity. Coordinate
@@ -37,23 +34,8 @@ these prerequisites dialed in, buddy:
 
 For Windows service execution, the bundle creates the service and registers the
 Operational log. Configure one of the roles in this guide before starting the
-service. Each process runs one role. Supplied loose files use
-[`--console`](console.md#start-and-verify-the-console-session); copying them doesn't provision the
+service. Each process runs one role. Loose files alone do not provision the
 service identities or access policies required for service execution.
-
-### Initialize loose-file logging
-
-Optional: For loose-file console execution, initialize the default logging
-settings:
-
-```powershell
-& 'C:\Program Files\BfdWinService\Initialize-Logging.ps1'
-```
-
-The script displays the default folder and registry objects, then prints
-`LogFilePath` and `LogToFile=0`. It creates the folder without writing
-`trace.log`. Running it resets the path and disables file output; omit it when
-retaining existing settings. The bundle already provisions the defaults.
 
 ## Configure an initiator
 
@@ -105,8 +87,7 @@ Start the configured service:
 Start-Service BfdWinService
 ```
 
-A successful command produces no output. For foreground execution, use
-[`--console`](console.md#start-and-verify-the-console-session) after provisioning the same registry values.
+A successful command produces no output. BFD runs only through SCM.
 
 ### 3. Verify establishment
 
@@ -205,7 +186,7 @@ New-ItemProperty -Path $parameters -Name AllowedPeers `
 ```
 
 Replace `MEMBER_IPS` with comma-separated IPv4 or IPv6 literals, such as
-`192.0.2.20,192.0.2.21`, of the local address family. Restart execution to
+`192.0.2.20,192.0.2.21`, of the local address family. Restart the service to
 load this setting. PowerShell displays the `AllowedPeers` value.
 
 Every responding member must serve the configured target discriminator and
@@ -258,7 +239,7 @@ session. Other settings retain their startup-only behavior.
 
 ### Registry reload behavior
 
-In S-BFD service and console execution, `MinTxUs`, `MinRxUs`, `DetectMult`, and
+In S-BFD service execution, `MinTxUs`, `MinRxUs`, `DetectMult`, and
 the reflector's `SbfdAdminDown` are reloaded when a registry change notification
 reports a write to the Parameters key; if notification is unavailable, they are
 read once per second. Valid changes apply without restarting or resetting the
@@ -320,8 +301,8 @@ Set the DWORD to `0` to restore `Up` replies.
 Entering reflector maintenance emits Informational state event 106 and Warning
 diagnostic event 207. Restoring the entity emits Informational Up event 102.
 Administrative shutdown uses the same AdminDown events if the entity wasn't
-already in maintenance. In service mode, these records go to the Operational
-channel and the file when enabled; console mode uses STDOUT and the enabled file.
+already in maintenance. These records go to the Operational
+channel and the file when enabled.
 
 For library callers, see [S-BFD timing APIs](development/library.md#s-bfd-library-timing-apis).
 

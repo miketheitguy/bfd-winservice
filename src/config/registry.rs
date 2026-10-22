@@ -24,8 +24,8 @@ use windows_sys::Win32::{
     },
 };
 
-/// Read settings from the service's HKLM Parameters key. Only the execution
-/// mode comes from the command line; optional values retain their defaults.
+/// Read settings from the service's HKLM Parameters key.
+/// Optional values retain their defaults.
 /// Multihop selects the transport: absent/0 is single-hop, 1 is multihop.
 /// SessionType selects classical BFD or an S-BFD role; reflectors omit Peer.
 /// Returns an immutable, validated snapshot ready for Engine::from_config.
@@ -34,9 +34,9 @@ use windows_sys::Win32::{
 /// Returns errors for missing required addresses, denied registry access,
 /// incorrect value types, invalid Unicode/enums, or overflowing numeric values.
 /// Error messages identify value names and never include authentication keys.
-pub fn load_registry(console: bool) -> io::Result<ValidatedOptions> {
+pub fn load_registry() -> io::Result<ValidatedOptions> {
     Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY)
-        .load(console)?
+        .load()?
         .into_validated()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
@@ -174,7 +174,7 @@ impl Registry {
         }
     }
 
-    fn load(&self, console: bool) -> io::Result<Options> {
+    fn load(&self) -> io::Result<Options> {
         let session_type = self
             .string("SessionType")?
             .map(|value| {
@@ -206,7 +206,6 @@ impl Registry {
                 })
                 .collect::<io::Result<_>>()?;
         }
-        options.console = console;
         options.multihop = self.boolean("Multihop")?;
         options.mode = if options.multihop {
             Mode::Multihop
@@ -484,8 +483,8 @@ mod tests {
                 self.string("Local", "192.0.2.1");
                 self.string("Peer", "192.0.2.2");
             }
-            fn load(&self, console: bool) -> io::Result<Options> {
-                Registry::new(self.key, "").load(console)
+            fn load(&self) -> io::Result<Options> {
+                Registry::new(self.key, "").load()
             }
         }
 
@@ -535,7 +534,7 @@ mod tests {
             fixture.string("SessionType", "sbfd-reflector");
             fixture.dword("Discriminator", 99);
             fixture.string("AllowedPeers", "192.0.2.1, 192.0.2.3");
-            let mut options = fixture.load(true).unwrap();
+            let mut options = fixture.load().unwrap();
             assert_eq!(options.session_type, SessionType::SbfdReflector);
             assert_eq!(options.control_port(), 7784);
             assert_eq!(options.allowed_peers.len(), 2);
@@ -544,7 +543,7 @@ mod tests {
             fixture.string("SessionType", "sbfd-initiator");
             fixture.string("Peer", "192.0.2.1");
             fixture.dword("RemoteDiscriminator", 7);
-            let mut options = fixture.load(true).unwrap();
+            let mut options = fixture.load().unwrap();
             assert_eq!(options.remote_discriminator, Some(7));
             options.validate().unwrap();
         }
@@ -554,26 +553,26 @@ mod tests {
             let fixture = Fixture::new();
             fixture.addresses();
             fixture.string("SessionType", "unknown");
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
             fixture.dword("SessionType", 1);
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
             fixture.string("SessionType", "sbfd-initiator");
             fixture.string("RemoteDiscriminator", "99");
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
             fixture.dword("RemoteDiscriminator", 0);
-            assert!(fixture.load(true).unwrap().validate().is_err());
+            assert!(fixture.load().unwrap().validate().is_err());
             fixture.dword("RemoteDiscriminator", 99);
             fixture.string("AllowedPeers", "192.0.2.3,invalid");
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
             fixture.dword("AllowedPeers", 1);
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
             fixture.remove("AllowedPeers");
             fixture.dword("SbfdAdminDown", 2);
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
             fixture.string("SessionType", "sbfd-reflector");
             fixture.remove("RemoteDiscriminator");
             fixture.remove("SbfdAdminDown");
-            assert!(fixture.load(true).is_err());
+            assert!(fixture.load().is_err());
         }
 
         #[test]
@@ -582,7 +581,7 @@ mod tests {
             fixture.string("Local", "192.0.2.2");
             fixture.string("SessionType", "sbfd-reflector");
             fixture.dword("Discriminator", 99);
-            let options = fixture.load(true).unwrap();
+            let options = fixture.load().unwrap();
             let registry = Registry::new(fixture.key, "");
             fixture.dword("MinTxUs", 250_000);
             fixture.dword("MinRxUs", 500_000);
@@ -621,23 +620,12 @@ mod tests {
         #[test]
         fn native_registry_required_values_and_defaults_are_read_without_writes() {
             let fixture = Fixture::new();
-            assert!(fixture
-                .load(false)
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("Local"));
+            assert!(fixture.load().err().unwrap().to_string().contains("Local"));
             fixture.string("Local", "192.0.2.1");
-            assert!(fixture
-                .load(false)
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("Peer"));
+            assert!(fixture.load().err().unwrap().to_string().contains("Peer"));
             fixture.string("Peer", "192.0.2.2");
             fixture.dword("InterfaceIndex", 12);
-            let mut options = fixture.load(true).unwrap();
-            assert!(options.console);
+            let mut options = fixture.load().unwrap();
             assert_eq!(options.mode, Mode::SingleHop);
             assert_eq!(
                 (options.min_tx_us, options.min_rx_us, options.startup_tx_us),
@@ -666,12 +654,12 @@ mod tests {
             fixture.string("LogFilePath", r"C:\BFD\custom.log");
             for enabled in [0, 1] {
                 fixture.dword("LogToFile", enabled);
-                let options = fixture.load(false).unwrap();
+                let options = fixture.load().unwrap();
                 assert_eq!(options.log_to_file, enabled == 1);
                 assert_eq!(options.log_file_path.to_str(), Some(r"C:\BFD\custom.log"));
             }
             fixture.remove("LogFilePath");
-            let options = fixture.load(false).unwrap();
+            let options = fixture.load().unwrap();
             assert!(options.log_to_file);
             assert_eq!(options.log_file_path.to_str(), Some(DEFAULT_LOG_FILE_PATH));
         }
@@ -681,20 +669,17 @@ mod tests {
             let fixture = Fixture::new();
             fixture.addresses();
             fixture.dword("Multihop", 1);
-            assert_eq!(
-                fixture.load(false).unwrap().max_shutdown_announce_ms,
-                30_000
-            );
+            assert_eq!(fixture.load().unwrap().max_shutdown_announce_ms, 30_000);
             for value in [1, 60_000] {
                 fixture.dword("MaxShutdownAnnounceMs", value);
-                let mut options = fixture.load(false).unwrap();
+                let mut options = fixture.load().unwrap();
                 assert_eq!(options.max_shutdown_announce_ms, value);
                 options.validate().unwrap();
             }
             for value in [0, 60_001, u32::MAX] {
                 fixture.dword("MaxShutdownAnnounceMs", value);
                 assert_eq!(
-                    fixture.load(false).unwrap().validate().err().unwrap(),
+                    fixture.load().unwrap().validate().err().unwrap(),
                     crate::error::ConfigError::ShutdownAnnouncementLimit
                 );
             }
@@ -709,7 +694,7 @@ mod tests {
             // An absent flag selects single-hop, even if an obsolete selector
             // from an earlier installation is still present.
             fixture.string("Mode", "multihop");
-            let options = fixture.load(false).unwrap();
+            let options = fixture.load().unwrap();
             assert!(!options.multihop);
             assert_eq!(options.mode, Mode::SingleHop);
             assert_eq!(options.mode.port(), 3784);
@@ -718,7 +703,7 @@ mod tests {
                 fixture.string("Mode", legacy_mode);
                 for (value, expected) in [(0, Mode::SingleHop), (1, Mode::Multihop)] {
                     fixture.dword("Multihop", value);
-                    let mut options = fixture.load(false).unwrap();
+                    let mut options = fixture.load().unwrap();
                     assert_eq!(options.multihop, value == 1);
                     assert_eq!(options.mode, expected);
                     options.validate().unwrap();
@@ -730,7 +715,7 @@ mod tests {
             // Removed values are not read or type-checked.
             fixture.dword("Mode", 1);
             fixture.dword("Multihop", 0);
-            assert_eq!(fixture.load(false).unwrap().mode, Mode::SingleHop);
+            assert_eq!(fixture.load().unwrap().mode, Mode::SingleHop);
         }
 
         #[test]
@@ -765,8 +750,8 @@ mod tests {
             ] {
                 fixture.dword(name, value);
             }
-            let mut options = fixture.load(false).unwrap();
-            assert!(!options.console && options.passive && options.verbose && options.log_to_file);
+            let mut options = fixture.load().unwrap();
+            assert!(options.passive && options.verbose && options.log_to_file);
             assert!(options.multihop);
             assert_eq!(options.mode, Mode::Multihop);
             assert_eq!(
@@ -790,12 +775,12 @@ mod tests {
             );
             fixture.string("Auth", "meticulous-md5");
             assert!(
-                fixture.load(false).unwrap().validate().unwrap()
+                fixture.load().unwrap().validate().unwrap()
                     == AuthConfig::new(AuthType::MeticulousMd5, 255, vec![0, 254, 18]).unwrap()
             );
             fixture.remove("AuthKeyHex");
             fixture.string("AuthKey", "hidden-key");
-            assert!(fixture.load(false).unwrap().validate().is_ok());
+            assert!(fixture.load().unwrap().validate().is_ok());
         }
 
         #[test]
@@ -810,7 +795,7 @@ mod tests {
                 "LogToFile",
             ] {
                 fixture.string(name, "12");
-                let error = fixture.load(false).err().unwrap().to_string();
+                let error = fixture.load().err().unwrap().to_string();
                 assert!(
                     error.contains(name) && error.contains("REG_DWORD"),
                     "{error}"
@@ -819,12 +804,12 @@ mod tests {
             }
             for name in ["Auth", "BgpPeerName", "LogFilePath", "AuthKey"] {
                 fixture.dword(name, 1);
-                let error = fixture.load(false).err().unwrap().to_string();
+                let error = fixture.load().err().unwrap().to_string();
                 assert!(error.contains(name) && error.contains("REG_SZ"), "{error}");
                 fixture.remove(name);
             }
             fixture.set("LogFilePath", REG_EXPAND_SZ, &[0, 0]);
-            assert!(fixture.load(false).is_err());
+            assert!(fixture.load().is_err());
         }
 
         #[test]
@@ -834,7 +819,7 @@ mod tests {
             let long_name = "Péér 🦀".repeat(200);
             fixture.string("BgpPeerName", &long_name);
             assert_eq!(
-                fixture.load(false).unwrap().bgp_peer_name.as_deref(),
+                fixture.load().unwrap().bgp_peer_name.as_deref(),
                 Some(long_name.as_str())
             );
             for data in [
@@ -842,10 +827,10 @@ mod tests {
                 vec![65, 0, 0, 0, 66, 0, 0, 0], // embedded NUL
             ] {
                 fixture.set("BgpPeerName", REG_SZ, &data);
-                assert!(fixture.load(false).is_err());
+                assert!(fixture.load().is_err());
             }
             fixture.string("BgpPeerName", &"Z".repeat(33000));
-            let error = fixture.load(false).err().unwrap().to_string();
+            let error = fixture.load().err().unwrap().to_string();
             assert!(error.contains("BgpPeerName") && error.contains("oversized"));
         }
 
@@ -865,21 +850,16 @@ mod tests {
                 ("LogToFile", 2),
             ] {
                 fixture.dword(name, value);
-                assert!(fixture
-                    .load(false)
-                    .err()
-                    .unwrap()
-                    .to_string()
-                    .contains(name));
+                assert!(fixture.load().err().unwrap().to_string().contains(name));
                 fixture.remove(name);
             }
             fixture.dword("Multihop", 1);
-            let mut options = fixture.load(false).unwrap();
+            let mut options = fixture.load().unwrap();
             assert!(options.validate().is_ok());
             assert_eq!(options.mode, Mode::Multihop);
             for auth in ["keyed-md5", "invalid-auth-hidden-key"] {
                 fixture.string("Auth", auth);
-                let error = fixture.load(false).err().unwrap().to_string();
+                let error = fixture.load().err().unwrap().to_string();
                 assert!(error.contains("Auth") && !error.contains("hidden-key"));
                 assert!(error.contains("unsupported authentication type"));
             }

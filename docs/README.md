@@ -7,6 +7,10 @@ installation, then use the references for configuration, operation, or
 development. Dated review records describe the checks performed on their
 recorded revisions.
 
+The operational references describe the service-only design introduced in
+[v4.0.0](releases/4.0.0.md). For the release boundary and removed interfaces, see
+[migration and revision scope](console.md#revision-scope).
+
 ## Install and operate the service
 
 Cowabunga, deployment crew. Pick the guide for your mission:
@@ -14,7 +18,7 @@ Cowabunga, deployment crew. Pick the guide for your mission:
 | Task | Guide |
 | --- | --- |
 | Install, configure, verify, or remove the service | [Set up a BFD session](setup.md) |
-| Run supplied loose files in the foreground | [Console execution](console.md) |
+| Migrate an older foreground deployment | [Migrate to services](console.md) |
 | Inspect installed files, services, defaults, and firewall rules | [Installation inventory](reference/installation.md) |
 | Look up registry values, defaults, validation rules, and reload behavior | [Registry configuration reference](configuration.md) |
 | Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](seamless.md) |
@@ -66,10 +70,15 @@ Even heroes in a half-shell check the dates on their evidence, no cap:
 | Document | Purpose |
 | --- | --- |
 | [Dated correctness reviews](../CODE_REVIEW.md) | Recorded review findings, checks, revisions, and limits |
+| [Service-only validation](service-only-validation-2026-10-22.md) | Host, installed-token, installer, and Windows/Ubuntu scenario results for the working tree after v3.0.2 |
+| [v4.0.0 release notes](releases/4.0.0.md) | Service-only execution, read-only token validation, removed public APIs, and migration steps |
 | [Code, tests, and documentation alignment audit](alignment-audit-2026-10-21.md) | Findings, fixes, release validation, and remaining coverage limits |
 | [v2.0.1 release notes](releases/2.0.1.md) | Patch compatibility rationale and corrected deployment behavior |
 | [Windows BGP withdrawal and recovery validation](windows-bgp-interop-2026-10-22.md) | RRAS compatibility defects, route-table checks, event messages, and measured recovery |
 | [v2.0.2 release notes](releases/2.0.2.md) | Automatic RRAS recovery fixes and patch compatibility rationale |
+| [v3.0.0 release notes](releases/3.0.0.md) | Meticulous MD5, keyed-SHA1 reuse, independent services, and public API compatibility impact |
+| [v3.0.1 release notes](releases/3.0.1.md) | File-logging-independent BGP failure events and native UDP fixture fixes |
+| [v3.0.2 release notes](releases/3.0.2.md) | SCM privilege minimums and exact installer rollback policy for the published release |
 | [Documentation audit](documentation-audit.md) | Documentation findings, corrections, review coverage, and validation scope |
 | [Archived Rust skills audit](archive/RUST_SKILLS_VALIDATION_2026-10-01.md) | Historical findings retained with their original evidence and supersession warning |
 | [AGENTS instructions](../AGENTS.md) and [CLAUDE instructions](../CLAUDE.md) | Repository-specific instructions for coding agents |

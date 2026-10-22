@@ -19,7 +19,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 const QUEUE_CAPACITY: usize = 256;
@@ -141,7 +141,6 @@ impl Drop for Worker {
 #[derive(Clone)]
 pub struct Logger {
     worker: Arc<Worker>,
-    pub(super) console: bool,
 }
 
 impl Logger {
@@ -149,7 +148,7 @@ impl Logger {
     ///
     /// # Errors
     /// Returns a thread creation error. ETW registration failures are diagnostic only.
-    pub fn new(console: bool) -> io::Result<Self> {
+    pub fn new() -> io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         let (done_tx, done) = mpsc::channel();
         let dropped = Arc::new(AtomicU64::new(0));
@@ -157,11 +156,10 @@ impl Logger {
         let thread = thread::Builder::new()
             .name("bfd-log".into())
             .spawn(move || {
-                write_records(receiver, console, &worker_dropped);
+                write_records(receiver, &worker_dropped);
                 let _ = done_tx.send(());
             })?;
         Ok(Self {
-            console,
             worker: Arc::new(Worker {
                 sender: Some(sender),
                 shutdown: Mutex::new(Shutdown { done, thread }),
@@ -175,7 +173,7 @@ impl Logger {
     /// # Errors
     /// Returns thread creation, directory creation, file opening, or queue errors.
     pub fn open(options: &Options) -> io::Result<Self> {
-        let mut logger = Self::new(options.console)?;
+        let mut logger = Self::new()?;
         logger.open_file(options)?;
         Ok(logger)
     }
@@ -207,7 +205,7 @@ impl Logger {
     }
 
     /// Waits for preceding records and flushes the file, within the supplied deadline.
-    /// BFD execution doesn't call this method.
+    /// The packet loop doesn't call this method; service cleanup flushes explicitly.
     ///
     /// # Errors
     /// Returns WouldBlock for a full queue, TimedOut for blocked output, BrokenPipe
@@ -261,12 +259,12 @@ impl Logger {
     }
 
     /// Queues a message without waiting for output. Messages are capped at 16 KiB
-    /// on UTF-8 character boundaries. File lines use ISO-8601 UTC with a trailing Z;
-    /// STDOUT uses Unix milliseconds, sampled by the writer.
+    /// on UTF-8 character boundaries. File lines use ISO-8601 UTC with a trailing Z.
+    /// The service writes text only to the enabled file destination.
     ///
     /// ```no_run
     /// use bfd_winservice::runtime::Logger;
-    /// let mut log = Logger::new(true)?;
+    /// let mut log = Logger::new()?;
     /// log.log("BFD initialization started");
     /// # Ok::<(), std::io::Error>(())
     /// ```
@@ -306,45 +304,27 @@ impl Logger {
     }
     /// Queues successful engine startup.
     pub fn service_started(&mut self) {
-        self.log(format_args!(
-            "service started mode={}",
-            if self.console { "console" } else { "service" }
-        ));
-        if !self.console {
-            self.enqueue(Command::Event(Record::service_started(self.console)));
-        }
+        self.log("service started mode=service");
+        self.enqueue(Command::Event(Record::service_started()));
     }
     /// Queues completed shutdown; zero indicates success.
     pub fn service_stopped(&mut self, exit_code: u32) {
         self.log(format_args!("service stopped exit_code={exit_code}"));
-        if !self.console {
-            self.enqueue(Command::Event(Record::service_stopped(
-                self.console,
-                exit_code,
-            )));
-        }
+        self.enqueue(Command::Event(Record::service_stopped(exit_code)));
     }
     /// Queues a Warning event for a weak configuration or a recoverable runtime
     /// condition. Callers rate-limit repeated warnings; text omits key material.
     pub fn service_warning(&mut self, warning: impl Display) {
         let mut text = BoundedText(String::new());
         let _ = write!(&mut text, "{warning}");
-        self.enqueue(Command::Event(Record::service_warning(
-            self.console,
-            &text.0,
-        )));
+        self.enqueue(Command::Event(Record::service_warning(&text.0)));
     }
     /// Queues a startup/runtime error without authentication data.
     pub fn service_failed(&mut self, error: impl Display) {
         let mut text = BoundedText(String::new());
         let _ = write!(&mut text, "{error}");
         self.log(format_args!("service failed: {}", text.0));
-        if !self.console {
-            self.enqueue(Command::Event(Record::service_failed(
-                self.console,
-                &text.0,
-            )));
-        }
+        self.enqueue(Command::Event(Record::service_failed(&text.0)));
     }
     pub(super) fn session_event(
         &mut self,
@@ -384,14 +364,12 @@ impl Logger {
         source: SocketAddr,
         reason: AuthError,
     ) {
-        if !self.console {
-            self.enqueue(Command::Event(Record::authentication_failed(
-                options,
-                session,
-                source,
-                &reason.to_string(),
-            )));
-        }
+        self.enqueue(Command::Event(Record::authentication_failed(
+            options,
+            session,
+            source,
+            &reason.to_string(),
+        )));
     }
 }
 
@@ -411,13 +389,7 @@ fn diagnostic(message: impl Display) {
     let _ = writeln!(io::stderr().lock(), "{message}");
 }
 
-fn text_output(
-    message: &str,
-    console: bool,
-    stdout_failed: &mut bool,
-    file: &mut Option<OutputFile>,
-    timestamp: &mut String,
-) {
+fn text_output(message: &str, file: &mut Option<OutputFile>, timestamp: &mut String) {
     if let Some(output) = file {
         utc_timestamp(timestamp);
         for line in message.split('\n') {
@@ -437,20 +409,6 @@ fn text_output(
             }
             output.length = output.length.saturating_add(written);
         }
-        // Keep file output visible before a console pipe can block the worker.
-        if console {
-            flush_file(&mut output.writer);
-        }
-    }
-    if console && !*stdout_failed {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        if let Err(error) = writeln!(io::stdout().lock(), "{timestamp} {message}") {
-            *stdout_failed = true;
-            diagnostic(format_args!("unable to write BFD console log: {error}"));
-        }
     }
 }
 
@@ -460,21 +418,17 @@ fn flush_file(file: &mut BufWriter<File>) {
     }
 }
 
-fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64) {
-    let provider = if console {
-        None
-    } else {
-        match Provider::register() {
-            Ok(provider) => Some(provider),
-            Err(error) => {
-                diagnostic(format_args!(
-                    "unable to register BFD-Service ETW provider: {error}"
-                ));
-                None
-            }
+fn write_records(receiver: Receiver<Command>, dropped: &AtomicU64) {
+    let provider = match Provider::register() {
+        Ok(provider) => Some(provider),
+        Err(error) => {
+            diagnostic(format_args!(
+                "unable to register BFD-Service ETW provider: {error}"
+            ));
+            None
         }
     };
-    write_records_with(receiver, console, dropped, MAX_FILE_BYTES, |record| {
+    write_records_with(receiver, dropped, MAX_FILE_BYTES, |record| {
         provider
             .as_ref()
             .map_or(Ok(()), |provider| provider.emit(record))
@@ -483,7 +437,6 @@ fn write_records(receiver: Receiver<Command>, console: bool, dropped: &AtomicU64
 
 fn write_records_with(
     receiver: Receiver<Command>,
-    console: bool,
     dropped: &AtomicU64,
     file_limit: u64,
     mut emit: impl FnMut(&Record) -> io::Result<()>,
@@ -491,7 +444,6 @@ fn write_records_with(
     let mut file: Option<OutputFile> = None;
     let mut timestamp = String::with_capacity(24);
     let mut next_flush = Instant::now() + FILE_FLUSH_INTERVAL;
-    let mut stdout_failed = false;
     let mut reported = 0;
     loop {
         let pending = file
@@ -523,35 +475,23 @@ fn write_records_with(
                     "logging dropped {} records because output could not keep up",
                     lost - reported
                 ),
-                console,
-                &mut stdout_failed,
                 &mut file,
                 &mut timestamp,
             );
             reported = lost;
         }
         match command {
-            Command::Text(text) => text_output(
-                &text,
-                console,
-                &mut stdout_failed,
-                &mut file,
-                &mut timestamp,
-            ),
+            Command::Text(text) => text_output(&text, &mut file, &mut timestamp),
             Command::Event(record) => {
-                if !console {
-                    if let Err(error) = emit(&record) {
-                        text_output(
-                            &format!("unable to write BFD-Service ETW event: {error}"),
-                            console,
-                            &mut stdout_failed,
-                            &mut file,
-                            &mut timestamp,
-                        );
-                    }
+                if let Err(error) = emit(&record) {
+                    text_output(
+                        &format!("unable to write BFD-Service ETW event: {error}"),
+                        &mut file,
+                        &mut timestamp,
+                    );
                 }
                 if let Some(text) = &record.text {
-                    text_output(text, console, &mut stdout_failed, &mut file, &mut timestamp);
+                    text_output(text, &mut file, &mut timestamp);
                 }
             }
             Command::File(next) => {
@@ -579,18 +519,58 @@ fn write_records_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[cfg(not(miri))]
-    fn captured_logger(
-        console: bool,
-        events: Arc<Mutex<Vec<(u16, u8)>>>,
-        fail_etw: bool,
-    ) -> Logger {
-        captured_logger_with_limit(console, events, fail_etw, MAX_FILE_BYTES)
+    #[test]
+    fn blocked_etw_bounds_queue_flush_and_logger_shutdown() {
+        let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
+        let (done_tx, done) = mpsc::channel();
+        let (entered_tx, entered) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let (finished_tx, finished) = mpsc::channel();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let worker_dropped = Arc::clone(&dropped);
+        let thread = thread::spawn(move || {
+            write_records_with(receiver, &worker_dropped, MAX_FILE_BYTES, |_| {
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                Ok(())
+            });
+            let _ = done_tx.send(());
+            let _ = finished_tx.send(());
+        });
+        let mut log = Logger {
+            worker: Arc::new(Worker {
+                sender: Some(sender),
+                shutdown: Mutex::new(Shutdown { done, thread }),
+                dropped,
+            }),
+        };
+        log.service_started();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            log.flush(Duration::from_millis(20)).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        for _ in 0..1024 {
+            log.log("output remains blocked");
+        }
+        assert!(log.dropped_records() > 0);
+        let started = Instant::now();
+        drop(log);
+        let elapsed = started.elapsed();
+        resume.send(()).unwrap();
+        finished.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    }
+
+    #[cfg(not(miri))]
+    fn captured_logger(events: Arc<Mutex<Vec<(u16, u8)>>>, fail_etw: bool) -> Logger {
+        captured_logger_with_limit(events, fail_etw, MAX_FILE_BYTES)
     }
 
     #[cfg(not(miri))]
     fn captured_logger_with_limit(
-        console: bool,
         events: Arc<Mutex<Vec<(u16, u8)>>>,
         fail_etw: bool,
         file_limit: u64,
@@ -600,7 +580,7 @@ mod tests {
         let dropped = Arc::new(AtomicU64::new(0));
         let worker_dropped = Arc::clone(&dropped);
         let thread = thread::spawn(move || {
-            write_records_with(receiver, console, &worker_dropped, file_limit, |record| {
+            write_records_with(receiver, &worker_dropped, file_limit, |record| {
                 events.lock().unwrap().push(record.identity());
                 if fail_etw {
                     Err(io::Error::other("synthetic ETW failure"))
@@ -611,7 +591,6 @@ mod tests {
             let _ = done_tx.send(());
         });
         Logger {
-            console,
             worker: Arc::new(Worker {
                 sender: Some(sender),
                 shutdown: Mutex::new(Shutdown { done, thread }),
@@ -630,7 +609,7 @@ mod tests {
             options.log_to_file = file_enabled;
             options.log_file_path = directory.path().join("output/trace.log");
             let events = Arc::new(Mutex::new(Vec::new()));
-            let mut log = captured_logger(false, Arc::clone(&events), false);
+            let mut log = captured_logger(Arc::clone(&events), false);
             log.open_file(&options).unwrap();
             log.bgp_control_message("Site 🐢", "Stop", "failed: RPC server unavailable", false);
             log.bgp_control_message(
@@ -662,7 +641,7 @@ mod tests {
         options.log_file_path = directory.path().join("trace.log");
         let mut session = Session::from_config(options.clone().into_validated().unwrap());
         let events = Arc::new(Mutex::new(Vec::new()));
-        let mut log = captured_logger(false, Arc::clone(&events), false);
+        let mut log = captured_logger(Arc::clone(&events), false);
         log.open_file(&options).unwrap();
         for state in [State::AdminDown, State::Down, State::Init, State::Up] {
             session.state = state;
@@ -710,7 +689,7 @@ mod tests {
         let session = Session::from_config(options.clone().into_validated().unwrap());
         options.log_file_path = directory.path().join("new-folder/trace.log");
         let events = Arc::new(Mutex::new(Vec::new()));
-        let mut log = captured_logger(false, Arc::clone(&events), true);
+        let mut log = captured_logger(Arc::clone(&events), true);
         log.open_file(&options).unwrap();
         log.session_event(
             SessionEvent::StateChanged,
@@ -828,7 +807,7 @@ mod tests {
         options.log_to_file = true;
         options.log_file_path = directory.path().join("trace.log");
         let events = Arc::new(Mutex::new(Vec::new()));
-        let mut log = captured_logger_with_limit(false, events, false, 256);
+        let mut log = captured_logger_with_limit(events, false, 256);
         log.open_file(&options).unwrap();
         // Each 77-byte line counts toward the limit; rotate before a fourth line.
         for index in 0..42 {
@@ -860,7 +839,7 @@ mod tests {
         options.log_file_path = directory.path().join("trace.log");
         let session = Session::from_config(options.clone().into_validated().unwrap());
         let events = Arc::new(Mutex::new(Vec::new()));
-        let mut log = captured_logger_with_limit(false, Arc::clone(&events), false, 512);
+        let mut log = captured_logger_with_limit(Arc::clone(&events), false, 512);
         log.open_file(&options).unwrap();
         log.flush(Duration::from_secs(2)).unwrap();
         // A permitted read-only user can share writes while denying rename/delete.
@@ -946,21 +925,9 @@ mod tests {
         let file = OpenOptions::new().append(true).open(&path).unwrap();
         let mut output = Some(OutputFile::new(file, path.clone(), 256));
         let mut timestamp = String::new();
-        text_output(
-            &"🦀".repeat(100),
-            false,
-            &mut false,
-            &mut output,
-            &mut timestamp,
-        );
+        text_output(&"🦀".repeat(100), &mut output, &mut timestamp);
         assert_eq!(fs::metadata(&path).unwrap().len(), 256);
-        text_output(
-            "short line\nanother",
-            false,
-            &mut false,
-            &mut output,
-            &mut timestamp,
-        );
+        text_output("short line\nanother", &mut output, &mut timestamp);
         output.as_mut().unwrap().writer.flush().unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("short line") && text.contains("another"));

@@ -130,12 +130,6 @@ impl Controller {
         let Some(peer) = options.bgp_peer_name.clone() else {
             return Ok(None);
         };
-        if options.console {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "BGP control requires the installed BfdWinService service identity",
-            ));
-        }
         let mut log = logger.clone();
         let mailbox = Mailbox::default();
         let worker_mailbox = Arc::clone(&mailbox);

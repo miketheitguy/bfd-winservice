@@ -32,10 +32,10 @@ pub mod status;
 pub use crate::service_identity::verify_bfd_service_identity;
 pub use crate::transport::StopSignal;
 pub use logging::Logger;
-pub(crate) use privileges::drop_broker_privileges;
-pub use privileges::drop_privileges;
 #[cfg(test)]
 pub(crate) use privileges::drop_rpc_privileges;
+pub use privileges::verify_service_privileges;
+pub(crate) use privileges::REQUIRED_PRIVILEGE;
 pub use state::StateObserver;
 use state::StatePublisher;
 pub use status::{RejectionReason, StatusObserver, StatusSnapshot};
@@ -1185,7 +1185,7 @@ fn log_due(last: &mut Option<Instant>, now: Instant) -> bool {
 mod tests {
     use super::*;
     #[cfg(not(miri))]
-    use std::{fs, io::Write};
+    use std::fs;
 
     #[cfg(not(miri))]
     #[test]
@@ -1195,7 +1195,7 @@ mod tests {
             "127.0.0.115".parse().unwrap(),
         );
         options.multihop = true;
-        let mut log = Logger::new(false).unwrap();
+        let mut log = Logger::new().unwrap();
         let mut engine = Engine::from_config(options.into_validated().unwrap(), &mut log).unwrap();
         let observer = engine.status_observer();
         let stop = StopSignal::new().unwrap();
@@ -1234,7 +1234,7 @@ mod tests {
         let options = Options::reflector("127.0.0.88".parse().unwrap(), 99)
             .into_validated()
             .unwrap();
-        let mut log = Logger::new(false).unwrap();
+        let mut log = Logger::new().unwrap();
         let mut engine = Engine::from_config(options, &mut log).unwrap();
         let observer = engine.status_observer();
         let original = observer.snapshot().unwrap();
@@ -1285,7 +1285,7 @@ mod tests {
         options.registry_backed = true;
         let auth = options.validate().unwrap();
         let reflector = Reflector::new(Options::reflector(options.peer, 99), auth.clone()).unwrap();
-        let mut log = Logger::new(false).unwrap();
+        let mut log = Logger::new().unwrap();
         let mut engine = Engine::open(options, auth, &mut log).unwrap();
         let now = Instant::now();
         for step in 0..3 {
@@ -1417,81 +1417,6 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
-    fn unread_stdout_cannot_block_engine_shutdown() {
-        use std::{
-            io::{BufRead, BufReader},
-            process::{Command, Stdio},
-            sync::mpsc,
-            thread,
-        };
-        const CHILD: &str = "BFD_TEST_UNREAD_STDOUT_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            let mut options =
-                Options::new("127.0.0.80".parse().unwrap(), "127.0.0.81".parse().unwrap());
-            options.multihop = true;
-            options.console = true;
-            let auth = options.validate().unwrap();
-            let mut log = Logger::open(&options).unwrap();
-            let mut engine = Engine::open(options, auth, &mut log).unwrap();
-            // Fill the pipe while retaining enough queue space for a flush barrier.
-            for _ in 0..32 {
-                log.log("X".repeat(16_384));
-            }
-            assert_eq!(
-                log.flush(Duration::from_millis(50)).unwrap_err().kind(),
-                io::ErrorKind::TimedOut
-            );
-            let message = "X".repeat(4096);
-            for _ in 0..1024 {
-                log.log(&message);
-            }
-            assert!(log.dropped_records() > 0, "queue growth must be bounded");
-            let (stop, receiver) = mpsc::channel();
-            drop(stop);
-            engine.run(&receiver, &mut log).unwrap();
-            drop(engine);
-            drop(log);
-            eprintln!("engine-stopped");
-            std::process::exit(0);
-        }
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "runtime::tests::unread_stdout_cannot_block_engine_shutdown",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let (sent, received) = mpsc::channel();
-        let reader = thread::spawn(move || {
-            let mut diagnostics = Vec::new();
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if line == "engine-stopped" {
-                    let _ = sent.send(());
-                }
-                diagnostics.push(line);
-            }
-            diagnostics
-        });
-        let stopped = received.recv_timeout(Duration::from_secs(3)).is_ok();
-        if !stopped {
-            child.kill().unwrap();
-        }
-        let status = child.wait().unwrap();
-        let diagnostics = reader.join().unwrap();
-        assert!(
-            stopped,
-            "logging prevented engine shutdown: {diagnostics:?}"
-        );
-        assert!(status.success(), "{status}");
-    }
-
-    #[cfg(not(miri))]
-    #[test]
     fn file_logging_creates_missing_parent_directories_and_appends() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory
@@ -1500,7 +1425,7 @@ mod tests {
             .join("nested")
             .join("trace.log");
         let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
-        options.console = true;
+
         options.log_file_path = path.clone();
         options.log_to_file = true;
 
@@ -1523,7 +1448,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("trace.log");
         let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
-        options.console = true;
+
         options.log_to_file = true;
         options.log_file_path = path.clone();
         let mut log = Logger::open(&options).unwrap();
@@ -1565,7 +1490,7 @@ mod tests {
         // A file in place of a parent directory would fail if opened or created.
         let blocked = existing.join("trace.log");
         let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
-        options.console = true;
+
         assert!(!options.log_to_file);
 
         for path in [&existing, &missing, &blocked] {
@@ -1588,133 +1513,12 @@ mod tests {
         let blocked = directory.path().join("file");
         fs::write(&blocked, b"existing contents").unwrap();
         let mut options = Options::new("192.0.2.1".parse().unwrap(), "192.0.2.2".parse().unwrap());
-        options.console = true;
+
         options.log_to_file = true;
         options.log_file_path = blocked.join("trace.log");
 
         assert!(Logger::open(&options).is_err());
         assert_eq!(fs::read(blocked).unwrap(), b"existing contents");
-    }
-
-    #[cfg(not(miri))]
-    #[test]
-    fn closed_stdout_does_not_interrupt_engine_shutdown_or_file_logging() {
-        use std::{
-            io::{BufRead, BufReader, Read},
-            process::{Command, Stdio},
-            sync::mpsc,
-        };
-
-        const CHILD: &str = "BFD_TEST_CLOSED_STDOUT_CHILD";
-        const LOG_PATH: &str = "BFD_TEST_CLOSED_STDOUT_LOG";
-        if std::env::var_os(CHILD).is_some() {
-            let mut options =
-                Options::new("127.0.0.70".parse().unwrap(), "127.0.0.71".parse().unwrap());
-            options.multihop = true;
-            options.console = true;
-            options.log_file_path = std::env::var_os(LOG_PATH).unwrap().into();
-            options.log_to_file = true;
-            let auth = options.validate().unwrap();
-            let mut log = Logger::open(&options).unwrap();
-            let mut engine = Engine::open(options, auth, &mut log).unwrap();
-            log.service_started();
-            // Wait until the parent closes the pipe reader. This runs in a
-            // subprocess so native STDOUT changes cannot affect other tests.
-            eprintln!("ready");
-            io::stdin().read_exact(&mut [0]).unwrap();
-            let (stop, receiver) = mpsc::channel();
-            drop(stop);
-            engine.run(&receiver, &mut log).unwrap();
-            log.service_failed("synthetic failure after STDOUT closed");
-            log.service_stopped(0);
-            assert!(log.console);
-            drop(engine);
-            drop(log);
-            // Libtest's own completion output also uses STDOUT; avoid it after
-            // verifying the application completed with the pipe reader closed.
-            std::process::exit(0);
-        }
-
-        // Also cover redirected STDERR sharing an unavailable output sink.
-        for close_stderr in [false, true] {
-            let log = tempfile::NamedTempFile::new().unwrap();
-            let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "runtime::tests::closed_stdout_does_not_interrupt_engine_shutdown_or_file_logging",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .env(LOG_PATH, log.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-            let mut stderr = BufReader::new(child.stderr.take().unwrap());
-            let mut ready = String::new();
-            stderr.read_line(&mut ready).unwrap();
-            drop(child.stdout.take());
-            let mut stderr = (!close_stderr).then_some(stderr);
-            // Dropping the temporary stdin writer also wakes the child on failure.
-            child.stdin.take().unwrap().write_all(&[1]).unwrap();
-            let mut diagnostic = String::new();
-            if let Some(stderr) = &mut stderr {
-                stderr.read_to_string(&mut diagnostic).unwrap();
-            }
-            let status = child.wait().unwrap();
-            assert_eq!(ready.trim(), "ready");
-            assert!(status.success(), "{status}: {diagnostic}");
-            if !close_stderr {
-                assert_eq!(diagnostic.lines().count(), 1, "{diagnostic}");
-                assert!(diagnostic.contains("unable to write BFD console log"));
-            }
-            let contents = std::fs::read_to_string(log.path()).unwrap();
-            for message in [
-                "state=AdminDown",
-                "synthetic failure after STDOUT closed",
-                "service stopped exit_code=0",
-            ] {
-                assert!(contents.contains(message), "{contents}");
-            }
-        }
-    }
-
-    #[cfg(not(miri))]
-    #[test]
-    fn console_events_are_written_to_stdout_without_etw() {
-        const CHILD: &str = "BFD_TEST_CONSOLE_LOG_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            let mut log = Logger::new(true).unwrap();
-            assert!(log.console);
-            log.service_started();
-            log.service_failed("registry value Local is required");
-            log.service_stopped(1);
-            return;
-        }
-
-        // A subprocess provides real STDOUT/STDERR handles without libtest's
-        // in-process capture or changes to the installed service's registry.
-        let output = assert_cmd::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "runtime::tests::console_events_are_written_to_stdout_without_etw",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .assert()
-            .success()
-            .get_output()
-            .clone();
-        assert!(output.stderr.is_empty(), "{output:?}");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        for message in [
-            "service started mode=console",
-            "service failed: registry value Local is required",
-            "service stopped exit_code=1",
-        ] {
-            assert!(stdout.contains(message), "{stdout}");
-        }
     }
 
     #[test]
@@ -1726,7 +1530,7 @@ mod tests {
             [10, 20, 40, 80, 160, 250, 250, 250].map(Duration::from_millis)
         );
         assert_eq!(faults.count, 8);
-        let mut log = Logger::new(true).unwrap();
+        let mut log = Logger::new().unwrap();
         faults.recovered(&mut log);
         assert_eq!(faults.count, 0);
         assert_eq!(faults.next_delay(), FAULT_RETRY_MIN);

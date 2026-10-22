@@ -184,7 +184,10 @@ fn set(service: &Service, units: &[u16]) -> io::Result<()> {
 }
 
 fn minimum_multisz() -> Vec<u16> {
-    "SeChangeNotifyPrivilege\0\0".encode_utf16().collect()
+    crate::runtime::REQUIRED_PRIVILEGE
+        .encode_utf16()
+        .chain([0, 0])
+        .collect()
 }
 
 pub(super) fn set_minimum(service: &Service) -> io::Result<()> {

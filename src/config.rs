@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::error::ConfigError;
-use clap::{Parser, ValueEnum};
+use clap::ValueEnum;
 
 use crate::packet::{AuthConfig, AuthType};
 
@@ -147,18 +147,6 @@ impl Timing {
     }
 }
 
-/// Execution mode is the only application command-line option.
-#[derive(Parser)]
-#[command(
-    version,
-    about = "Windows BFD service; settings are read from HKLM\\SYSTEM\\CurrentControlSet\\Services\\BfdWinService\\Parameters"
-)]
-pub struct CommandLine {
-    /// Run in the foreground and write events to STDOUT; Ctrl+C stops the session
-    #[arg(long)]
-    pub console: bool,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 /// Single-hop or multihop UDP transport profile.
 pub enum Mode {
@@ -182,8 +170,6 @@ impl Mode {
 /// Startup settings for one explicitly provisioned BFD session.
 #[derive(Clone)]
 pub struct Options {
-    /// Run in the foreground; Ctrl+C stops the session
-    pub console: bool,
     /// Local unicast IP address (binds receive and transmit sockets)
     pub local: IpAddr,
     /// Peer unicast IP address, without a port; unused by a reflector.
@@ -281,7 +267,6 @@ impl Options {
     /// Call validate after provisioning the transport/authentication settings.
     pub fn new(local: IpAddr, peer: IpAddr) -> Self {
         Self {
-            console: false,
             local,
             peer,
             session_type: SessionType::Classical,
@@ -694,45 +679,6 @@ mod tests {
         let mut options = options();
         options.mode = Mode::Multihop;
         options
-    }
-
-    #[test]
-    fn console_is_the_only_application_command_line_option() {
-        assert!(!CommandLine::try_parse_from(["bfd"]).unwrap().console);
-        assert!(
-            CommandLine::try_parse_from(["bfd", "--console"])
-                .unwrap()
-                .console
-        );
-        for removed in [
-            "--local",
-            "--peer",
-            "--mode",
-            "--multihop",
-            "--point-to-point",
-            "--interface-index",
-            "--min-tx-us",
-            "--min-rx-us",
-            "--startup-tx-us",
-            "--detect-mult",
-            "--discriminator",
-            "--source-port",
-            "--passive",
-            "--min-ttl",
-            "--auth",
-            "--auth-key-id",
-            "--auth-key",
-            "--auth-key-hex",
-            "--log-file",
-            "--bgp-peer-name",
-            "--bgp-routing-domain",
-            "--verbose",
-        ] {
-            assert!(
-                CommandLine::try_parse_from(["bfd", removed]).is_err(),
-                "{removed}"
-            );
-        }
     }
 
     #[test]

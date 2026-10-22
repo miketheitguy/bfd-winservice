@@ -5,7 +5,7 @@ use super::{
     watchdog::{ProviderWatch, PROVIDER_BUDGET},
     Target,
 };
-use crate::runtime::{drop_broker_privileges, Logger, StopSignal};
+use crate::runtime::{verify_service_privileges, Logger, StopSignal};
 use std::{
     ffi::OsString,
     io, process,
@@ -96,7 +96,7 @@ impl Reporter {
 
 fn start() -> io::Result<()> {
     // Created first so every later failure is recorded before SERVICE_STOPPED.
-    let mut log = Logger::new(false)?;
+    let mut log = Logger::new()?;
     let stop = StopSignal::new()?;
     let reporter = Arc::new(Mutex::new(Reporter {
         handle: None,
@@ -126,13 +126,7 @@ fn start() -> io::Result<()> {
     }
     let result = (|| -> io::Result<()> {
         ipc::require_broker_identity()?;
-        let removed = drop_broker_privileges()?;
-        if !removed.is_empty() {
-            log.broker_message(
-                format_args!("removed unused process privileges: {}", removed.join(", ")),
-                false,
-            );
-        }
+        verify_service_privileges()?;
         // Initialize process security before MI can marshal anything. This process
         // registers no COM factory, so interactive users get no COM access.
         let com = ComHost::initialize()?;
@@ -227,7 +221,7 @@ fn start() -> io::Result<()> {
 /// Ends the process when a provider call keeps cleanup running past the stop
 /// budget. Outstanding BFD actions retain their ordinary retry policy.
 fn abandon_cleanup(reporter: &mut Reporter) -> ! {
-    if let Ok(mut log) = Logger::new(false) {
+    if let Ok(mut log) = Logger::new() {
         log.broker_message(
             format_args!(
                 "cleanup did not finish within {} seconds; ending the broker process",
@@ -244,7 +238,7 @@ fn abandon_cleanup(reporter: &mut Reporter) -> ! {
 /// A Running broker exits without reporting Stopped, triggering its configured
 /// SCM crash recovery. A requested Stop remains final and must not restart it.
 fn abandon_provider(reporter: &mut Reporter, method: crate::bgp::Method) -> ! {
-    if let Ok(mut log) = Logger::new(false) {
+    if let Ok(mut log) = Logger::new() {
         log.broker_message(
             format_args!(
                 "provider method={} exceeded its {}-second wall-clock budget; ending the broker process",

@@ -811,7 +811,7 @@ fn verify_action_state(method: Method, expected: bool, actual: bool) -> io::Resu
 
 #[cfg(test)]
 pub(super) fn rpc_schema_fixture() -> io::Result<()> {
-    let mut application = Application::open(&Logger::new(false)?)?;
+    let mut application = Application::open(&Logger::new()?)?;
     let mut session = application.session()?;
     let mut options = application.options()?;
     let mut schema = schema_operation(
@@ -874,14 +874,14 @@ mod tests {
         let peer = std::env::var("BFD_TEST_RRAS_PEER")
             .expect("set BFD_TEST_RRAS_PEER to an existing RRAS BGP peer name");
         let _com = super::super::com::ComHost::initialize().unwrap();
-        let log = Logger::new(false).unwrap();
+        let log = Logger::new().unwrap();
         let _started = started(&peer, None, &log).unwrap();
     }
 
     #[cfg(not(miri))]
     #[test]
     fn native_mi_parses_embedded_bgp_status_and_rejects_ambiguous_results() {
-        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
+        let mut application = Application::open(&Logger::new().unwrap()).unwrap();
         for code in [0, 1, 2, 3, 4, 5, u32::MAX] {
             let mut peer = application.parameters(Method::Get, "test", None).unwrap();
             let value = MI_Value { uint32: code };
@@ -937,7 +937,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_parameters_copy_strings_and_force_stop_without_confirmation() {
-        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
+        let mut application = Application::open(&Logger::new().unwrap()).unwrap();
         for method in [Method::Start, Method::Stop] {
             let parameters = application
                 .parameters(method, "peer-\u{1f642}", Some("Rd001"))
@@ -989,7 +989,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_drains_provider_error_and_closes_handles() {
-        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
+        let mut application = Application::open(&Logger::new().unwrap()).unwrap();
         let mut session = application.session().unwrap();
         let parameters = application.parameters(Method::Start, "test", None).unwrap();
         let mut options = application.options().unwrap();
@@ -1026,7 +1026,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn native_mi_checks_return_code_and_requires_status_output() {
-        let mut application = Application::open(&Logger::new(false).unwrap()).unwrap();
+        let mut application = Application::open(&Logger::new().unwrap()).unwrap();
         for (value, kind, succeeds) in [
             (MI_Value { uint32: 0 }, MI_UINT32, true),
             (MI_Value { uint32: 5 }, MI_UINT32, false),

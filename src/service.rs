@@ -1,7 +1,7 @@
 use bfd_winservice::{
     config::{load_registry, SERVICE_NAME},
     local_rpc::LocalRpcServer,
-    runtime::{drop_privileges, verify_bfd_service_identity, Engine, Logger, StopSignal},
+    runtime::{verify_bfd_service_identity, verify_service_privileges, Engine, Logger, StopSignal},
 };
 use std::{
     error::Error,
@@ -79,7 +79,7 @@ fn run_service() -> Result<(), Box<dyn Error>> {
         reporter.handle = Some(handle);
         reporter.publish(ServiceExitCode::Win32(0))?;
     }
-    let mut log = match Logger::new(false) {
+    let mut log = match Logger::new() {
         Ok(log) => log,
         Err(error) => {
             reporter
@@ -95,16 +95,10 @@ fn run_service() -> Result<(), Box<dyn Error>> {
             // Require the SCM account and restricted service SID before opening
             // configured resources or accepting local RPC calls.
             verify_bfd_service_identity()?;
-            // Drop unused privileges, including SeImpersonatePrivilege, before
-            // accepting network traffic.
-            let removed = drop_privileges()?;
-            if !removed.is_empty() {
-                log.log(format_args!(
-                    "removed unused process privileges: {}",
-                    removed.join(", ")
-                ));
-            }
-            let options = load_registry(false)?;
+            // SCM removes unused privileges before process creation. Refuse an
+            // unexpected token rather than repairing an insecure configuration.
+            verify_service_privileges()?;
+            let options = load_registry()?;
             log.open_file(&options)?;
             Ok(Engine::from_config(options, &mut log)?)
         })?;

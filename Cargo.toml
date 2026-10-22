@@ -1,6 +1,6 @@
 [package]
 name = "bfd-winservice"
-version = "3.0.2"
+version = "4.0.0"
 edition = "2021"
 default-run = "bfd-winservice"
 
@@ -14,7 +14,6 @@ subtle = "2.6"
 thiserror = "2"
 
 [target.'cfg(windows)'.dependencies]
-ctrlc = "3.5"
 socket2 = { version = "0.6", features = ["all"] }
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Com"] }
 windows-service = "0.8.1"

@@ -98,7 +98,7 @@ flowchart RL
 
     subgraph auth_client["Broker RPC worker | SYSTEM + broker SID"]
         direction TB
-        auth_token["<b>Verify the broker process token</b><br/>Exact SYSTEM user + enabled broker SID<br/>Retain SeChangeNotifyPrivilege"]:::broker
+        auth_token["<b>Verify the broker process token</b><br/>Exact SYSTEM user + enabled broker SID<br/>Require enabled SeChangeNotifyPrivilege"]:::broker
         auth_qos["<b>[F] Bind with the fixed BFD policy</b><br/>ncalrpc / WINNT / packet privacy<br/>QOS V5: LocalService AND BFD service SID<br/>Static / Identify / effective-only<br/>Create binding, bind, then query status"]:::gate
         auth_result["<b>Accept a complete, checked reply</b><br/>MIDL ranges → one Rust conversion<br/>Invalid reply: clear cache and retry<br/>Check freshness; never drive BGP"]:::cache
         auth_release["<b>Complete before releasing storage</b><br/>Cancel → complete → unbind → free<br/>Retain unresolved native ownership<br/>Quarantine a stalled telemetry worker"]:::broker
@@ -163,7 +163,7 @@ metadata as authentication evidence.
 
 SCM creates the two service tokens. BFD uses LocalService with a restricted
 service SID; the broker uses LocalSystem with its own service SID. Both verify
-their identity and remove unused privileges before opening their interfaces.
+their identity and expected privileges before opening their interfaces.
 For exact SIDs, retained privileges, ACLs, and COM/MI security, see
 [Service isolation and permissions](security/service-isolation.md).
 

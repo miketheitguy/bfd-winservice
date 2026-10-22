@@ -502,7 +502,7 @@ fn rpc_fixture_child() {
     // Only this disposable child loses privileges. Positive status calls therefore
     // exercise RPC registration and Authz checks without SeImpersonatePrivilege,
     // SeDebugPrivilege, or any other privilege the service removes at startup.
-    crate::runtime::drop_privileges().unwrap();
+    crate::runtime::drop_rpc_privileges().unwrap();
     let (_publisher, observer) = status::tests::fixture();
     let server =
         LocalRpcServer::with_status_policy(&endpoint, &user, &group, Some(observer)).unwrap();

@@ -286,6 +286,7 @@ try {
     New-ItemProperty -Path $parameters -Name Local -PropertyType String -Value '127.0.0.240' -Force
     New-ItemProperty -Path $parameters -Name Peer -PropertyType String -Value '127.0.0.241' -Force
     New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 1 -Force
+    & (Join-Path $PSScriptRoot 'Test-ServicePrivilegePolicy.ps1') -DisposableVm:$DisposableVm
     Assert-IndependentServiceStartup
     $probeStarted = Get-Date
     Start-Service BfdWinService

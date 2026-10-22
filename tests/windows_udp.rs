@@ -344,7 +344,7 @@ fn windows_ipv6_hop_limit_and_destination_metadata_are_available() {
 }
 
 #[test]
-fn console_engine_handshake_poll_timeout_and_admin_down_over_udp() {
+fn engine_handshake_poll_timeout_and_admin_down_over_udp() {
     let mut options = options("127.0.0.20", "127.0.0.21", "multihop");
     let peer = UdpSocket::bind("127.0.0.21:4784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();

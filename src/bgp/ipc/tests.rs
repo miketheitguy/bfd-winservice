@@ -164,7 +164,7 @@ fn serve_fixture(directory: PathBuf, provider: Option<fn() -> io::Result<()>>) {
         &listener,
         configured,
         &stop,
-        &mut crate::runtime::Logger::new(false).unwrap(),
+        &mut crate::runtime::Logger::new().unwrap(),
         |method, _| {
             if let Some(provider) = provider {
                 provider()?;

@@ -18,9 +18,8 @@ and [Service identities and authorization](#service-identities-and-authorization
 
 Get the mission prerequisites lined up, turtle crew. Preflight check, buddy: the
 peer must already exist on a Windows Server with Remote Access/BGP configured.
-Install the setup bundle: BGP control requires the installed service identities and is
-unavailable with `--console`. Without `BgpPeerName`, no BGP control worker or
-native MI query is started. BFD and the broker start independently; enable both
+Install the setup bundle: BGP control requires the installed service identities.
+Without `BgpPeerName`, no BGP control worker or native MI query is started. BFD and the broker start independently; enable both
 services when you need BGP control or broker telemetry.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
@@ -141,7 +140,8 @@ Compare the actual peer state with the action table after each transition.
 
 Ninja discipline means keeping an administrative stop distinct from a path
 failure. Stopping BFD is administrative, not a path failure, so it never stops
-BGP. Local AdminDown, set only when the service stops, never stops the peer.
+BGP. Local AdminDown, including engine cleanup after a fatal transport error,
+never stops the peer.
 Following
 [RFC 5882 section 3.2](https://www.rfc-editor.org/rfc/rfc5882.html#section-3.2),
 a session that goes Down because the peer signalled AdminDown also leaves BGP
@@ -203,4 +203,7 @@ a service does not grant access to its private RPC interfaces.
 Native fixtures and the installer harness don't mutate a live RRAS peer. Verify
 actual withdrawal and recovery on your target server, dude. The
 [dated Windows/BIRD validation](windows-bgp-interop-2026-10-22.md) records one
-tested deployment and its limits. For event meanings, see [Logs and events](logging.md).
+tested deployment and its limits. The
+[service-only validation record](service-only-validation-2026-10-22.md) records
+the later full Windows/Ubuntu scenario run. For event meanings, see
+[Logs and events](logging.md).

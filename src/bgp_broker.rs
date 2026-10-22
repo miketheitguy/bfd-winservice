@@ -34,10 +34,6 @@ pub fn run() -> io::Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     match arguments.as_slice() {
         [] => service::run(),
-        [argument] if argument == "--version" => {
-            println!("bfd-bgp-broker {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
         [argument] if argument == "--prepare-install" => install::prepare(),
         [argument] if argument == "--configure-install" => install::configure(),
         [argument] if argument == "--rollback-install" => install::rollback(),

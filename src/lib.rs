@@ -1,8 +1,8 @@
 //! Portable classical/S-BFD configuration, authentication, session state,
 //! and stateless S-BFD reflection.
 //!
-//! On Windows, runtime and transport provide UDP execution; the executable also
-//! supports LocalService SCM operation and optional BGP control through a separate broker.
+//! On Windows, runtime and transport provide UDP execution. The executable runs
+//! only as a LocalService SCM service, with optional BGP control through a separate broker.
 //! The installed service exposes private authenticated local RPC session telemetry.
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 pub mod config;

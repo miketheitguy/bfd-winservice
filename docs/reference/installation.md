@@ -28,8 +28,8 @@ the following resources for all users:
   `SeChangeNotifyPrivilege`. A native commit action records both lists after the
   MSI transaction succeeds; services remain stopped
   until you start them. SCM applies each list when it creates the service
-  process. Both services also permanently remove unused privileges at startup,
-  before opening network sockets or initializing COM/MI and RPC.
+  process. Both services validate the actual token at startup and refuse unexpected
+  privileges before opening network sockets or initializing COM/MI and RPC.
 - Protected service ACLs for both services: SYSTEM and Administrators have full
   control. Authenticated users can query configuration/status, enumerate
   dependents, interrogate status, and read the service ACL. They cannot Start/Stop,

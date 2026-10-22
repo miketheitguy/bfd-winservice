@@ -447,7 +447,7 @@ The release workflow's `Test-MsiInstall.ps1` separately requires a fresh broker
 event confirming the handshake after first start and after repair. After first
 start, broker recovery, and repair, it also uses the authenticated administrator
 runner's own credentials to require access denied from the BFD status operation
-and all four broker control opcodes. These checks call the native RPC helpers
+and all three broker control operations. These checks call the native RPC helpers
 directly, bypassing client-side service-identity guards so the receiving RPC
 interfaces must enforce rejection. The disposable-runner test exercises the
 actual SCM-issued service accounts, service SIDs, and restricted BFD token.
@@ -466,7 +466,7 @@ For the code deep dive, follow this file lineup:
 | [src/local_rpc/identity.rs](../../src/local_rpc/identity.rs) | Call attributes, Authz context ownership, and account/group checks |
 | [src/local_rpc/monitor.rs](../../src/local_rpc/monitor.rs) | In-process worker supervision, typed status cache, quarantine, and bounded shutdown |
 | [src/service_identity.rs](../../src/service_identity.rs) | Self-identity and restricted BFD token checks |
-| [src/runtime/privileges.rs](../../src/runtime/privileges.rs) | Permanent BFD and broker privilege removal before accepting work |
+| [src/runtime/privileges.rs](../../src/runtime/privileges.rs) | Read-only BFD and broker privilege validation before accepting work |
 | [rpc/bfd_local.idl](../../rpc/bfd_local.idl) and [client ACF](../../rpc/bfd_local_client.acf) | Status-only contract, fixed field ranges, and asynchronous client generation |
 | [rpc/client.c](../../rpc/client.c), [server bridge](../../rpc/server.c), and [RPC build](../../rpc/build.rs) | Native completion, cancellation, exceptions, manager bridge, and MIDL compilation |
 | [RPC tests](../../src/local_rpc/tests.rs) and [replacement-token tests](../../src/local_rpc/tests/restricted.rs) | Native positive and negative fixtures |

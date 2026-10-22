@@ -5,11 +5,8 @@ network admins, this is your settings playbook for one Bidirectional Forwarding
 Detection (BFD) session. Let's get it, like, totally dialed in, dude. For
 initial provisioning, see [Set up a BFD session](setup.md).
 
-Configuration vibe check, no cap: the registry is the source of truth. The
-executable accepts `--console`, `--help`, and `--version`; session settings
-aren't CLI flags.
-
-Both console execution and execution through the Windows Service Control Manager (SCM) read this registry key:
+Configuration vibe check, no cap: the registry is the source of truth. BFD
+accepts no command-line arguments. The installed Windows service reads this key:
 
 ```text
 HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters
@@ -33,8 +30,8 @@ Parameters key changes; see
 [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 The MSI protects this key: SYSTEM and administrators have full control, and the
-enabled BFD service SID has read access. Console execution and configuration
-therefore require an elevated Administrator session. The BGP broker reads only
+enabled BFD service SID has read access. Use an elevated Administrator session
+to change configuration. The BGP broker reads only
 the configured BGP target; restart both services after changing either BGP value.
 Service configuration changes and Start/Stop require elevation. Non-administrators
 can still query service status and read logs; see [Monitor service status and BFD
@@ -249,7 +246,7 @@ Windows BGP peer:
 | `BgpRoutingDomain` | `REG_SZ` | Default routing domain | Optional domain; requires `BgpPeerName` |
 
 Keep these names legit: both BGP names must contain a non-whitespace character.
-Console execution rejects BGP control. Restart both installed services when
+Restart both installed services when
 changing either BGP value so the BFD worker and broker use the same target. For
 classical multihop sessions, configure
 [meticulous keyed authentication](#authentication) before enabling

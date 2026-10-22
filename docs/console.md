@@ -1,147 +1,80 @@
-# Run BFD in a console
+# Migrate foreground deployments to Windows services
 
-Cowabunga, console crew. Run a foreground session to inspect BFD output without
-installing Windows services. Use an elevated PowerShell window for file and
-registry setup, and keep that window open for the commands below. You'll need
-the [supported Windows host and peer settings](setup.md#before-you-begin).
-For SCM execution and BGP management, follow the [bundle setup guide](setup.md).
+Windows administrators, use this guide to replace an older foreground BFD
+deployment with the installed service. BFD accepts no command-line arguments;
+`--console`, `--help`, and `--version` have been removed. Ctrl+C no longer
+controls BFD. Use Windows Service Control Manager (SCM) commands and event logs.
 
-## Prepare installation files
+## Revision scope
 
-Pack the console gear before the pizza run. For a console-only deployment, copy
-the supplied files to a permanent folder. If the bundle already installed them,
-you're set; skip this section. Before launching a loose executable, verify and
-install the supplied Microsoft runtime from the deployment folder:
+Service-only execution is introduced in [v4.0.0](releases/4.0.0.md). Versions
+through v3.0.2 support foreground execution and runtime privilege reduction.
+Upgrade both services together using `BfdWinService-4.0.0-x64-setup.exe` when
+applying this migration. The CLI and Rust API removals make this a major
+release under the [version policy](../CONTRIBUTING.md#choose-a-release-version).
+The [dated validation record](service-only-validation-2026-10-22.md) identifies
+the private package used before release version stamping.
 
-```powershell
-$deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
-$runtime = Join-Path $deploymentDirectory 'VC_redist.x64.exe'
-$expectedHash = (Get-Content -LiteralPath "$runtime.sha256" -Raw).Split()[0]
-if ((Get-FileHash -LiteralPath $runtime -Algorithm SHA256).Hash -ne $expectedHash) {
-    throw 'Visual C++ runtime SHA-256 checksum mismatch'
-}
-$signature = Get-AuthenticodeSignature -LiteralPath $runtime
-if ($signature.Status -ne 'Valid' -or
-    $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
-    throw 'The runtime must have a valid Microsoft signature'
-}
-$runtimeKey = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
-$installed = Get-ItemProperty -LiteralPath $runtimeKey -ErrorAction SilentlyContinue
-if ($null -eq $installed -or $installed.Installed -ne 1 -or
-    [version]$installed.Version.TrimStart('v','V') -lt [version]'14.51.36247.0') {
-    $result = Start-Process -FilePath $runtime -ArgumentList @(
-        '/install', '/quiet', '/norestart'
-    ) -WindowStyle Hidden -Wait -PassThru
-    if ($result.ExitCode -notin @(0, 3010)) {
-        throw "Visual C++ runtime installation failed: $($result.ExitCode)"
-    }
-    $installed = Get-ItemProperty -LiteralPath $runtimeKey
-}
-if ($installed.Installed -ne 1 -or
-    [version]$installed.Version.TrimStart('v','V') -lt [version]'14.51.36247.0') {
-    throw 'Install the x64 Visual C++ runtime 14.51.36247.0 or newer'
-}
-```
+Both services keep their installed accounts and SID types. SCM supplies only
+enabled `SeChangeNotifyPrivilege`; each daemon validates that exact set without
+adjusting its token. For the rejection and repair behavior, see
+[service isolation](security/service-isolation.md#bfd-privilege-allowlist).
 
-Replace `DEPLOYMENT_DIRECTORY` with the supplied folder, such as
-`C:\Temp\BfdWinService`. Exit code `3010` requires a restart before use; the
-command suppresses automatic restarts. An equal or newer runtime can be retained
-after checking its installed version. See [runtime provenance](../installer/redist/README.md)
-for the pinned installer and license. Then copy the console files:
+<a id="prepare-installation-files"></a>
+
+## Install the service
+
+1. Stop the older foreground process and disable any scheduled task or wrapper
+   that launches it. Confirm it has released the configured BFD addresses/ports.
+2. Record the existing protected registry configuration and authentication keys
+   using your normal secure backup procedure. Keep key material out of logs.
+3. Follow [Install with the offline setup bundle](setup.md#install-with-the-offline-setup-bundle).
+   Loose executables alone do not provision accounts, service SIDs, privilege
+   allowlists, ACLs, firewall rules, or the logging provider.
+4. Review the existing values against the [configuration reference](configuration.md).
+   [Enable optional file output](logging.md#configure-file-logging) if you
+   previously redirected STDOUT. The BFD service SID needs Modify access to a
+   custom log directory, including rights for rotation; an account-only
+   LocalService grant is insufficient for restricted writes.
+
+<a id="start-and-verify-the-console-session"></a>
+
+## Start and verify the service
+
+Start the configured service in **PowerShell as Administrator**:
 
 ```powershell
-$deploymentDirectory = (Resolve-Path 'DEPLOYMENT_DIRECTORY').Path
-$installDirectory = 'C:\Program Files\BfdWinService'
-New-Item -ItemType Directory -Path $installDirectory -Force
-foreach ($file in @(
-    'bfd-winservice.exe', 'Initialize-Logging.ps1'
-)) {
-    Copy-Item -LiteralPath (Join-Path $deploymentDirectory $file) `
-        -Destination $installDirectory
-}
-Get-ChildItem -LiteralPath $installDirectory | Select-Object Name
+Start-Service BfdWinService
+Get-Service BfdWinService | Select-Object Name, Status
 ```
 
-Replace `DEPLOYMENT_DIRECTORY` with the folder containing the supplied files,
-such as `C:\Temp\BfdWinService`. Adjust `$installDirectory` if your organization
-uses another location.
+Confirm `Running`, then [verify peer communication](setup.md#6-verify-peer-communication).
+Use [Logs and events](logging.md) for ETW and optional file output.
+Startup rejects an unexpected service token before opening configured resources.
+Use setup repair to restore the installed policy before restarting.
 
-PowerShell displays the destination folder and the two copied filenames.
-These files support console execution. Use the bundle for service execution;
-copying files doesn't create services, service identities, or access policies.
-
-## Start and verify the console session
-
-Take the session on a foreground mission, turtle crew. Console execution reads
-the same Parameters registry values as service execution. Run it as
-Administrator when using the installer-protected key. Console mode does not authorize
-BGP operations; leave `BgpPeerName` and `BgpRoutingDomain` unset for foreground
-execution.
-
-Dude, stop an installed `BfdWinService` before running the same session in a
-console; both processes would otherwise compete for the same addresses and
-ports.
-
-### 1. Configure the registry values
-
-For a bundle installation, set the executable folder:
+Read the version without executing the daemon:
 
 ```powershell
-$installDirectory = Join-Path $env:ProgramFiles 'BfdWinService'
+(Get-Item 'C:\Program Files\BfdWinService\bfd-winservice.exe').VersionInfo |
+    Select-Object FileVersion, ProductVersion
 ```
 
-For loose files, retain the folder you chose in
-[Prepare installation files](#prepare-installation-files). Follow
-[Configure the session](setup.md#2-configure-the-session) to provision the local
-and peer addresses and interface index. Optionally
-[provision logging defaults](logging.md#1-optional-provision-the-defaults) before
-starting; rerunning that script resets existing logging settings.
-
-### 2. Start the foreground session
-
-Start the installed executable in the foreground:
+To stop BFD and complete its administrative shutdown, run:
 
 ```powershell
-$exe = (Resolve-Path (Join-Path $installDirectory 'bfd-winservice.exe')).Path
-& $exe --console
+Stop-Service BfdWinService
 ```
 
-Successful engine startup includes this standard output (STDOUT) message:
+## Migrate library callers
 
-```text
-TIMESTAMP service started mode=console
-```
+Remove `CommandLine`, `Options::console`, and `runtime::drop_privileges` usage.
+Call `config::load_registry()`, `Logger::new()`, and `Logger::open(&options)`
+without a mode parameter. The executable's foreground runner and Ctrl+C handler
+are removed. Library users can still drive `Engine::run_until` with a
+`StopSignal`; installed-service identity and privilege checks are separate from
+portable protocol APIs. See [library development](development/library.md).
 
-`TIMESTAMP` is the current time in Unix milliseconds. Messages, including
-configuration failures, go to STDOUT. Console execution doesn't register or write
-the ETW provider. See [Configure file logging](logging.md#configure-file-logging) for optional file
-output with ISO-8601 UTC timestamps.
-
-### 3. Verify the handshake
-
-For the real connection flex, configure the remote peer and confirm the console
-output contains `state=Up`. This confirms BFD establishment separately from the
-`service started` message.
-
-### 4. Stop the session
-
-Press **Ctrl+C**. The engine uses the same AdminDown announcements and BGP cleanup
-as [service shutdown](protocol.md#supported-modes-and-limits).
-
-Classical settings are read at startup. Stop execution, edit the registry, and
-restart to apply changes. For S-BFD timing updates, see
-[Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
-
-### Optional: Capture console output
-
-To save STDOUT instead of displaying it, start the console process with
-redirection:
-
-```powershell
-& $exe --console > 'C:\ProgramData\BfdWinService\console.log'
-```
-
-The output file contains console messages with Unix-millisecond timestamps.
-This shell redirection is separate from the `LogToFile` setting.
-
-For file output, use the [logging procedure](logging.md#configure-file-logging).
+The broker also rejects public help/version options. Its fixed private MSI
+transaction commands remain installer implementation details; use setup bundle
+installation or repair rather than invoking those commands manually.

@@ -19,7 +19,7 @@ fn malformed_data_clears_cache_and_recovers_on_the_same_worker() {
     let (started, starts) = mpsc::channel();
     let valid = super::super::status::tests::sample_status();
     let monitor = Monitor::with_query(
-        Logger::new(true).unwrap(),
+        Logger::new().unwrap(),
         Arc::clone(&cache),
         move || {
             let _ = started.send(thread::current().id());
@@ -76,7 +76,7 @@ fn transport_failure_clears_previous_data_and_valid_telemetry_can_recover() {
     let cache = Arc::new(ArcSwap::from_pointee(BrokerStatus::Unavailable));
     let (send, replies) = mpsc::channel();
     let monitor = Monitor::with_query(
-        Logger::new(true).unwrap(),
+        Logger::new().unwrap(),
         Arc::clone(&cache),
         move || {
             replies
@@ -122,7 +122,7 @@ fn stalled_worker_is_bounded_and_shutdown_never_waits_for_native_completion() {
     let cache = Arc::new(ArcSwap::from_pointee(BrokerStatus::Unavailable));
     let (release, blocked) = mpsc::channel();
     let monitor = Monitor::with_query(
-        Logger::new(true).unwrap(),
+        Logger::new().unwrap(),
         Arc::clone(&cache),
         move || {
             let _ = blocked.recv();
@@ -167,7 +167,7 @@ fn shutdown_interrupts_the_longest_retry_wait() {
     let calls = Arc::new(AtomicUsize::new(0));
     let query_calls = Arc::clone(&calls);
     let monitor = Monitor::with_query(
-        Logger::new(true).unwrap(),
+        Logger::new().unwrap(),
         Arc::clone(&cache),
         move || {
             query_calls.fetch_add(1, Ordering::Relaxed);

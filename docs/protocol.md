@@ -56,7 +56,7 @@ A bodacious packet still needs the exact header layout. Packets use the version
 [RFC 5880 section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1).
 The five 32-bit discriminator and interval fields use network byte order.
 `Length` includes authentication: 24 bytes without authentication, 28–43 bytes
-with a simple password, or 52 bytes with SHA-1. Intervals are
+with a simple password, 48 bytes with meticulous MD5, or 52 bytes with SHA-1. Intervals are
 in microseconds; the advertised multiplier is nonzero.
 
 Header flag vibe check, for sure: the service sets them as follows:
