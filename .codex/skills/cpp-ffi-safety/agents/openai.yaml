@@ -1,4 +1,0 @@
-interface:
-  display_name: "C++ FFI Safety"
-  short_description: "Contain C++ exceptions and harden MSVC builds"
-  default_prompt: "Use $cpp-ffi-safety to review and enforce the security controls relevant to this task."

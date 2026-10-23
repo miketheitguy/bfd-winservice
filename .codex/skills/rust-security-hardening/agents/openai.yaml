@@ -1,4 +1,0 @@
-interface:
-  display_name: "Rust Security Hardening"
-  short_description: "Rust ownership, FFI, panic and build hardening"
-  default_prompt: "Use $rust-security-hardening to review and enforce the security controls relevant to this task."
