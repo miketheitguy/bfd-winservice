@@ -159,6 +159,8 @@ jobs:
         run: ./scripts/Test-RestrictedAcl.ps1
       - name: Check installer hardening
         run: ./scripts/Test-InstallerHardening.ps1
+      - name: Check DPAPI key provisioning
+        run: ./scripts/Test-BfdAuthenticationKey.ps1
       - name: Check rollback privilege fixtures
         run: ./scripts/Test-RollbackPrivileges.ps1
       - name: Check native compiler and runtime compatibility policy

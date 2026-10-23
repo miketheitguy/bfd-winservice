@@ -20,8 +20,6 @@ optional file output:
 | `BFD-Service/Operational` | Manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, authentication failures, and broker readiness/provider/status messages |
 | `LogFilePath` | `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
 
-<a id="console-and-packet-text"></a>
-
 ### Packet text
 
 Keep the noise mellow: ordinary send errors are logged at most once per second.
@@ -65,8 +63,6 @@ logging setup script. For a custom
 destination, review
 [File paths, permissions, and timestamps](#file-paths-permissions-and-timestamps)
 before enabling output.
-
-<a id="1-provision-the-defaults"></a>
 
 ### 1. Optional: Provision the defaults
 
@@ -298,8 +294,6 @@ forwarding-plane/path notifications.
 See [States and diagnostics](protocol.md#states-and-diagnostics)
 for the transition rules.
 
-<a id="service-and-console-output"></a>
-
 ### Service output
 
 The output worker submits each state or diagnostic record to ETW
@@ -348,7 +342,7 @@ event 4 carries a text message in these cases:
 
 Event 105 includes the packet source address/port, configured authentication type/key ID, local discriminator, and rejection reason. It is limited to once per second per process, independently of verbose logging. Keys, passwords, digests, and packet payloads are omitted. Malformed headers, wrong-session discriminators, and invalid transport metadata are rejected before authentication verification and do not generate this event.
 
-The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](../events/BFD-Service.man) follows Microsoft's [instrumentation manifest format](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). Lifecycle Mode remains `0`, rendered as `Windows service`, preserving the existing ETW payload layout.
+The provider GUID is `{8F2A4F61-4D6C-4F2F-9C3E-2B73AB4D62E1}`. The [manifest](../events/BFD-Service.man) follows Microsoft's [instrumentation manifest format](https://learn.microsoft.com/en-us/windows/win32/wes/writing-an-instrumentation-manifest). Lifecycle `Mode` is `0`, rendered as `Windows service`.
 
 ## Logging failures
 

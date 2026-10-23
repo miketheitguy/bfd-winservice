@@ -11,8 +11,8 @@ pub enum ConfigError {
     /// MaxShutdownAnnounceMs must be in the range 1..=60000.
     #[error("MaxShutdownAnnounceMs must be between 1 and 60000 milliseconds")]
     ShutdownAnnouncementLimit,
-    /// AuthKey and AuthKeyHex are mutually exclusive.
-    #[error("AuthKey and AuthKeyHex are mutually exclusive")]
+    /// Programmatic text keys and a decrypted registry key are mutually exclusive.
+    #[error("multiple authentication key sources are configured")]
     ConflictingKeys,
     /// BgpRoutingDomain requires BgpPeerName.
     #[error("BgpRoutingDomain requires BgpPeerName")]

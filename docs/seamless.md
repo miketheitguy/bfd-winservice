@@ -196,7 +196,7 @@ the initiator's state or create a separate session.
 ## Authentication and loop prevention
 
 Turtle power needs authentication and loop checks. Configure matching `Auth`,
-`AuthKeyId`, and `AuthKey` or `AuthKeyHex` using the
+`AuthKeyId`, and a DPAPI-protected key in `Secrets\AuthKeyDpapi` using the
 [authentication reference](configuration.md#authentication). Simple-password,
 both SHA-1 modes, and meticulous keyed MD5 are available.
 

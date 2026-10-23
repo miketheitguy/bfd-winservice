@@ -84,12 +84,18 @@ window. These behaviors differ from a classical BFD session's replay checks.
 ## Key configuration and storage
 
 Keep the key setup totally tubular and the storage permissions explicit. Keep
-the key setup dialed in: configure exactly one of `AuthKey` (ASCII) and
-`AuthKeyHex` (binary key encoded as hexadecimal) when authentication is enabled.
+the key setup dialed in: provision `Parameters\Secrets\AuthKeyDpapi` with the
+installed `Set-BfdAuthenticationKey.ps1` script when authentication is enabled.
 Password and MD5 keys are 1-16 bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is
 0-255. One key is active at a time; restart after changing authentication
-settings. Keys are stored in Parameters under its protected ACL, without
-application-level encryption. No cap: that ACL matters. Logs and configuration
-errors omit key values. See
+settings. The script stores raw key bytes encrypted with machine-scope DPAPI,
+without optional entropy and verifies read-back decryption. The tool updates
+only `Secrets\AuthKeyDpapi`.
+The Secrets key has a protected ACL granting SYSTEM and Administrators full
+control and the BFD service SID read access. Machine-scope DPAPI permits any
+local account holding the ciphertext to decrypt it, so that ACL remains the
+service-specific access boundary. Logs and configuration errors omit key values.
+The service wipes temporary decrypted buffers and clears its owned key storage
+when it is released; active packet authentication still requires key bytes in memory. See
 [Configure authentication](../configuration.md#authentication) for the settings
 and an example.

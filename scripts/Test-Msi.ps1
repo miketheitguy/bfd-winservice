@@ -85,8 +85,8 @@ try {
     $controls = @(Get-MsiRows 'SELECT `Event`, `Wait` FROM `ServiceControl`' @('Event','Wait'))
     Assert-Package ($controls.Count -eq 2 -and @($controls | Where-Object { $_.Event -ne '162' -or $_.Wait -ne '1' }).Count -eq 0) 'Both services must stop on install/removal, uninstall cleanly, and await cleanup.'
     $files = @(Get-MsiRows 'SELECT `File`, `FileName`, `Component_`, `Version` FROM `File`' @('Id','Name','Component','Version'))
-    Assert-Package ($files.Count -eq 4) 'Expected both executables, manifest, and logging script.'
-    foreach ($name in @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1')) {
+    Assert-Package ($files.Count -eq 5) 'Expected both executables, manifest, logging script, and key provisioning script.'
+    foreach ($name in @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1','Set-BfdAuthenticationKey.ps1')) {
         Assert-Package (@($files | Where-Object { ($_.Name -split '\|')[-1] -eq $name }).Count -eq 1) "Missing payload: $name"
     }
     $serviceFiles = @($files | Where-Object Id -EQ 'ServiceExe')
@@ -104,13 +104,17 @@ try {
     $registry = @(Get-MsiRows 'SELECT `Registry`, `Root`, `Key`, `Name`, `Value`, `Component_` FROM `Registry`' @('Id','Root','Key','Name','Value','Component'))
     Assert-Package (@($registry | Where-Object Root -NE '2').Count -eq 0) 'All registry entries must use HKLM.'
     $defaults = @{ Multihop='#0'; LogToFile='#0'; LogFilePath='[LOGFOLDER]trace.log' }
-    Assert-Package ($registry.Count -eq ($defaults.Count + 1)) 'Expected only registry defaults and the security marker.'
+    Assert-Package ($registry.Count -eq ($defaults.Count + 2)) 'Expected only registry defaults and the two security markers.'
     # The private local RPC interface needs no COM class, ProgID, or AppID registration.
     Assert-Package (@($registry | Where-Object { $_.Key -like 'SOFTWARE\Classes*' }).Count -eq 0) 'The MSI must not register COM status classes.'
     $policy = @($registry | Where-Object Id -EQ 'ParametersPolicyValue')
     Assert-Package ($policy.Count -eq 1 -and $policy[0].Component -eq 'ParametersSecurityComponent' -and $policy[0].Root -eq '2' -and $policy[0].Key -eq 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters' -and $policy[0].Name -eq '_InstallerPolicy' -and $policy[0].Value -eq '#1') 'Missing repairable Parameters security component.'
     $policyComponent = @($components | Where-Object Id -EQ 'ParametersSecurityComponent')[0]
     Assert-Package (([int]$policyComponent.Attributes -band 128) -eq 0 -and $policyComponent.KeyPath -eq 'ParametersPolicyValue') 'Parameters security must be reapplied independently of preserved defaults.'
+    $secretsPolicy = @($registry | Where-Object Id -EQ 'SecretsPolicyValue')
+    Assert-Package ($secretsPolicy.Count -eq 1 -and $secretsPolicy[0].Component -eq 'SecretsSecurityComponent' -and $secretsPolicy[0].Key -eq 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets' -and $secretsPolicy[0].Name -eq '_InstallerPolicy' -and $secretsPolicy[0].Value -eq '#1') 'Missing repairable Secrets security component.'
+    $secretsComponent = @($components | Where-Object Id -EQ 'SecretsSecurityComponent')[0]
+    Assert-Package (([int]$secretsComponent.Attributes -band 128) -eq 0 -and $secretsComponent.KeyPath -eq 'SecretsPolicyValue') 'Secrets security must be reapplied without replacing the encrypted key.'
     foreach ($name in $defaults.Keys) {
         $rows = @($registry | Where-Object Name -EQ $name)
         Assert-Package ($rows.Count -eq 1) "Missing registry default: $name"
@@ -120,7 +124,7 @@ try {
         Assert-Package (([int]$component.Attributes -band 128) -ne 0) "Default must preserve existing configuration: $name"
     }
     $permissions = @(Get-MsiRows 'SELECT `LockObject`, `Table`, `SDDLText`, `Condition` FROM `MsiLockPermissionsEx`' @('Object','Table','Sddl','Condition'))
-    Assert-Package ($permissions.Count -eq 9) 'Expected explicit permissions for folders, files, parameters, and services.'
+    Assert-Package ($permissions.Count -eq 11) 'Expected explicit permissions for folders, files, Parameters, Secrets, and services.'
     $serviceSid = 'S-1-5-80-1071555646-3639003188-2623042311-1024194528-3093158512'
     foreach ($permission in $permissions) {
         Assert-Package ([string]::IsNullOrEmpty($permission.Condition)) 'Installation security must apply unconditionally.'
@@ -137,7 +141,7 @@ try {
             }
             'Registry' {
                 $secured = @($registry | Where-Object Id -EQ $permission.Object)
-                Assert-Package ($secured.Count -eq 1 -and $secured[0].Root -eq '2' -and $secured[0].Id -eq 'ParametersPolicyValue') 'The only registry ACL must protect Parameters.'
+                Assert-Package ($secured.Count -eq 1 -and $secured[0].Root -eq '2' -and $secured[0].Id -in @('ParametersPolicyValue','SecretsPolicyValue')) 'Registry ACLs must protect Parameters and Secrets.'
                 Assert-RestrictedAcl -Descriptor $acl -ObjectName $permission.Object -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
             }
             'ServiceInstall' {
@@ -147,14 +151,14 @@ try {
             default { throw "Unexpected permission target: $($permission.Table)" }
         }
     }
-    Assert-Package (@($permissions | Where-Object Table -EQ 'CreateFolder').Count -eq 2 -and @($permissions | Where-Object Table -EQ 'File').Count -eq 4) 'Missing folder or file protection.'
+    Assert-Package (@($permissions | Where-Object Table -EQ 'CreateFolder').Count -eq 2 -and @($permissions | Where-Object Table -EQ 'File').Count -eq 5) 'Missing folder or file protection.'
     Assert-Package (@($permissions | Where-Object Table -EQ 'ServiceInstall').Count -eq 2) 'Both services must restrict Start/Stop to SYSTEM and administrators.'
     $securedKeys = @($permissions | Where-Object Table -EQ 'Registry' | ForEach-Object {
         $id = $_.Object
         ($registry | Where-Object Id -EQ $id).Key
     } | Sort-Object -Unique)
-    $expectedKeys = @('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
-    Assert-Package (@(Compare-Object $expectedKeys $securedKeys).Count -eq 0) 'Parameters must have a protected ACL.'
+    $expectedKeys = @('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters','SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets')
+    Assert-Package (@(Compare-Object $expectedKeys $securedKeys).Count -eq 0) 'Parameters and Secrets must have protected ACLs.'
     $manifest = @(Get-MsiRows 'SELECT `File`, `Component_` FROM `Wix4EventManifest`' @('File','Component'))
     Assert-Package ($manifest.Count -eq 1 -and $manifest[0].File -eq '[#EventManifest]' -and $manifest[0].Component -eq 'ManifestComponent') 'Expected installed-manifest registration.'
     $manifestPaths = @(Get-MsiRows 'SELECT `File`, `Name`, `Value` FROM `Wix4XmlFile`' @('File','Name','Value'))

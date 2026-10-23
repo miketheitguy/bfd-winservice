@@ -141,14 +141,14 @@ Emitter capture verifies the submission path, not Event Viewer delivery.
 Validate SCM lifecycle, Event Viewer delivery, and actual BGP Start/Stop on the target server using the [setup guide](../setup.md) and [BGP guide](../bgp.md). For BGP testing, cover initially stopped and running peers, then disconnect and restore Bidirectional Forwarding Detection (BFD) while watching the logs and BGP state.
 
 See the [validation guide](../../RUST_SKILLS_VALIDATION.md) and
-[code review](../../CODE_REVIEW.md) for recorded results and test limits.
+[code review checklist](../../CODE_REVIEW.md) for required coverage and test limits.
 
 ## Validate installed-service security in a disposable VM
 
 Use a GitHub-hosted runner or the provisioned disposable `BFD-WS2025` Hyper-V
 guest for tests that change services, HKLM, Event Log, firewall, or provider
 state. The installer scripts reject ordinary developer hosts. Run the complete
-fresh-install, rollback, bundle maintenance, and published-version upgrade
+fresh-install, rollback, and bundle maintenance
 sequence described in [packaging validation](packaging.md#build-with-github-actions).
 These tests install and remove the product; preserve the lab configuration and
 checkpoint before running them.
@@ -167,9 +167,29 @@ For Windows/Ubuntu interoperability, run the authentication matrix, isolated
 Windows- and BIRD-controlled withdrawals and recoveries, BGP-only controls,
 service and process interruption cases, adapter and packet faults, logging-disabled
 recovery, and final route/stability checks. Native loopback and installer
-fixtures alone do not establish these results. The
-[service-only validation record](../service-only-validation-2026-10-22.md)
-identifies the tested source, scenario counts, local receipts, and limits.
+fixtures alone do not establish these results. Record the tested source,
+scenario outcomes, and restoration checks with each run.
+
+## Verify protected authentication keys
+
+On Windows, run the provisioning-script fixtures and native registry tests:
+
+```powershell
+.\scripts\Test-BfdAuthenticationKey.ps1
+cargo test --locked --lib config::
+```
+
+The fixtures use temporary HKCU keys and check DPAPI interoperability, input
+validation, read-back verification, and preservation of existing values after
+rejected input. They do not establish access under the installed service's
+restricted token.
+In a disposable installed-service test, configure matching peer authentication,
+set the key with the installed administration tool, and require communication
+under the actual LocalService service token. Inspect the Secrets ACL, require
+missing or malformed encrypted keys to fail startup, and confirm that repair
+preserves the encrypted value and ACL. See
+[authentication key administration](../configuration.md#authentication-key-administration)
+and [installation permissions](../reference/installation.md).
 
 ## Test with release optimizations
 

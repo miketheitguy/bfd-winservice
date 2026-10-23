@@ -38,7 +38,7 @@ tests exercise this lineup of boundary conditions and protocol behaviors:
 | 6.5, 6.8.3, 6.8.6–6.8.7 | Scheduled Polls, independent Final replies, acknowledgement of transmitted Polls, safe interval changes | Unsent-Poll and held-TX tests in `tests/rfc5880.rs`; failed-send preparation in `src/session.rs`; native Poll flood and scheduling tests in `tests/windows_udp.rs` |
 | 6.6, 6.8.7 | Peer Demand and zero-RX suppress periodic traffic while valid Polls can receive Final | Session and native UDP tests; local classical D stays clear. Local Demand initiation is outside the implemented profile. |
 | 6.7.2–6.7.4 | Password, meticulous MD5, both SHA-1 variants, key selection, digest verification, and circular replay windows | `src/packet.rs` independent fixtures and all key lengths; `tests/rfc5880.rs` checks all three keyed types at multipliers 1, 3, and 255, including wraparound, repeated sequences, both window endpoints, and the first value outside each window. Non-meticulous MD5 remains rejected. |
-| 6.7.4, 6.8.1 | Invalid authentication cannot seed or advance receive sequence state; resynchronization starts only after two detection periods | Regression tests for the SHA-1 sequence-commitment correction; exact nanosecond boundary after a prior session expiry. Successful-send sequence wraparound is checked for all three keyed types. |
+| 6.7.4, 6.8.1 | Invalid authentication cannot seed or advance receive sequence state; resynchronization starts only after two detection periods | Regression tests for SHA-1 sequence commitment; exact nanosecond boundary after a prior session expiry. Successful-send sequence wraparound is checked for all three keyed types. |
 | 6.7.4, 9 | Classical keyed SHA1 can reuse unchanged transmitted bytes; state/content changes advance the sequence | `src/session.rs` tests digest-call avoidance, fixed cache expiry, content changes, state changes that return to identical contents, sequence wraparound, and failed-send preservation. S-BFD retains unique probe sequences for all keyed modes. See [the sender policy](security/authentication-performance.md#hash-cost-and-sequence-frequency). |
 | 6.8.2–6.8.4, 6.8.12 | TX and RX negotiate independently; peer multiplier changes apply without waiting for Poll completion | Asymmetric 700 ms TX / 1,750 ms detection fixture; multiplier reduction gives a 250 ms deadline, with expiry at that exact instant and no expiry one nanosecond earlier |
 | 6.8.3, 6.8.7 | Peer RX changes update the existing transmission schedule | Native UDP regression reduces RX from 1 s to 100 ms after the new deadline is already due, then restores 1 s and checks that the fast schedule is cancelled |
@@ -110,8 +110,6 @@ The initiator uses a local detection policy of
 `DetectMult × negotiated probe interval + MinRxUs`. RFC 7880 leaves loss criteria
 to the implementation and requires allowance for round-trip latency. Choose
 `MinRxUs` to cover that latency and responder scheduling delay.
-
-<a id="congestion-control-correction"></a>
 
 ## Congestion-control limits
 

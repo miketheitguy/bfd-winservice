@@ -30,7 +30,11 @@ $mutations = @(
     @('CommitServicePolicy','Return','ignore'),
     @('CommitServicePolicy','FileRef','ServiceExe'),
     @('CommitServicePolicy','ExeCommand','--configure-install'),
-    @('PrepareServicePolicy','Execute','commit')
+    @('PrepareServicePolicy','Execute','commit'),
+    @('SecretsPolicyValue','Key','SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'),
+    @('SecretsPolicyValue','Root','HKCU'),
+    @('SecretsSecurity','Sddl','D:(A;;KA;;;WD)'),
+    @('SecretsSecurityComponent','NeverOverwrite','yes')
 )
 foreach ($mutation in $mutations) {
     $unsafe = $source.Clone()
@@ -40,7 +44,7 @@ foreach ($mutation in $mutations) {
     try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
     if (-not $rejected) { throw "Unsafe installer hardening mutation was accepted: $($mutation -join ' ')" }
 }
-foreach ($id in @('ControlInbound','SbfdRequestInbound','CommitServicePolicy')) {
+foreach ($id in @('ControlInbound','SbfdRequestInbound','CommitServicePolicy','SecretsPolicyValue','SecretsSecurity')) {
     $unsafe = $source.Clone()
     $node = $unsafe.SelectSingleNode('//*[@Id="' + $id + '"]')
     [void]$node.ParentNode.RemoveChild($node)
@@ -83,4 +87,4 @@ foreach ($target in @(@('BfdWinService','RpcSs'), @('BfdWinService','BfdBgpBroke
     try { Assert-InstallerHardeningSource -Document $unsafe } catch { $rejected = $true }
     if (-not $rejected) { throw "An unexpected dependency was accepted: $($target -join ' -> ')" }
 }
-Write-Output 'Validated exactly five UDP allow rules, independent service startup, no COM status registration, commit-only service policy, and 31 unsafe source mutations.'
+Write-Output 'Validated five UDP allow rules, independent startup, protected Secrets, no COM activation, commit-only service policy, and unsafe source mutations.'

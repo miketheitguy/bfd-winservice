@@ -1,6 +1,6 @@
 [package]
 name = "bfd-winservice"
-version = "4.0.0"
+version = "5.0.0"
 edition = "2021"
 default-run = "bfd-winservice"
 
@@ -17,7 +17,7 @@ thiserror = "2"
 socket2 = { version = "0.6", features = ["all"] }
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Com"] }
 windows-service = "0.8.1"
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Etw", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Rpc", "Win32_System_Services", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Wmi"] }
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Etw", "Win32_System_IO", "Win32_System_Registry", "Win32_System_Rpc", "Win32_System_Services", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Wmi"] }
 
 [dev-dependencies]
 assert_cmd = "2"

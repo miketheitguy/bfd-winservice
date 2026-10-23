@@ -7,11 +7,11 @@ choosing a BFD authentication mode. For keys and registry values, see
 
 ## Why meticulous keyed MD5 is available
 
-Meticulous keyed MD5 restores a choice for peer compatibility and deployments
+Meticulous keyed MD5 provides a choice for peer compatibility and deployments
 where measurements show a better CPU or timing margin with MD5. It retains
 per-packet sequence progression and rejects repeated sequences in established
-classical sessions. Only meticulous MD5, wire type 3, is restored;
-non-meticulous MD5 stays unsupported.
+classical sessions. The supported MD5 mode is meticulous MD5, wire type 3;
+non-meticulous MD5 is unsupported.
 
 This is an interoperability and deployment tradeoff, dude. Within the service's
 supported RFC 5880 profile,
@@ -69,7 +69,7 @@ sessions competing for a router's CPU. [RFC 7492 section 5](https://www.rfc-edit
 identifies that scaling problem; [RFC 9985 section 1](https://www.rfc-editor.org/rfc/rfc9985.html#section-1)
 also explains the cost of software authentication and the effect of hardware
 acceleration. RFC 9985 defines an experimental optimization, which this service
-doesn't implement. Restoring MD5 doesn't add that optimization.
+doesn't implement.
 
 [Juniper's BFD authentication documentation](https://www.juniper.net/documentation/us/en/software/junos/bgp/topics/topic-map/bfd-for-bgp-session.html)
 also describes additional authentication time for both meticulous modes
@@ -107,5 +107,5 @@ Before choosing for performance, compare CPU use on both ends, packet loss,
 scheduling delays, and unexpected BFD Down events at the same intervals and
 representative load. At 300 ms with multiplier 3, the multiplier changes loss
 tolerance, not the number of packets sent per interval. No comparative Windows
-or VM performance benchmark is recorded for this restoration. For setup and
+or VM performance benchmark is provided by this guide. For setup and
 functional verification, see [Set up a BFD session](../setup.md).

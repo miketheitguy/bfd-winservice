@@ -13,12 +13,6 @@ trust boundaries, see [Service communication](docs/service-communication.md).
 For probes that establish without a discriminator handshake, configure an
 IPv4/IPv6 [Seamless BFD initiator or reflector](docs/seamless.md).
 
-These guides describe the service-only design introduced in
-[v4.0.0](docs/releases/4.0.0.md). Versions through v3.0.2 retain foreground
-execution and startup privilege reduction. See
-[migration and revision scope](docs/console.md#revision-scope) before upgrading
-an older foreground deployment.
-
 The service uses these Windows names:
 
 | Name | Value |
@@ -122,24 +116,22 @@ arguments. Read its version from Windows file properties or PowerShell:
     Select-Object FileVersion, ProductVersion
 ```
 
-For an older foreground deployment, follow [Migrate to services](docs/console.md).
-
 ## Documentation
 
 Pick your next mission, turtle crew. The [documentation index](docs/README.md)
-links operator guides, architecture references, development procedures, and
-dated review records:
+links operator guides, architecture references, and development procedures:
 
 | Task | Guide |
 | --- | --- |
 | Install, configure, verify, or stop a session | [Set up a BFD session](docs/setup.md) |
 | Look up registry values, defaults, and authentication | [Registry configuration reference](docs/configuration.md) |
+| Set or update the encrypted authentication key | [Authentication key administration](docs/configuration.md#authentication-key-administration) |
 | Configure an S-BFD initiator, reflector, or anycast target | [Configure Seamless BFD](docs/seamless.md) |
 | Connect BFD state changes to a Windows BGP peer | [Control a Windows BGP peer](docs/bgp.md) |
 | Query service status and read BFD state events | [Monitor service status and BFD events](docs/monitoring.md) |
 | Understand authentication, privilege boundaries, and compiler/linker protections | [Security, authentication, and build hardening](docs/security.md) |
 | Build, test, prepare deployment files, or contribute changes | [Contribute to BFD Windows service](CONTRIBUTING.md) |
 
-For recorded checks and their limits, see the
+For validation scope and review checks, see the
 [validation guide](RUST_SKILLS_VALIDATION.md) and
-[dated correctness reviews](CODE_REVIEW.md).
+[code review checklist](CODE_REVIEW.md).

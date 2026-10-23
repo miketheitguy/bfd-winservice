@@ -59,18 +59,14 @@ Native layout tests check size, alignment, and field offsets against MIDL output
 ### Deploy matching binaries
 
 Keep the deployed turtle team in sync, dude: deploy the BFD service and broker
-together. Version
-`2.0` exposes only `GetSessionStatusV1`, moving it from operation number `1` in
-version `1.1` to `0`. The major interface version and endpoint change prevent
-mixed binaries from interpreting a call as the wrong operation. There is no
-legacy endpoint fallback. The `BFD_SESSION_STATUS_V1` record remains schema
-version `1`; the interface version is a separate contract.
+together. Interface `BfdLocal` version `2.0` exposes only
+`GetSessionStatusV1` at operation number `0`. The `BFD_SESSION_STATUS_V1`
+record uses schema version `1`; the interface version is a separate contract.
 
 The BGP control interface uses `BgpControl` version `2.0` at
 `BfdWinService.Bgp.v2`, exposing only fixed-target `Get`, `Start`, and `Stop`.
-Its eight-byte result contains provider status and a Boolean value. Version 2
-removes the former connection probe and broker-instance nonce; the changed
-interface and endpoint reject mismatched binaries. Deploy both executables from
+Its eight-byte result contains provider status and a Boolean value.
+Deploy both executables from
 the same build. The [BGP provider reference](reference/bgp-provider.md) describes
 state-driven calls and failed-action retries.
 

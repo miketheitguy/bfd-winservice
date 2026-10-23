@@ -10,7 +10,8 @@ offline setup bundle provisions. For installation commands, follow
 Donatello would inspect the full installation inventory, dude. The bundle installs
 the following resources for all users:
 
-- Both executables, the manifest, and logging script in
+- Both executables, the manifest, `Initialize-Logging.ps1`, and
+  `Set-BfdAuthenticationKey.ps1` in
   `C:\Program Files\BfdWinService`.
 - The `BfdWinService` service with display name **BFD Windows Service**,
   the LocalService account, and **Automatic (Delayed Start)** startup. The bundle
@@ -46,6 +47,14 @@ the following resources for all users:
   `LogFilePath` string `C:\ProgramData\BfdWinService\trace.log` on a default
   Windows layout. The installer uses the machine's ProgramData location. The
   executable fallback and logging script use the literal `C:\ProgramData` path.
+- The `Parameters\Secrets` key with its own protected ACL and an installer policy
+  marker. SYSTEM owns the key; SYSTEM and Administrators have full control
+  (`0x000F003F`), and `NT SERVICE\BfdWinService` has read access (`0x00020019`).
+  These explicit grants inherit to child keys; inheritance from the parent is
+  blocked. No authentication key is supplied by the installer. Use the installed
+  [key administration tool](../configuration.md#authentication-key-administration)
+  to set `AuthKeyDpapi` as `REG_BINARY` ciphertext. Repair reapplies the ACL and
+  preserves that value.
 - The ProgramData `BfdWinService` folder, without creating or writing `trace.log`.
   Only the BFD service SID receives Modify access; shared LocalService processes
   receive no write grant. The Parameters key permits reads only by SYSTEM,
@@ -55,8 +64,7 @@ the following resources for all users:
   SYSTEM and administrators.
 - Five executable-specific UDP allow rules for classical and Seamless BFD.
 - The broker's `RpcSs` service dependency for native MI. BFD has no SCM service
-  dependencies. Install and repair clear its former broker dependency; rollback
-  restores its previous dependency list. See [Monitor service status and BFD events](../monitoring.md) for
+  dependencies. See [Monitor service status and BFD events](../monitoring.md) for
   lifecycle queries and event-log monitoring.
 
 ## Installed firewall rules

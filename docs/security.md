@@ -60,8 +60,8 @@ does not prove runtime enforcement or the absence of vulnerabilities.
 
 ## Security evidence and validation
 
-Bring receipts with dates, no cap. The [validation guide](../RUST_SKILLS_VALIDATION.md)
-links checkout checks to dated reviews. [Native RPC verification](security/local-rpc.md#verify-the-implementation)
+Bring receipts for the tested checkout, no cap. The [validation guide](../RUST_SKILLS_VALIDATION.md)
+maps checks to implementation boundaries. [Native RPC verification](security/local-rpc.md#verify-the-implementation)
 distinguishes fixture tests from actual installed service-token checks. The
 [release workflow](../.github/workflows/build-msi.yml) defines gates; its
 configuration alone is not evidence that a run passed.

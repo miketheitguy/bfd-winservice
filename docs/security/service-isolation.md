@@ -129,7 +129,7 @@ checks the actual token on every start.
 
 For a policy mismatch, stop both services and run
 [setup bundle repair](../setup.md#install-with-the-offline-setup-bundle) using the
-matching service-only build, then restart and verify the startup events. If the
+matching setup bundle, then restart and verify the startup events. If the
 installed policy matches but startup still fails, investigate the host's token
 and account policy. Keep the expected account, SID, and privilege checks in
 place; repair the deployment rather than adding privileges to bypass rejection.
@@ -150,11 +150,10 @@ Windows account privileges for an unspecified prior policy.
 
 ### Service-only execution
 
-BFD has no foreground execution path and accepts no command-line arguments,
-including `--console`, `--help`, and `--version`. Starting the executable
+BFD accepts no command-line arguments and runs only through SCM. Starting the executable
 directly fails to connect to SCM. The broker retains only its fixed private MSI
 transaction commands outside normal SCM execution. Read executable versions
-from Windows file properties. See [Migrate to services](../console.md).
+from Windows file properties.
 
 ## Service control, configuration, and diagnostic access
 
@@ -174,8 +173,9 @@ Object-permission vibe check: the MSI protects these objects:
 | Object | Write/control access | Read/query access |
 | --- | --- | --- |
 | Both SCM service objects | SYSTEM and Administrators have full control, including Start/Stop and configuration changes. | Authenticated Users have query-config, query-status, enumerate-dependents, interrogate, and read-control rights (`0x2008d`). No Start/Stop, reconfiguration, or custom controls. |
-| Installed executables, manifest, logging script, and installation directory | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| Installed executables, manifest, administration scripts, and installation directory | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
 | `HKLM\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters` | SYSTEM and Administrators have full control. | BFD service SID has read access; the LocalSystem broker reads its BGP target. Ordinary users cannot read authentication keys. |
+| `Parameters\Secrets` | SYSTEM and Administrators have full control under its own protected, repairable ACL. | BFD service SID has read access to the machine-scope DPAPI `AuthKeyDpapi` blob. The service cannot write it. |
 | Default file-log directory | SYSTEM and Administrators have full control; BFD service SID has Modify access. | Users retain read access. Custom log paths use their provisioned filesystem ACLs. |
 | `BFD-Service/Operational` event channel | Windows Event Log permissions govern event publication and channel management. | The manifest supplies no custom channel access ACL; existing Windows log-read permissions remain in effect. |
 

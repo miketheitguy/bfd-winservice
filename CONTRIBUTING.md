@@ -69,7 +69,7 @@ RPC build. For custom installations, set `BFD_MIDL_PATH`, `BFD_MC_PATH`, and
 Before submitting Rust changes, run the [required checks](docs/development/validation.md#required-checks).
 Choose additional coverage for changed native boundaries, protocol behavior,
 or build settings. Record what ran and what still needs a provisioned server.
-For dated results, see the [validation records](RUST_SKILLS_VALIDATION.md).
+For the check-to-boundary map, see the [validation guide](RUST_SKILLS_VALIDATION.md).
 
 ## Write and maintain documentation
 
@@ -107,12 +107,8 @@ increment for changes to that contract:
 Use a patch release for fixes such as correcting status-publication timestamp
 ordering without changing supported interfaces. Use a minor release for an
 optional protocol role or configuration capability that preserves existing
-deployments. Adding an optional offline setup bundle while retaining the
-standalone MSI would be compatible functionality. Switching to bundle-only
-distribution removes the documented standalone MSI deployment contract, so it
-requires a major release, such as `v2.0.0` after `v1.10.0`. Existing installations
-can upgrade through the bundle; deployment scripts must switch from `msiexec`
-to the setup executable and its switches. Describe that migration in release notes.
+deployments. Removing a supported installation interface requires a major
+release. Explain the resulting installation contract in the release notes.
 Substantial internal functionality or improvements can also
 justify a minor release; explain the benefit and verify compatibility.
 Documentation, test, refactoring, dependency, or security labels alone don't

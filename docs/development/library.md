@@ -15,9 +15,7 @@ The validator opens the process token with `TOKEN_QUERY` and requires exactly
 enabled `SeChangeNotifyPrivilege`; it never adjusts privileges. Keep token
 reduction helpers under `cfg(test)` in isolated fixture processes.
 
-For removed CLI and Rust APIs, see
-[Migrate library callers](../console.md#migrate-library-callers). The reusable
-protocol and engine APIs remain available to library callers; the installed
+The reusable protocol and engine APIs are available to library callers; the installed
 daemon entry points enforce service execution. Keep the broker's private MSI
 transaction commands intact. See [service isolation](../security/service-isolation.md)
 for the startup and installer contracts.
@@ -91,6 +89,14 @@ narrowing, Boolean ranges, and valid UTF-16, omits authentication contents from
 errors, and returns validated settings before sockets open. Native loader tests
 use unique temporary HKCU keys, leaving installed configuration alone. For
 registry names and defaults, use the [configuration reference](../configuration.md).
+
+Registry-backed authentication reads bounded binary ciphertext from
+`Parameters\Secrets\AuthKeyDpapi` and calls DPAPI with UI forbidden and no
+optional entropy. The native allocation owner wipes plaintext before
+`LocalFree`; raw key copies in configuration and authentication owners are
+cleared on release. The provisioning tool uses machine-scope DPAPI and verifies
+the persisted value before reporting success. Programmatic `Options::auth_key`
+and `Options::auth_key_hex` are library inputs; they are not registry settings.
 
 ## Initialize broker management security
 

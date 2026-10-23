@@ -19,6 +19,7 @@ tubular and check the types: registry values use these types:
 
 - **Strings:** `REG_SZ`. `REG_EXPAND_SZ` and environment-variable expansion are unsupported.
 - **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
+- **Encrypted authentication key:** `REG_BINARY` in `Parameters\Secrets`.
 
 Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetvaluew).
 
@@ -62,8 +63,7 @@ configure the addresses and transport:
 `Multihop` must be a `REG_DWORD` with value `0` or `1`. Any other value or
 registry type fails startup.
 
-Heads up, buddy: the legacy `Mode` value is ignored. Use `Multihop`; a stored
-`Mode=multihop` doesn't select multihop. Single-hop always requires a received
+Single-hop always requires a received
 TTL/hop limit of 255 and rejects `MinTtl` and `Passive=1`. An optional
 `InterfaceIndex` on another role still constrains incoming traffic to that
 interface.
@@ -152,16 +152,17 @@ select the authentication algorithm and key:
 | --- | --- | --- | --- |
 | `Auth` | `REG_SZ` | `none` | `none`, `simple-password`, `meticulous-md5`, `keyed-sha1`, or `meticulous-sha1` |
 | `AuthKeyId` | `REG_DWORD` | `0` | Key ID, 0–255 |
-| `AuthKey` | `REG_SZ` | None | ASCII key |
-| `AuthKeyHex` | `REG_SZ` | None | Hexadecimal encoding of a binary key: pairs of digits `0`–`9`, `a`–`f`, or `A`–`F`, with no signs or separators |
+| `Secrets\AuthKeyDpapi` | `REG_BINARY` | None | Raw key bytes encrypted with machine-scope DPAPI and no optional entropy; provision with `Set-BfdAuthenticationKey.ps1` |
 
 Get both ends in sync, dude: configure the same authentication type, key ID, and
-key. Set exactly one of `AuthKey` and `AuthKeyHex` when authentication is
-enabled. Password and MD5 keys are 1–16 bytes; SHA-1 keys are 1–20 bytes. One
-key is active at a time.
+key. Provision `Secrets\AuthKeyDpapi` when authentication is enabled. Password
+and MD5 keys are 1–16 bytes; SHA-1 keys are 1–20 bytes. One key is active at a
+time. The MSI creates the Secrets key with a protected ACL: SYSTEM and
+Administrators have full control, and `NT SERVICE\BfdWinService` has read access.
 
-With `Auth=none`, omit both key values; a nonempty key fails validation. To change
-from `AuthKey` to `AuthKeyHex`, remove the earlier value before restarting.
+With `Auth=none`, omit `Secrets\AuthKeyDpapi`; a provisioned key fails validation.
+Missing keys for authenticated modes, unreadable values, wrong types, failed
+decryption, and invalid lengths stop startup. There is no plaintext fallback.
 
 Classical multihop BFD with `BgpPeerName` requires `Auth=meticulous-sha1` or
 `Auth=meticulous-md5` and a valid matching key. Other modes fail startup
@@ -172,30 +173,78 @@ because it depends on a trusted link.
 `Auth=meticulous-md5` enables RFC 5880 wire type 3.
 Non-meticulous `Auth=keyed-md5` and wire type 2 remain unsupported. Both peers
 must explicitly select the same mode; there is no automatic fallback. For the
-restoration rationale, CPU tradeoffs, and appropriate deployment scenarios, see
+mode-selection rationale, CPU tradeoffs, and appropriate deployment scenarios, see
 [authentication performance and mode selection](security/authentication-performance.md).
 
 ### Configure an authenticated multihop session
 
-For example, after setting `Local` and `Peer`, configure an authenticated multihop session:
+Install or repair the setup bundle to provision the protected Secrets key and
+the key provisioning script. After setting `Local` and `Peer`, configure an
+authenticated multihop session in PowerShell as Administrator:
 
 ```powershell
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
+Stop-Service BfdWinService
 New-ItemProperty -Path $parameters -Name Multihop `
     -PropertyType DWord -Value 1 -Force
 New-ItemProperty -Path $parameters -Name Auth `
     -PropertyType String -Value 'meticulous-sha1' -Force
 New-ItemProperty -Path $parameters -Name AuthKeyId `
     -PropertyType DWord -Value 1 -Force
-New-ItemProperty -Path $parameters -Name AuthKey `
-    -PropertyType String -Value 'AUTH_KEY' -Force
+& "$env:ProgramFiles\BfdWinService\Set-BfdAuthenticationKey.ps1"
+Start-Service BfdWinService
 ```
 
-Replace `AUTH_KEY` with a 1–20-byte ASCII key before running the commands in
-PowerShell as Administrator. Configure the same key, ID, and algorithm on the
-remote peer. PowerShell displays the values you set, including the authentication
-key. Restart execution to load the values, then
-[verify peer communication](setup.md#6-verify-peer-communication).
+At the hidden prompt, enter the peer's matching 1–20-byte ASCII key. For a binary
+key, invoke the script with `-Hex` and enter pairs of hexadecimal digits without
+separators. `-Key` accepts a `SecureString` for automation; never pass a plaintext
+key in a command line. The script requires a stopped service and checks both
+registry ACLs before writing. It encrypts on this server and verifies the stored
+key by decrypting it. Configure the same key, ID, and algorithm on the remote
+peer, then [verify peer communication](setup.md#6-verify-peer-communication).
+
+### Authentication key administration
+
+The bundle installs `Set-BfdAuthenticationKey.ps1` in its Program Files
+directory. Use it to set or replace the key in PowerShell as Administrator on
+the BFD server. Configure `Auth` and `AuthKeyId` first, and coordinate the same
+key and authentication settings on the peer.
+
+```powershell
+Stop-Service BfdWinService
+& "$env:ProgramFiles\BfdWinService\Set-BfdAuthenticationKey.ps1"
+Start-Service BfdWinService
+```
+
+The default hidden prompt accepts ASCII. To enter a binary key, add `-Hex` and
+enter hexadecimal byte pairs without separators. `-Key` accepts a `SecureString`
+from an automation caller. The tool checks the mode's key-length limit, writes
+only `Secrets\AuthKeyDpapi`, and verifies the stored value by decrypting it. A
+failed read-back check restores the previous encrypted value. Verify peer
+communication after restarting; successful local decryption alone does not
+establish a matching remote key.
+
+To inspect the Secrets key permissions without reading the stored value, run
+in PowerShell as Administrator:
+
+```powershell
+$secretPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets'
+$acl = Get-Acl -LiteralPath $secretPath
+$acl | Select-Object Owner, AreAccessRulesProtected
+$acl.Access | Select-Object IdentityReference, RegistryRights, IsInherited
+```
+
+Expect SYSTEM ownership, `AreAccessRulesProtected=True`, and three explicit
+allow entries: SYSTEM and Administrators with FullControl, and
+`NT SERVICE\BfdWinService` with ReadKey. The grants inherit to child keys;
+the Secrets key does not inherit grants from its parent. Repair the installation
+if its protected permissions do not match this policy.
+
+Machine-scope DPAPI binds the ciphertext to this server. Any local account that obtains the ciphertext
+can decrypt it on this server, so keep its registry ACL and backups protected.
+No application salt or optional entropy is stored. DPAPI protects the stored
+key; BFD still needs plaintext key bytes in memory while authenticating packets.
+See [DPAPI protection scopes](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata).
 
 ### Authentication behavior
 
@@ -207,9 +256,9 @@ correlation instead of the classical receive window. See
 
 These algorithms support [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html)
 interoperability; [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html)
-recommends cryptographic authentication for multihop. Registry key contents are
-unencrypted. Preserve the MSI's Parameters ACL, including read access for the
-BFD service SID. Authentication keys never appear in logs or configuration
+recommends cryptographic authentication for multihop. Stored authentication
+bytes are encrypted with DPAPI. Preserve the protected Secrets ACL, including
+read access for the BFD service SID. Authentication keys never appear in logs or configuration
 errors.
 
 ## Logging and BGP

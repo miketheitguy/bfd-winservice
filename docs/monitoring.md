@@ -146,7 +146,7 @@ to both services:
 
 A service-status query returns Windows lifecycle state, such as `Running` or
 `Stopped`. It does not return BFD protocol state, such as `Up` or `Down`.
-Log-reading permissions are unchanged. The default installed log folder grants
+The default installed log folder grants
 Users read access and the BFD service SID Modify access; a custom log path uses
 its administrator-provisioned filesystem permissions. The Operational channel
 uses Windows Event Log permissions without a custom channel ACL.

@@ -74,7 +74,7 @@ function Assert-NoComRegistration {
 }
 
 function Assert-InstallationSecurity {
-    $paths = @($installDirectory) + @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1' | ForEach-Object { Join-Path $installDirectory $_ })
+    $paths = @($installDirectory) + @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1','Set-BfdAuthenticationKey.ps1' | ForEach-Object { Join-Path $installDirectory $_ })
     foreach ($object in $paths) {
         $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $object).Sddl)
         $flags = if ($object -eq $installDirectory) { 'ObjectInherit, ContainerInherit' } else { 'None' }
@@ -88,6 +88,12 @@ function Assert-InstallationSecurity {
         $acl = [Security.AccessControl.RawSecurityDescriptor]::new($registry.GetAccessControl().Sddl)
     } finally { if ($null -ne $registry) { $registry.Dispose() } }
     Assert-RestrictedAcl -Descriptor $acl -ObjectName $parameters -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
+    $registry = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets')
+    try {
+        Assert-Installed ($null -ne $registry) 'The installed Secrets key is missing.'
+        $acl = [Security.AccessControl.RawSecurityDescriptor]::new($registry.GetAccessControl().Sddl)
+    } finally { if ($null -ne $registry) { $registry.Dispose() } }
+    Assert-RestrictedAcl -Descriptor $acl -ObjectName 'Secrets' -FullAccess 0xf003f -ReadAccess 0x20019 -InheritanceFlags 'ContainerInherit' -ReadSid $serviceSid
     $acl = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $logDirectory).Sddl)
     Assert-RestrictedAcl -Descriptor $acl -ObjectName $logDirectory -FullAccess 0x1f01ff -ReadAccess 0x1200a9 -InheritanceFlags 'ObjectInherit, ContainerInherit' -AdditionalAccess @{$serviceSid=0x1301bf}
 }
@@ -159,7 +165,9 @@ function Assert-IndependentServiceStartup {
     New-ItemProperty -Path $parameters -Name BgpPeerName -PropertyType String -Value 'MSI-Independent-Startup-Fixture' -Force | Out-Null
     # Public fixture material satisfies authenticated multihop BGP policy.
     New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'meticulous-sha1' -Force | Out-Null
-    New-ItemProperty -Path $parameters -Name AuthKey -PropertyType String -Value 'startup-fixture-key' -Force | Out-Null
+    $key = ConvertTo-SecureString 'startup-fixture-key' -AsPlainText -Force
+    try { & (Join-Path $installDirectory 'Set-BfdAuthenticationKey.ps1') -Key $key }
+    finally { $key.Dispose() }
     New-ItemProperty -Path $parameters -Name AuthKeyId -PropertyType DWord -Value 23 -Force | Out-Null
     try {
         Start-Service BfdWinService
@@ -171,7 +179,8 @@ function Assert-IndependentServiceStartup {
         Assert-Installed ($stillRunning.State -eq 'Running' -and $stillRunning.ProcessId -eq $bfd.ProcessId) 'Stopping the broker must leave the same BFD process running.'
     } finally {
         Stop-Service BfdWinService
-        Remove-ItemProperty -Path $parameters -Name BgpPeerName,Auth,AuthKey,AuthKeyId
+        Remove-ItemProperty -Path $parameters -Name BgpPeerName,Auth,AuthKeyId
+        Remove-ItemProperty -Path ($parameters + '\Secrets') -Name AuthKeyDpapi
     }
     Start-Service BfdBgpBroker
     Assert-Installed ((Get-Service BfdBgpBroker).Status -eq 'Running' -and
@@ -254,7 +263,7 @@ try {
     Assert-Installed ($service.StartMode -eq 'Auto' -and $service.State -eq 'Stopped') 'Expected an Automatic, stopped service.'
     Assert-ServicePolicy
     Assert-NoComRegistration
-    foreach ($name in @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1')) {
+    foreach ($name in @('bfd-winservice.exe','bfd-bgp-broker.exe','BFD-Service.man','Initialize-Logging.ps1','Set-BfdAuthenticationKey.ps1')) {
         Assert-Installed (Test-Path -LiteralPath (Join-Path $installDirectory $name)) "Missing installed file: $name"
     }
     Assert-InstallationSecurity
@@ -288,6 +297,35 @@ try {
     New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 1 -Force
     & (Join-Path $PSScriptRoot 'Test-ServicePrivilegePolicy.ps1') -DisposableVm:$DisposableVm
     Assert-IndependentServiceStartup
+    # Exercise the production provisioning path, then start with the real SCM
+    # LocalService/restricted token. Repair must retain the exact encrypted blob.
+    New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'meticulous-sha1' -Force | Out-Null
+    New-ItemProperty -Path $parameters -Name AuthKey -PropertyType String -Value 'legacy-fixture-key' -Force | Out-Null
+    New-ItemProperty -Path $parameters -Name AuthKeyHex -PropertyType String -Value '00ff' -Force | Out-Null
+    $key = ConvertTo-SecureString '00ff8041' -AsPlainText -Force
+    try { & (Join-Path $installDirectory 'Set-BfdAuthenticationKey.ps1') -Key $key -Hex }
+    finally { $key.Dispose() }
+    $secretKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets')
+    try { $protectedKey = [Convert]::ToBase64String([byte[]]$secretKey.GetValue('AuthKeyDpapi')) }
+    finally { $secretKey.Dispose() }
+    $parameterKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters')
+    try { Assert-Installed ($parameterKey.GetValue('AuthKey') -ceq 'legacy-fixture-key' -and $parameterKey.GetValue('AuthKeyHex') -ceq '00ff') 'Provisioning changed unrelated registry values.' }
+    finally { $parameterKey.Dispose() }
+    $secretKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets', $true)
+    try {
+        foreach ($missing in @($false, $true)) {
+            if ($missing) {
+                $secretKey.DeleteValue('AuthKeyDpapi')
+            } else { $secretKey.SetValue('AuthKeyDpapi', [byte[]]@(1,2,3), [Microsoft.Win32.RegistryValueKind]::Binary) }
+            $rejected = $false
+            try { Start-Service BfdWinService -ErrorAction Stop } catch { $rejected = $true }
+            Assert-Installed ($rejected -and (Get-Service BfdWinService).Status -eq 'Stopped') 'Missing/corrupt DPAPI key did not fail startup or used legacy plaintext.'
+        }
+    } finally {
+        Stop-Service BfdWinService -ErrorAction SilentlyContinue
+        $secretKey.SetValue('AuthKeyDpapi', [Convert]::FromBase64String($protectedKey), [Microsoft.Win32.RegistryValueKind]::Binary)
+        $secretKey.Dispose()
+    }
     $probeStarted = Get-Date
     Start-Service BfdWinService
     Assert-Installed ((Get-CimInstance Win32_Service -Filter "Name='BfdWinService'").State -eq 'Running') 'Configured service failed to start.'
@@ -334,6 +372,8 @@ try {
     Stop-Service BfdWinService
 
     # Exercise the installed reflector across both sides of the excluded port.
+    New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'none' -Force | Out-Null
+    Remove-ItemProperty -Path ($parameters + '\Secrets') -Name AuthKeyDpapi
     New-ItemProperty -Path $parameters -Name SessionType -PropertyType String -Value 'sbfd-reflector' -Force
     New-ItemProperty -Path $parameters -Name Discriminator -PropertyType DWord -Value 99 -Force
     New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 0 -Force
@@ -350,6 +390,10 @@ try {
         Stop-Service BfdWinService
         Remove-ItemProperty -LiteralPath $parameters -Name SessionType,Discriminator
         New-ItemProperty -Path $parameters -Name Multihop -PropertyType DWord -Value 1 -Force
+        New-ItemProperty -Path $parameters -Name Auth -PropertyType String -Value 'meticulous-sha1' -Force | Out-Null
+        $secretKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets', $true)
+        try { $secretKey.SetValue('AuthKeyDpapi', [Convert]::FromBase64String($protectedKey), [Microsoft.Win32.RegistryValueKind]::Binary) }
+        finally { $secretKey.Dispose() }
     }
 
     $customLog = Join-Path $logDirectory 'custom.log'
@@ -364,6 +408,9 @@ try {
     Assert-InstallationSecurity
     Assert-ServicePolicy
     Assert-InstalledFirewall
+    $secretKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets')
+    try { Assert-Installed ([Convert]::ToBase64String([byte[]]$secretKey.GetValue('AuthKeyDpapi')) -ceq $protectedKey) 'Repair replaced the encrypted authentication key.' }
+    finally { $secretKey.Dispose() }
     $settings = Get-ItemProperty -Path $parameters
     Assert-Installed ($settings.Multihop -eq 1 -and $settings.LogToFile -eq 1 -and $settings.LogFilePath -eq $customLog) 'Repair reset administrator settings.'
     # The reduced LocalService token must be able to rename a full log and

@@ -201,9 +201,5 @@ For installed accounts, permissions, and COM security, see
 a service does not grant access to its private RPC interfaces.
 
 Native fixtures and the installer harness don't mutate a live RRAS peer. Verify
-actual withdrawal and recovery on your target server, dude. The
-[dated Windows/BIRD validation](windows-bgp-interop-2026-10-22.md) records one
-tested deployment and its limits. The
-[service-only validation record](service-only-validation-2026-10-22.md) records
-the later full Windows/Ubuntu scenario run. For event meanings, see
+actual withdrawal and recovery on your target server, dude. For event meanings, see
 [Logs and events](logging.md).

@@ -23,5 +23,6 @@ described in the [security overview](../security.md):
 | [src/bgp/ipc.rs](../../src/bgp/ipc.rs) | `require_broker_identity`, Authz authorization, bounded dispatch, and BGP RPC client/listener |
 | [src/bgp.rs](../../src/bgp.rs) and [src/bgp_broker.rs](../../src/bgp_broker.rs) | Bounded BGP mailbox, state-to-action policy, fixed target, and request dispatch |
 | [src/bgp_broker/mi.rs](../../src/bgp_broker/mi.rs) | Local MI destination, impersonation option, namespace, and provider calls |
-| [src/config/registry.rs](../../src/config/registry.rs) | `load_registry`, `SettingsWatch`, and `load_bgp_target` |
+| [src/config/registry.rs](../../src/config/registry.rs) and [src/config/dpapi.rs](../../src/config/dpapi.rs) | Validated registry loading, bounded DPAPI decryption, plaintext allocation cleanup, `SettingsWatch`, and `load_bgp_target` |
+| [scripts/Set-BfdAuthenticationKey.ps1](../../scripts/Set-BfdAuthenticationKey.ps1) | Stopped-service key administration, protected ACL validation, machine-scope encryption, and read-back verification |
 | [src/runtime/logging.rs](../../src/runtime/logging.rs) and [events/BFD-Service.man](../../events/BFD-Service.man) | Diagnostic queues, ETW output, optional file logging, and event channel |

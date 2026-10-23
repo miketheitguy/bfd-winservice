@@ -1,122 +1,77 @@
-# Documentation Audit: service-only guides and references
+# Documentation Audit: operator and developer guides
 
-Cowabunga, documentation crew. This 2026-10-22 audit checks the repository's
-operator, developer, security, API, release, and historical documentation against
-the service-only working tree based on v3.0.2 (`2a95110`). Use the
-[migration guide](console.md#revision-scope) to distinguish these sources from
-the published v3.0.2 assets. The
-[earlier v2.0.2 audit](archive/documentation-audit-2026-10-22-baseline.md)
-retains its original findings, diagram checks, and validation scope.
+This audit helps Windows administrators and Rust maintainers assess the
+documentation against the implementation in this checkout.
 
-**Score:** 8/10 before → 10/10 after — shippable for the reviewed documentation
-scope. **Shippable:** yes. **Diagnostic:** 10/10 — failed rows: none remaining
-in the maintained guidance. The baseline failed rows 3 (verified commands and
-behavior) and 8 (navigation and cross-references).
-
-**Doc type / reader:** documentation-set audit for Windows operators, Rust
-maintainers, and release reviewers. **Language:** en. **Local style guide:**
-AGENTS.md and CONTRIBUTING.md; the established conversational house style is
-preserved. **Blocking:** none remaining among the findings below. This score
-is an editorial assessment, not a security certification or a fresh runtime test.
-
-## Findings
-
-The audit resolves these documentation gaps:
+**Score:** 7/10 before → 10/10 after — ready for the reviewed documentation scope.
+**Shippable:** yes.
+**Diagnostic:** 10/10 — failed rows: none remaining in the reviewed scope.
+**Doc type / reader:** documentation-set audit for Windows administrators and Rust maintainers. **Language:** en.
+**Local style guide:** [CONTRIBUTING.md](../CONTRIBUTING.md#write-and-maintain-documentation) and [AGENTS.md](../AGENTS.md); repository tone preserved.
+**Blocking:** none remaining among the findings below.
+**Findings:**
 
 | # | Location | Rule (ID + name) | Before | After | Severity |
 | --- | --- | --- | --- | --- | --- |
-| 1 | [Configuration](configuration.md#apply-changes-and-access-settings) | P11 verified commands and behavior | Two passages still describe console execution and its BGP guard. | Describe elevated registry administration and installed-service configuration. | Blocking |
-| 2 | [Migration scope](console.md#revision-scope), [README](../README.md), and [index](README.md) | P11 verified commands and behavior | Service-only guidance can be mistaken for the published v3.0.2 contract. | Identify the unreleased working tree, private package version, removed interfaces, and major-release requirement. | Blocking |
-| 3 | [Service isolation](security/service-isolation.md#diagnose-a-startup-token-policy-failure) and [library development](development/library.md#service-entry-and-token-policy) | R5 verification and next steps | Startup rejection has no focused policy inspection procedure; library migration omits logger construction details. | Document read-only SCM queries, expected policy, repair/restart, exact token checks, and replacement APIs. | High |
-| 4 | [Packaging](development/packaging.md#build-with-github-actions) and [validation](development/validation.md#validate-installed-service-security-in-a-disposable-vm) | P11 verified commands and behavior | Installer descriptions say hosted runners only and omit excessive-privilege rejection coverage. | Include the guarded disposable-VM path, actual token checks, policy rejection/recovery, and PE-only version checks. | Blocking |
-| 5 | [Packet format](protocol.md#control-packet-format) and [RPC verification](security/local-rpc.md#verify-the-implementation) | P11 verified commands and behavior | Packet lengths omit meticulous MD5; authorization coverage counts four broker operations. | Include the 48-byte MD5 packet and the three functional Get/Start/Stop operations in the IDL. | Blocking |
-| 6 | [BGP administration](bgp.md#administrative-disablement-and-failures), [monitoring](monitoring.md), and [logging](logging.md) | P11 verified commands and behavior | Local AdminDown is described as stop-only; the event span omits 113; file-log setup still tells readers to copy the installed script. | Include fatal-error cleanup, events 100–113, bundle-installed script provisioning, and service restart wording. | Medium |
-| 7 | [Logging internals](reference/logging-internals.md#library-api), [source map](reference/source-map.md), and logger API comments | A1 document public API behavior | Logger constructor/mode details and read-only privilege ownership are incomplete; a flush comment contradicts service cleanup. | Describe both mode-free constructors, ETW/file destinations, read-only validation, test-only reduction, and cleanup flushes. | Medium |
-| 8 | [Logging anchors](logging.md#packet-text) and historical records | S8 descriptive, durable cross-references | A dated audit links to a removed logging heading. | Retain the legacy HTML anchors without restoring foreground guidance. | High |
-| 9 | [Validation record](service-only-validation-2026-10-22.md), [validation index](../RUST_SKILLS_VALIDATION.md), and [review history](../CODE_REVIEW.md) | R6 key points first | The complete service-only VM receipts are local-only and absent from the maintained evidence map. | Add a dated, scoped summary of existing results and local receipt locations, including harness failures and coverage limits. | Medium |
-| 10 | [Documentation index](README.md#review-evidence-and-repository-instructions) and [release procedure](development/packaging.md#tag-and-publish-the-release) | S9 descriptive links; N4 breaking-change migration | The index omits v3 release notes; the release procedure does not mention retiring the working-tree notices. | Link all five release-note files and require matching notes, migration, and scope updates when preparing the major release. | Medium |
+| 1 | [Configuration: Authentication](configuration.md#authentication), [S-BFD](seamless.md#authentication-and-loop-prevention) | P11 verified commands and behavior | Key-storage descriptions and examples disagree with the registry loader. | Document DPAPI ciphertext, mode-specific key limits, protected Secrets ACL, and the installed administration tool. | Blocking |
+| 2 | [Documentation index](README.md) and [setup](setup.md) | R2 doc type matches the reader's task | Retired deployment procedures and superseded records obscure supported operations. | Keep installation and operation guidance for the supported service. Remove obsolete documents and transition procedures. | High |
+| 3 | [Authentication key administration](configuration.md#authentication-key-administration) | R5 verification and next steps | Key administration lacks a complete set/replace and peer-verification procedure. | Include stopped-service provisioning, hidden input, read-back verification, and communication checks. | Medium |
+| 4 | [RPC contracts](rpc-session-status-design.md#native-interface-contract), [packaging](development/packaging.md), and [logging](logging.md) | V7 timeless | Implementation explanations mix supported contracts with change history. | Describe the active interfaces, installer transactions, and event payloads directly. | Medium |
+| 5 | [Validation guide](../RUST_SKILLS_VALIDATION.md) and [code review checklist](../CODE_REVIEW.md) | R2 doc type matches the reader's task | Review indexes primarily summarize superseded revisions. | Provide reusable checks tied to implementation boundaries and explicit evidence limits. | High |
+| 6 | [Registry loading](../src/config/registry.rs) and [Options validation](../src/config.rs) | P11 verified commands and behavior | API comments disagree about registry validation and key provisioning. | State that registry loading returns a validated snapshot and uses DPAPI as its key source. | Blocking |
+| 7 | [Documentation index](README.md) and related guides | S9 descriptive links | Cross-references depend on removed material and obsolete heading aliases. | Link supported procedures, canonical references, and current checklists. | High |
 
-**Rewrite plan:** completed: verify the service entry points and SCM/token
-policy; correct stale operator and implementation guidance; expand migration
-and disposable-host validation references; preserve dated evidence; then check
-navigation, samples, and API documentation. Historical claims were not rewritten
-as current test results.
+**Rewrite plan:** completed: organize by supported operator and developer tasks;
+verify behavior against source; replace stale descriptions; remove retired
+material; then check references, examples, and API documentation.
 
-## Information ownership
+## Coverage
 
-Keep each contract in its canonical reference:
+The inventory includes 39 retained Markdown files: root guides and repository
+instructions; operator, protocol, architecture, security, development, and
+installation references; release notes; fuzz guides; and runtime provenance. Bundled skill
+manuals supply editing instructions and are outside the product documentation
+set. Rust configuration API comments are included where they describe the
+operator-facing contract.
 
-| Detail | Canonical home |
-| --- | --- |
-| Release boundary, removed flags, and library migration | [Service migration](console.md) |
-| Registry names, defaults, types, and combinations | [Configuration](configuration.md) |
-| Network ports, packet formats, path checks, and shutdown | [Protocol behavior](protocol.md) |
-| BGP state-to-action policy | [BGP operations](bgp.md) |
-| Native provider methods, queues, watchdogs, and cleanup budgets | [BGP provider reference](reference/bgp-provider.md) |
-| Event IDs, meanings, destinations, and file configuration | [Logs and events](logging.md) |
-| Output-worker ownership, buffering, flushes, and logger APIs | [Logging internals](reference/logging-internals.md) |
-| Service accounts, restricted SIDs, privilege validation, and repair | [Service isolation](security/service-isolation.md) |
-| RPC identity matrix and visual overview | [RPC authentication](rpc-authentication.md) |
-| Native RPC settings, Authz parsing, and call flows | [Local RPC security](security/local-rpc.md) |
-| Status schema, cadence, freshness, retry, and quarantine | [Session-status contract](rpc-session-status-design.md) |
-| Compiler protections and production artifact verification | [Build hardening](security/build-hardening.md) |
-| Checkout checks, packaging, library work, and diagrams | [Development guide map](../CONTRIBUTING.md#choose-a-development-task) |
+The three PNG diagrams, their editable Draw.io pages, and Mermaid views were
+checked for service identities, privilege policy, RPC direction, status
+freshness, and shutdown ownership. Their content remains aligned with the
+implementation; no diagram regeneration is needed.
 
-## Change log
+## Source verification
 
-These edits improve source alignment without changing daemon behavior:
+Use these canonical references to maintain the contracts:
 
-| Area | Change |
-| --- | --- |
-| Operators | Complete foreground-to-service migration, protected log-path guidance, version inspection, and token-policy diagnosis. |
-| Maintainers | Document mode-free APIs, service entry checks, test-only token reduction, disposable-host validation, and release handoff. |
-| Evidence | Preserve the preceding audit and published notes; link the completed service-only VM results with their original revision and limits. |
-| Navigation | Restore legacy logging anchors, list v3 release notes, and connect the current validation and source maps. |
+| Contract | Documentation | Implementation |
+| --- | --- | --- |
+| Registry settings, defaults, and key administration | [Configuration](configuration.md) | [Registry loader](../src/config/registry.rs), [DPAPI owner](../src/config/dpapi.rs), and [administration script](../scripts/Set-BfdAuthenticationKey.ps1) |
+| Accounts, privileges, ACLs, and firewall rules | [Service isolation](security/service-isolation.md) and [installed resources](reference/installation.md) | [Package](../installer/Package.wxs), [service identity](../src/service_identity.rs), and [privilege validator](../src/runtime/privileges.rs) |
+| Packet formats, authentication, timers, and protocol limits | [Protocol behavior](protocol.md) and [conformance](rfc-conformance.md) | [Packet codec](../src/packet.rs), [classical session](../src/session.rs), and [S-BFD implementation](../src/seamless.rs) |
+| Event IDs, severity, queues, and rotation | [Logs and events](logging.md) and [logging internals](reference/logging-internals.md) | [Manifest](../events/BFD-Service.man) and [output worker](../src/runtime/logging.rs) |
+| RPC schema, identity gates, and timeout budgets | [RPC security](security/local-rpc.md) and [status contract](rpc-session-status-design.md) | [Telemetry IDL](../rpc/bfd_local.idl), [control IDL](../rpc/bgp_control.idl), [telemetry](../src/local_rpc.rs), and [BGP IPC](../src/bgp/ipc.rs) |
+| Build, test, and release commands | [Development validation](development/validation.md) and [packaging](development/packaging.md) | [Cargo configuration](../.cargo/config.toml), [workflow](../.github/workflows/build-msi.yml), and [scripts](../scripts) |
 
-## Coverage and validation
+Microsoft's [DPAPI contract](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata)
+supports the machine-scope and optional-entropy description. The RFC Editor's
+[verified-errata rendering](https://www.rfc-editor.org/rfc/inline-errata/rfc5880.html)
+supports the correction list in the conformance reference. Other external links
+are reference material; this audit does not claim exhaustive network checking.
 
-The inventory covers 52 product/repository Markdown files, including root
-guides and agent instructions, operator and architecture guides, security and
-RFC references, development and installation references, fuzz documentation,
-runtime provenance, all five release-note files, and dated records. Bundled
-skill manuals are external guidance and were not rewritten. Historical records
-were checked for scope, supersession, and navigation; their old API examples,
-counts, hashes, and runtime claims remain historical evidence.
+## Validation and limits
 
-Source checks cover the service entry points, token validator and fixture,
-logger constructors and cleanup, RPC IDL and rejection fixtures, installer
-script guards, version checker, workflow, packet codec, and conformance tests.
-The audit also checks the three existing Mermaid/Draw.io/PNG views for the
-service identities, read-only startup checks, RPC direction, and ownership
-contract established by the implementation change. This documentation pass does
-not regenerate or claim a new rendering of the diagrams.
-The 25 runtime, 28 lifecycle, and 28 authentication labels in the PNGs'
-embedded editable XML match their corresponding Draw.io source pages.
+Local checks pass for all 507 file-link occurrences and 180 Markdown heading
+targets across the 39 retained Markdown files. Image alt text, heading levels,
+closed code fences, and all 63 PowerShell examples pass structural or syntax
+checks. A source comparison confirms coverage of all 26 registry settings and
+27 manifest event IDs.
 
-Microsoft's [required service privileges](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_required_privileges_infow),
-[service SID types](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_sid_info),
-and [service access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights)
-were checked against the token and operational guidance. Other external URLs
-were inventoried, not exhaustively network-tested.
+Strict `cargo doc --locked --offline --no-deps` with warnings and missing public
+documentation denied, all three doctests, `cargo fmt --check`, and
+`git diff --check` pass. Local check receipts are under
+`target/documentation-current-audit` and are ignored build output.
 
-Validation checks local file and Markdown-heading destinations, legacy aliases,
-image alt text, heading levels, closed code fences, and PowerShell syntax using
-the Windows PowerShell 5.1 parser. All 1,088 local link occurrences, including
-324 Markdown-heading targets, resolve, and all 70 PowerShell samples parse.
-Strict rustdoc with warnings and missing public
-API documentation denied, formatting, all three doctests, and whitespace checks
-passed. The local check receipts are under
-`target/documentation-service-only-audit/`; they are ignored output, not bundled
-repository files. No full native, ASan, fuzz campaign, installer, or VM scenario
-suite was rerun for this documentation pass. The
-[service-only validation record](service-only-validation-2026-10-22.md) preserves
-the already completed runtime checks and their limits.
-
-## Release preparation follow-up
-
-After this audit, [v4.0.0 release notes](releases/4.0.0.md) were added and the
-README, documentation index, and migration scope were updated to identify that
-release. The counts above describe the preceding documentation pass. Release
-preparation checks include the additional notes and version-stamped sources;
-their local receipts are under `target/release-v4.0.0-prep/`. The VM results
-remain the pre-stamping observations in the dated validation record.
+This is a documentation review. Runtime, ASan, fuzz, MSI installation, and VM
+scenarios require their own results for the tested revision; source inspection
+and successful documentation checks do not establish those outcomes. See
+[development validation](development/validation.md) for the required checks.

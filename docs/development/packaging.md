@@ -10,7 +10,8 @@ before packaging. Commands run from the repository root on the
 
 Give administrators the offline setup bundle and its SHA-256 file from the same
 tested checkout. The bundle contains both daemon executables, the Event Log
-manifest, the logging setup script, and Microsoft's pinned native x64 runtime.
+manifest, the logging and DPAPI key provisioning scripts, and Microsoft's pinned
+native x64 runtime.
 
 The MSI provisions the LocalService BFD process, Automatic (Delayed Start)
 LocalSystem broker, service SIDs, privilege allowlists, and scoped ACLs. Both
@@ -41,8 +42,7 @@ the offline setup bundle, extracts it to verify the embedded packages and runtim
 detection policy, and writes the bundle's SHA-256 checksum. Successful output
 ends with the setup path. The internal MSI and WiX intermediate files stay in
 `target\bundle-build\VERSION` for validation; no standalone MSI or MSI checksum
-is generated in the distribution directory. The build removes standalone output
-files left there by the previous packaging script.
+is generated in the distribution directory.
 For a local build, the package version comes from `Cargo.toml` and must contain
 three numeric fields within Windows Installer's `255.255.65535` version limits.
 To reproduce a tagged release locally, stamp its version before building:
@@ -76,8 +76,7 @@ Use `-SkipBuild` when changing installer authoring after already building the
 matching production executable. The normal command always rebuilds the executable.
 
 The script's `AcceptWixEula` switch defaults to true and passes
-`-acceptEula wix7` to extension restore and package build commands. Explicit
-`-AcceptWixEula` calls continue to work. Acceptance applies to these commands
+`-acceptEula wix7` to extension restore and package build commands. Acceptance applies to these commands
 without recording per-user acceptance.
 
 The [.NET tool manifest](../../.config/dotnet-tools.json) pins WiX `7.0.0`; the script
@@ -125,7 +124,8 @@ Administrators receive service full access (`0xf01ff`). Authenticated Users rece
 only query config/status, enumerate dependents, interrogate, and read-control
 rights (`0x2008d`); Start/Stop and configuration changes require elevation.
 See [Windows service access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights).
-File-log read permissions and the Event Log channel policy remain unchanged.
+File-log and Event Log access follow the
+[logging permissions](../security/service-isolation.md#protected-object-permissions).
 Separate registry-value components preserve administrator values during repair.
 Fixed-target native SCM custom actions provision accounts, service SID types,
 delayed automatic start for both services, and recovery after a nonzero BFD exit.
@@ -198,12 +198,10 @@ and uninstall while retaining generated logs.
 Authenticated Users restricted token to verify query rights and reject Start/Stop,
 pause, configuration changes, deletion, ACL changes, and custom controls. These
 checks run on descriptor fixtures locally and the actual service descriptors in
-the installation test. The migration rollback test also checks restoration of the
-previous service security descriptor and BFD dependency list. Install and repair
-explicitly clear BFD's former broker dependency through SCM. The protected,
-bounded rollback snapshot preserves dependency names, groups, order, and UTF-16
-without changing the commit-only privilege policy. It provisions
-loopback addresses before starting the service. The guard rejects ordinary
+the installation test. Rollback checks require restoration of service security
+descriptors and dependency lists. The protected, bounded rollback snapshot
+preserves dependency names, groups, order, and UTF-16. The test provisions
+loopback addresses before starting the service. Its guard rejects ordinary
 developer hosts. It also checks the installed executable's versions and the
 version shown in Windows installed-app settings. Build-time table validation is
 read-only and can run locally.
@@ -220,11 +218,10 @@ rejection and the token-policy diagnostic, then restores the minimum and checks
 recovery. Executable version checks read PE metadata without launching a daemon.
 Startup fixtures start BFD with BGP configured while the broker is stopped,
 stop the broker without stopping BFD, and start the broker while BFD is stopped.
-Repair fixtures seed the former broker dependency and require its removal.
-Upgrade validation checks BFD dependencies separately from the service policy
-that must stay unchanged: failed upgrades restore the published dependency
-list, while successful upgrades and repairs leave BFD independent. Broker
-dependencies and the remaining service policy retain exact comparisons.
+Repair fixtures verify that BFD remains independent of the broker in SCM.
+Failed installation transactions must restore the original dependency list;
+successful installation and repair leave BFD independent. Broker dependencies
+and the remaining service policy retain exact comparisons.
 `Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
 copy to exercise fresh-install and existing LocalSystem-account rollback, including
 the delayed-start and non-crash recovery flags. Separate fixtures cover an absent
@@ -240,17 +237,15 @@ versions, repeated installation, repair, and removal that retains the shared
 runtime. It verifies that maintenance skips an equal or newer runtime. On hosted
 runners, the preinstalled runtime might already satisfy the prerequisite. The
 script also supports explicit `-DisposableVm` testing on the provisioned
-`BFD-WS2025` Hyper-V guest; testing from an absent runtime was validated there.
+`BFD-WS2025` Hyper-V guest. Use a guest without the runtime to exercise prerequisite installation.
 
-`Test-MsiUpgrade.ps1` then installs the published `v2.0.0` bundle, provisions
-public authentication fixtures and custom log settings, and attempts an upgrade
-with a deferred failure after service-policy mutation. It requires restoration
-of the published executable bytes, old MSI registration, typed registry values,
-service accounts/SIDs/privileges/recovery/ACLs, and generated logs. A subsequent
-normal bundle upgrade and repair must retain those settings and start both
-services with mutual RPC authentication. The workflow verifies the downloaded
-baseline checksum before installation and retains `upgrade-validation.json`
-with installer logs. This does not establish upgrades from every older release.
+`Test-MsiUpgrade.ps1` exercises transactional preservation for an existing
+installation, including an injected deferred failure after service-policy
+mutation. It checks executable bytes, MSI registration, typed registry values,
+service accounts/SIDs/privileges/recovery/ACLs, and generated logs. The workflow
+verifies its downloaded fixture checksum and retains `upgrade-validation.json`
+with installer logs. This fixture does not establish compatibility with every
+installed version.
 The installed-reflector loopback test separately covers legal source-port
 boundaries and rejection of 7784; the installed firewall filters are inspected
 independently because loopback traffic alone does not prove firewall enforcement.
@@ -303,10 +298,9 @@ To release a tested commit:
 1. Choose the next version tag using [Choose a release version](../../CONTRIBUTING.md#choose-a-release-version).
    The commands use `v1.2.0` as an example. Keep the existing tag when retrying
    a release from the same commit.
-2. Add `docs/releases/VERSION.md` with the compatibility decision, migration
-   steps, and validation limits. Update the README, documentation index, and
-   any migration guide to identify the release that introduces a changed
-   contract. Commit the tested changes
+2. Add `docs/releases/VERSION.md` with the version rationale, functionality,
+   compatibility impact, and validation limits. Update the canonical guides
+   for the resulting supported contract. Commit the tested changes
    and confirm that the commit contains the release workflow and notes.
 3. Create the version tag from that commit, for example:
 

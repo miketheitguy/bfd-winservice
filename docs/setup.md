@@ -15,8 +15,7 @@ Choose the path for your deployment:
 
 - For Windows services, [install the setup bundle](#install-with-the-offline-setup-bundle), then
   [configure and verify the service](#configure-and-verify-the-windows-service).
-- For removal, use the [setup bundle uninstall procedure](#remove-a-setup-bundle-installation) or
-  the [legacy manual removal procedure](reference/legacy-installation.md).
+- For removal, use the [setup bundle uninstall procedure](#remove-a-setup-bundle-installation).
 
 ## Before you begin
 
@@ -83,10 +82,7 @@ restarting Windows. The setup log and adjacent package logs record failures.
 
 Run the setup executable without arguments for an interactive installation.
 For repair, use the same command with `/repair` instead of `/install`.
-For an upgrade from an earlier MSI installation, run the setup bundle and then
-verify your retained registry settings before starting the services. Deployment
-automation must use the setup executable and its switches; a standalone MSI
-isn't distributed.
+Deployment automation uses the setup executable and its switches.
 
 ## Remove a setup bundle installation
 
@@ -121,8 +117,6 @@ before the first start:
 
 The bundle registers the manifest automatically. Use the session and logging
 references to configure authentication, multihop, S-BFD, or file output.
-
-<a id="install-the-windows-service"></a>
 
 ## Configure and verify the Windows service
 
@@ -164,8 +158,6 @@ The commands display the keys and values they create. The bundle already
 provisions logging defaults; see [file logging](logging.md#configure-file-logging)
 to change them. The default session is single-hop. For authentication,
 multihop, or other settings, use the [configuration reference](configuration.md).
-
-<a id="3-register-the-operational-log"></a>
 
 ### 3. Verify the Operational log
 
@@ -281,15 +273,3 @@ BGP Stop previously requested by BFD. Cleanup can take time; see
 Inspect the [installed resources and firewall rules](reference/installation.md)
 or the [service isolation reference](security/service-isolation.md) when you need
 the deployment details.
-
-<a id="prepare-installation-files"></a>
-
-## Migrate a foreground deployment
-
-For an older foreground deployment, follow [Migrate to services](console.md).
-BFD runs only through SCM and accepts no command-line arguments.
-
-## Remove a legacy manual installation
-
-For an older manually provisioned service, follow the
-[legacy removal procedure](reference/legacy-installation.md).

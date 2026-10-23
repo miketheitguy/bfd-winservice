@@ -201,6 +201,12 @@ try {
     Assert-UpgradedFirewall
     Assert-Preserved -Phase 'Repair'
     if (@((Get-Service BfdWinService).ServicesDependedOn).Count -ne 0) { throw 'Repair restored the obsolete broker dependency.' }
+    # The old release used plaintext authentication. Preserve it through rollback
+    # and upgrade, then explicitly provision and verify its encrypted replacement.
+    $key = ConvertTo-SecureString 'upgrade-fixture-key' -AsPlainText -Force
+    try { & (Join-Path $installDirectory 'Set-BfdAuthenticationKey.ps1') -Key $key }
+    finally { $key.Dispose() }
+    Assert-Preserved -Phase 'Key provisioning'
     $since = Get-Date
     Start-Service BfdBgpBroker
     Start-Service BfdWinService

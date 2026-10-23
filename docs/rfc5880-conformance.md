@@ -5,8 +5,7 @@ Maintainers and network admins, let's take the protocol review for a spin. This
 reference checks the service's asynchronous BFD implementation against
 [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html). It maps requirements to
 code, records regression evidence, and identifies deployment and feature limits.
-The review covers the complete RFC, including its security considerations and
-non-normative backward-compatibility appendix.
+The review covers the version 1 protocol and its security considerations.
 
 The linked code and tests are the implementation receipts, dude: use them to
 check the supported profile before choosing a deployment.
@@ -23,7 +22,7 @@ congestion-control behavior, and validation limits, see
 [RFC conformance tests](rfc-conformance.md).
 
 Use the [requirement mapping](#requirement-mapping) to locate an RFC rule,
-[errata interpretation](#errata-interpretation) to distinguish correction status,
+[errata interpretation](#errata-interpretation) to check authentication corrections,
 and [deployment limits](#deployment-and-implementation-limits) to assess a host.
 
 ## Requirement mapping
@@ -54,25 +53,20 @@ implementation or its regression tests:
 | 6.8.18 | Retain RX limits while peers communicate; release stale suppression | Peer required RX is retained until a detection time passes without valid packets, then resets to 1. Active probing resumes after an expired zero-RX advertisement; passive sessions still require a learned discriminator. |
 | 7 | Multihop congestion control and time-critical scheduling | Unanswered classical multihop discovery and detection loss double the desired interval. The cap is the greater of 30 seconds and twice the base including the preceding negotiated interval, bounded by the wire format. Valid reception clears backoff. The runtime handles one datagram per pass, keeping timers and Stop processing responsive under floods. Single-hop retains the startup floor without exponential backoff. |
 | 8–9 | Assigned authentication/diagnostic values; replay and spoofing considerations | Wire values follow the RFC. Both SHA-1 variants are available; keys accept ASCII and hexadecimal provisioning. Sequence windows, random initial sequences, and transport source/TTL/interface checks reduce spoofing and replay exposure. No confidentiality is provided. |
-| Appendix A | Non-normative version 0 compatibility | Only version 1 is supported; version 0 is rejected without automatic downgrade. |
 
 ## Errata interpretation
 
-Give correction status the Donatello treatment before applying it. The review
-considers the
-[RFC Editor's RFC 5880 errata](https://www.rfc-editor.org/errata/rfc5880).
-Verified corrections and proposals held for a future document update have
-different status:
+The [RFC Editor's RFC 5880 errata](https://www.rfc-editor.org/errata/rfc5880)
+identify corrections to the published text. The
+[informative rendering with verified errata](https://www.rfc-editor.org/rfc/inline-errata/rfc5880.html)
+lists the corrections below; use the published RFC and individual errata as
+the normative reference. Implementation checks cover these effects:
 
 | Erratum | Status | Effect on this review |
 | --- | --- | --- |
 | [2530](https://www.rfc-editor.org/errata/eid2530) | Verified | Meticulous MD5 increments its transmit sequence by exactly one per successful packet, with wraparound. Preparing an unsent packet consumes no sequence. |
 | [7082](https://www.rfc-editor.org/errata/eid7082) and [7083](https://www.rfc-editor.org/errata/eid7083) | Verified | MD5 and SHA-1 receive sequences become known or advance only after digest verification succeeds. Rejected packets cannot seed or advance tracking. |
 | [6926](https://www.rfc-editor.org/errata/eid6926) | Verified, editorial | Remote-state terminology doesn't change the state-machine behavior. |
-| [7240](https://www.rfc-editor.org/errata/eid7240) | Held for Document Update | Its explanatory notes confirm retention of the last classical failure diagnostic through recovery. The implementation follows the published initialization and transition procedures. |
-| [5205](https://www.rfc-editor.org/errata/eid5205) | Held for Document Update | Its proposed diagnostic update for already-Down timeout isn't treated as a published requirement. Diagnostic 1 is assigned when Init/Up detection expires. |
-| [4410](https://www.rfc-editor.org/errata/eid4410) | Held for Document Update | Clarifies local Demand Poll timeout; local Demand initiation is unsupported. |
-| [6818](https://www.rfc-editor.org/errata/eid6818) | Rejected | Doesn't change the published simple-password receive rules. |
 
 ## Deployment and implementation limits
 
@@ -170,9 +164,9 @@ shutdown, and Informational recovery with a retained local failure diagnostic.
 Invalid-header and authentication tests verify that rejected packets don't
 change the recorded peer state or diagnostic.
 
-### Validation commands and recorded results
+### Validation commands
 
 For the validation commands, see [Run development checks](../CONTRIBUTING.md#run-development-checks).
-For recorded checks and their limits, see the dated
-[correctness review](../CODE_REVIEW.md) and
-[Rust skills validation](../RUST_SKILLS_VALIDATION.md).
+For review boundaries and check selection, see the
+[code review checklist](../CODE_REVIEW.md) and
+[validation guide](../RUST_SKILLS_VALIDATION.md).

@@ -30,6 +30,19 @@ function Assert-InstallerHardeningSource {
     $ns = [Xml.XmlNamespaceManager]::new($Document.NameTable)
     $ns.AddNamespace('w','http://wixtoolset.org/schemas/v4/wxs')
     $ns.AddNamespace('f','http://wixtoolset.org/schemas/v4/wxs/firewall')
+    $secrets = @($Document.SelectNodes('//w:RegistryValue[@Id="SecretsPolicyValue"]', $ns))
+    if ($secrets.Count -ne 1 -or $secrets[0].GetAttribute('Root') -cne 'HKLM' -or
+        $secrets[0].GetAttribute('Key') -cne 'SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets' -or
+        $secrets[0].GetAttribute('Name') -cne '_InstallerPolicy' -or
+        $secrets[0].GetAttribute('Value') -cne '1' -or
+        $secrets[0].ParentNode.GetAttribute('Id') -cne 'SecretsSecurityComponent' -or
+        $secrets[0].ParentNode.HasAttribute('NeverOverwrite')) {
+        throw 'Secrets must have its own repairable protected registry key.'
+    }
+    $secretAcl = @($secrets[0].SelectNodes('w:PermissionEx', $ns))
+    if ($secretAcl.Count -ne 1 -or $secretAcl[0].GetAttribute('Sddl') -cne '$(var.ParametersSecurity)') {
+        throw 'Secrets must use the protected SYSTEM/Administrators/BFD-service-SID policy.'
+    }
     $rows = @($Document.SelectNodes('//f:FirewallException', $ns) | ForEach-Object {
         $node = $_
         if ($node.GetAttribute('Scope') -cne 'any' -or $node.HasAttribute('Program') -or

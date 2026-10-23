@@ -18,7 +18,7 @@ use windows_sys::Win32::{
         Registry::{
             RegCloseKey, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY,
             HKEY_LOCAL_MACHINE, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_THREAD_AGNOSTIC,
-            RRF_NOEXPAND, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+            RRF_NOEXPAND, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
         },
         Threading::{CreateEventW, ResetEvent, WaitForSingleObject},
     },
@@ -33,6 +33,7 @@ use windows_sys::Win32::{
 /// # Errors
 /// Returns errors for missing required addresses, denied registry access,
 /// incorrect value types, invalid Unicode/enums, or overflowing numeric values.
+/// Authenticated sessions require a decryptable Secrets\AuthKeyDpapi binary value.
 /// Error messages identify value names and never include authentication keys.
 pub fn load_registry() -> io::Result<ValidatedOptions> {
     Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY)
@@ -227,8 +228,21 @@ impl Registry {
                 .map_err(|_| invalid("Auth", "has an unsupported authentication type"))?;
         }
         options.auth_key_id = self.narrow("AuthKeyId")?.unwrap_or(options.auth_key_id);
-        options.auth_key = self.string("AuthKey")?;
-        options.auth_key_hex = self.string("AuthKeyHex")?;
+        // DPAPI is the only registry key source.
+        // Access errors and malformed blobs never fall back to unauthenticated BFD.
+        let mut secrets_path = self.path.clone();
+        secrets_path.pop();
+        if !secrets_path.is_empty() {
+            secrets_path.push(u16::from(b'\\'));
+        }
+        secrets_path.extend("Secrets".encode_utf16().chain(Some(0)));
+        let secrets = Self {
+            root: self.root,
+            path: secrets_path,
+        };
+        if let Some(mut ciphertext) = secrets.binary("AuthKeyDpapi")? {
+            options.auth_key_bytes = Some(super::dpapi::unprotect(&mut ciphertext)?);
+        }
         if let Some(path) = self.string("LogFilePath")? {
             options.log_file_path = path.into();
         }
@@ -307,6 +321,52 @@ impl Registry {
             return Err(invalid(name, "must contain exactly four DWORD bytes"));
         }
         Ok(Some(value))
+    }
+
+    fn binary(&self, name: &str) -> io::Result<Option<Vec<u8>>> {
+        let name_wide = wide(name);
+        let mut buffer = vec![0u8; 1024];
+        // Match the text reader's 64-KiB limit and four-attempt growth budget.
+        for _ in 0..4 {
+            let mut bytes = u32::try_from(buffer.len()).map_err(io::Error::other)?;
+            // SAFETY: terminated names and a live borrowed root; the initialized
+            // buffer is writable for exactly bytes bytes during this call.
+            let status = unsafe {
+                RegGetValueW(
+                    self.root,
+                    self.path.as_ptr(),
+                    name_wide.as_ptr(),
+                    RRF_RT_REG_BINARY,
+                    ptr::null_mut(),
+                    buffer.as_mut_ptr().cast(),
+                    &mut bytes,
+                )
+            };
+            if status == ERROR_FILE_NOT_FOUND {
+                return Ok(None);
+            }
+            if status == ERROR_MORE_DATA {
+                if bytes > 65536 {
+                    return Err(invalid("Secrets\\AuthKeyDpapi", "exceeds 64 KiB"));
+                }
+                buffer.resize(bytes as usize, 0);
+                continue;
+            }
+            check(status, "Secrets\\AuthKeyDpapi", "REG_BINARY")?;
+            let length = bytes as usize;
+            if length == 0 || length > buffer.len() {
+                return Err(invalid(
+                    "Secrets\\AuthKeyDpapi",
+                    "has an invalid binary length",
+                ));
+            }
+            buffer.truncate(length);
+            return Ok(Some(buffer));
+        }
+        Err(invalid(
+            "Secrets\\AuthKeyDpapi",
+            "changed size repeatedly while reading",
+        ))
     }
 
     fn string(&self, name: &str) -> io::Result<Option<String>> {
@@ -420,8 +480,8 @@ mod tests {
         use super::*;
         use crate::{config::DEFAULT_LOG_FILE_PATH, packet::AuthConfig};
         use windows_sys::Win32::System::Registry::{
-            RegCloseKey, RegCreateKeyW, RegDeleteKeyW, RegDeleteValueW, RegSetValueExW,
-            HKEY_CURRENT_USER, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
+            RegCloseKey, RegCreateKeyW, RegDeleteTreeW, RegDeleteValueW, RegSetValueExW,
+            HKEY_CURRENT_USER, REG_BINARY, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
         };
 
         // Every fixture owns a unique HKCU key. No installed service/HKLM
@@ -469,6 +529,36 @@ mod tests {
             fn dword(&self, name: &str, value: u32) {
                 self.set(name, REG_DWORD, &value.to_le_bytes());
             }
+            fn secret(&self, kind: u32, data: &[u8]) {
+                let mut key = ptr::null_mut();
+                // SAFETY: live fixture root, terminated child name, writable output.
+                check(
+                    unsafe { RegCreateKeyW(self.key, wide("Secrets").as_ptr(), &mut key) },
+                    "Secrets",
+                    "key",
+                )
+                .unwrap();
+                let key = OwnedKey(key);
+                // SAFETY: owned live child handle and initialized data/names survive the call.
+                check(
+                    unsafe {
+                        RegSetValueExW(
+                            key.0,
+                            wide("AuthKeyDpapi").as_ptr(),
+                            0,
+                            kind,
+                            data.as_ptr(),
+                            u32::try_from(data.len()).unwrap(),
+                        )
+                    },
+                    "AuthKeyDpapi",
+                    "test value",
+                )
+                .unwrap();
+            }
+            fn protected_key(&self, bytes: &mut [u8]) {
+                self.secret(REG_BINARY, &super::super::super::dpapi::protect(bytes));
+            }
             fn remove(&self, name: &str) {
                 let name = wide(name);
                 // SAFETY: key and terminated value name are valid for the call.
@@ -494,8 +584,8 @@ mod tests {
                 // remain; close exactly once before deleting its unique HKCU key.
                 let closed = unsafe { RegCloseKey(self.key) };
                 // SAFETY: this terminated path names only the fixture's unique
-                // test key, which has no subkeys and is no longer used.
-                let deleted = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, self.path.as_ptr()) };
+                // test tree, including its Secrets child, which is no longer used.
+                let deleted = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, self.path.as_ptr()) };
                 if closed != ERROR_SUCCESS || deleted != ERROR_SUCCESS {
                     eprintln!("registry fixture cleanup failed: close={closed}, delete={deleted}");
                 }
@@ -721,11 +811,11 @@ mod tests {
         #[test]
         fn native_registry_loads_all_types_including_unicode_and_dword_limits() {
             let fixture = Fixture::new();
+            fixture.protected_key(&mut [0, 254, 18]);
             for (name, value) in [
                 ("Local", "2001:db8::1"),
                 ("Peer", "2001:db8::2"),
                 ("Auth", "meticulous-sha1"),
-                ("AuthKeyHex", "00fe12"),
                 ("BgpPeerName", "Péér 🦀"),
                 ("BgpRoutingDomain", "Domaine 🦀"),
                 ("LogFilePath", r"C:\BFD\résultats.log"),
@@ -778,8 +868,7 @@ mod tests {
                 fixture.load().unwrap().validate().unwrap()
                     == AuthConfig::new(AuthType::MeticulousMd5, 255, vec![0, 254, 18]).unwrap()
             );
-            fixture.remove("AuthKeyHex");
-            fixture.string("AuthKey", "hidden-key");
+            fixture.protected_key(&mut b"hidden-key".to_vec());
             assert!(fixture.load().unwrap().validate().is_ok());
         }
 
@@ -802,7 +891,7 @@ mod tests {
                 );
                 fixture.remove(name);
             }
-            for name in ["Auth", "BgpPeerName", "LogFilePath", "AuthKey"] {
+            for name in ["Auth", "BgpPeerName", "LogFilePath"] {
                 fixture.dword(name, 1);
                 let error = fixture.load().err().unwrap().to_string();
                 assert!(error.contains(name) && error.contains("REG_SZ"), "{error}");
@@ -863,6 +952,98 @@ mod tests {
                 assert!(error.contains("Auth") && !error.contains("hidden-key"));
                 assert!(error.contains("unsupported authentication type"));
             }
+        }
+
+        #[test]
+        fn native_registry_uses_only_dpapi_and_preserves_binary_key_bytes() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.dword("Multihop", 1);
+            fixture.string("Auth", "meticulous-sha1");
+            fixture.string("AuthKey", "legacy-must-not-be-used");
+            fixture.string("AuthKeyHex", "00ff");
+            assert!(fixture.load().unwrap().validate().is_err());
+            let mut expected = [0, 255, 128, 65];
+            fixture.protected_key(&mut expected);
+            let mut options = fixture.load().unwrap();
+            assert!(options.auth_key.is_none() && options.auth_key_hex.is_none());
+            assert!(
+                options.validate().unwrap()
+                    == AuthConfig::new(AuthType::MeticulousSha1, 0, expected.to_vec()).unwrap()
+            );
+            fixture.string("Auth", "none");
+            assert!(fixture.load().unwrap().validate().is_err());
+            fixture.string("Auth", "meticulous-md5");
+            fixture.protected_key(&mut [1; 17]);
+            assert!(fixture.load().unwrap().validate().is_err());
+        }
+
+        #[test]
+        fn native_registry_rejects_invalid_dpapi_values_without_legacy_fallback() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.string("AuthKey", "legacy-must-not-be-used");
+            for (kind, bytes) in [
+                (REG_SZ, vec![0, 0]),
+                (REG_BINARY, vec![]),
+                (REG_BINARY, b"invalid-dpapi-secret".to_vec()),
+                (REG_BINARY, vec![0; 65537]),
+            ] {
+                fixture.secret(kind, &bytes);
+                let error = fixture.load().err().unwrap().to_string();
+                assert!(error.contains("AuthKeyDpapi"));
+                assert!(
+                    !error.contains("invalid-dpapi-secret")
+                        && !error.contains("legacy-must-not-be-used")
+                );
+            }
+        }
+
+        #[test]
+        fn native_registry_reads_powershell_provisioned_key_without_changing_other_values() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.dword("Multihop", 1);
+            fixture.string("Auth", "meticulous-sha1");
+            fixture.string("AuthKey", "legacy-test-key");
+            fixture.string("AuthKeyHex", "abcd");
+            let script = r#"
+$ErrorActionPreference = 'Stop'
+. (Join-Path $env:BFD_TEST_REPOSITORY 'scripts\Set-BfdAuthenticationKey.ps1')
+$parameters = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:BFD_TEST_KEY_PATH, $true)
+$secrets = $parameters.CreateSubKey('Secrets')
+$key = [Security.SecureString]::new()
+foreach ($character in '00ff8041'.ToCharArray()) { $key.AppendChar($character) }
+try { Write-BfdProtectedKey -Secrets $secrets -Key $key -MaximumBytes 20 -Hex }
+finally { $key.Dispose(); $secrets.Dispose(); $parameters.Dispose() }
+"#;
+            let output = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command", script])
+                .env("BFD_TEST_REPOSITORY", env!("CARGO_MANIFEST_DIR"))
+                .env(
+                    "BFD_TEST_KEY_PATH",
+                    String::from_utf16(&fixture.path[..fixture.path.len() - 1]).unwrap(),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "PowerShell provisioning failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let registry = Registry::new(fixture.key, "");
+            assert_eq!(
+                registry.string("AuthKey").unwrap().as_deref(),
+                Some("legacy-test-key")
+            );
+            assert_eq!(
+                registry.string("AuthKeyHex").unwrap().as_deref(),
+                Some("abcd")
+            );
+            assert!(
+                fixture.load().unwrap().validate().unwrap()
+                    == AuthConfig::new(AuthType::MeticulousSha1, 0, vec![0, 255, 128, 65]).unwrap()
+            );
         }
     }
 }

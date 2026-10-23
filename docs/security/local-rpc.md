@@ -444,7 +444,7 @@ shutdown. They do not impersonate an installed service. The explicit coexistence
 checks fixed-policy RPC against real read-only MI provider traffic.
 
 The release workflow's `Test-MsiInstall.ps1` separately requires a fresh broker
-event confirming the handshake after first start and after repair. After first
+event confirming an authenticated status query after first start and after repair. After first
 start, broker recovery, and repair, it also uses the authenticated administrator
 runner's own credentials to require access denied from the BFD status operation
 and all three broker control operations. These checks call the native RPC helpers
@@ -470,4 +470,4 @@ For the code deep dive, follow this file lineup:
 | [rpc/bfd_local.idl](../../rpc/bfd_local.idl) and [client ACF](../../rpc/bfd_local_client.acf) | Status-only contract, fixed field ranges, and asynchronous client generation |
 | [rpc/client.c](../../rpc/client.c), [server bridge](../../rpc/server.c), and [RPC build](../../rpc/build.rs) | Native completion, cancellation, exceptions, manager bridge, and MIDL compilation |
 | [RPC tests](../../src/local_rpc/tests.rs) and [replacement-token tests](../../src/local_rpc/tests/restricted.rs) | Native positive and negative fixtures |
-| [MSI installation tests](../../scripts/Test-MsiInstall.ps1) | Actual service handshake and rejection of unrelated authenticated RPC callers after install, recovery, and repair |
+| [MSI installation tests](../../scripts/Test-MsiInstall.ps1) | Actual service status queries and rejection of unrelated authenticated RPC callers after install, recovery, and repair |

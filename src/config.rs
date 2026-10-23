@@ -13,6 +13,8 @@ use clap::ValueEnum;
 use crate::packet::{AuthConfig, AuthType};
 
 #[cfg(windows)]
+mod dpapi;
+#[cfg(windows)]
 mod registry;
 #[cfg(windows)]
 pub(crate) use registry::load_bgp_target;
@@ -214,10 +216,12 @@ pub struct Options {
     pub auth: AuthType,
     /// Authentication key identifier
     pub auth_key_id: u8,
-    /// ASCII authentication key (use AuthKeyHex for binary keys)
+    /// Programmatic ASCII authentication key; registry loading uses Secrets\AuthKeyDpapi.
     pub auth_key: Option<String>,
-    /// Authentication key as hexadecimal bytes
+    /// Programmatic authentication key as hexadecimal bytes; not a registry setting.
     pub auth_key_hex: Option<String>,
+    // Raw key recovered from Secrets\AuthKeyDpapi. Keep it out of public text settings.
+    auth_key_bytes: Option<Vec<u8>>,
     /// Append-log path read from LogFilePath; use an absolute path for SCM
     pub log_file_path: PathBuf,
     /// Enable append logging; false leaves the configured path untouched
@@ -290,6 +294,7 @@ impl Options {
             auth_key_id: 0,
             auth_key: None,
             auth_key_hex: None,
+            auth_key_bytes: None,
             log_file_path: DEFAULT_LOG_FILE_PATH.into(),
             log_to_file: false,
             max_shutdown_announce_ms: 30_000,
@@ -302,8 +307,8 @@ impl Options {
     /// Check ranges, addresses, transport profile, and authentication configuration.
     ///
     /// Normalizes the multihop shortcut into mode and returns validated authentication.
-    /// Registry loading alone does not perform these checks. Public fields can be changed,
-    /// so validate again after mutation before using the options.
+    /// Registry loading returns a validated snapshot. Public option fields can be
+    /// changed, so validate programmatic options after mutation before using them.
     ///
     /// # Errors
     /// Returns an error for unsupported option combinations or invalid values/keys.
@@ -311,7 +316,11 @@ impl Options {
     pub fn validate(&mut self) -> Result<AuthConfig, ConfigError> {
         // Validate registry-loaded and programmatically constructed settings alike.
         self.validate_ranges()?;
-        if self.auth_key.is_some() && self.auth_key_hex.is_some() {
+        if usize::from(self.auth_key.is_some())
+            + usize::from(self.auth_key_hex.is_some())
+            + usize::from(self.auth_key_bytes.is_some())
+            > 1
+        {
             return Err(ConfigError::ConflictingKeys);
         }
         for (name, value) in [
@@ -431,7 +440,9 @@ impl Options {
         {
             return Err(ConfigError::LinkLocalRequiresInterface);
         }
-        let key = if let Some(hex) = &self.auth_key_hex {
+        let key = if let Some(bytes) = &self.auth_key_bytes {
+            bytes.clone()
+        } else if let Some(hex) = &self.auth_key_hex {
             if hex.len() % 2 != 0 || !hex.is_ascii() {
                 return Err(ConfigError::InvalidHexKey);
             }
@@ -586,6 +597,9 @@ impl Options {
 
 impl Drop for Options {
     fn drop(&mut self) {
+        if let Some(key) = &mut self.auth_key_bytes {
+            wipe(key);
+        }
         // Validation copies keys into AuthConfig, which clears its own copy.
         for key in [&mut self.auth_key, &mut self.auth_key_hex]
             .into_iter()
