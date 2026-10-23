@@ -1,4 +1,4 @@
-# Windows service performance
+# Windows service performance: event-driven BGP dispatcher
 
 Cowabunga, service maintainers. Use this measured reference to inspect CPU,
 memory, context switches, and thread-ready behavior for the BFD engine and BGP
@@ -12,6 +12,12 @@ build based on v5.0.0 with the dispatcher change; its file version remains
 These recordings precede the secrecy changes and the combined 6.0.0 build.
 They measure the dispatcher change only. See the
 [6.0.0 validation record](releases/6.0.0.md#validation) for combined-build testing.
+
+To inspect a metric, see [CPU usage](#cpu-usage),
+[context switches](#context-switches-per-second), [memory](#memory-usage), or
+[thread ready delay and ready time](#thread-ready-delay-and-ready-time).
+The [measurement limits](#measurement-limits) and
+[build identity](#data-and-build-identity) define the scope of these results.
 
 ## Test environment
 

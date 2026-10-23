@@ -18,7 +18,7 @@ optional file output:
 | Destination | When used | Content |
 | --- | --- | --- |
 | `BFD-Service/Operational` | Manifest installed and channel enabled | Lifecycle, peer communication, local and remote BFD states, diagnostics, authentication failures, and broker readiness/provider/status messages |
-| `LogFilePath` | `LogToFile=1` | The same state and diagnostic event records, plus text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps |
+| `LogFilePath` | `LogToFile=1` | BFD service event records and text messages, with ISO-8601 Coordinated Universal Time (UTC) timestamps; broker messages remain in ETW |
 
 ### Packet text
 
@@ -41,7 +41,8 @@ for queue sizes, retry intervals, flush budgets, and library APIs.
 
 ## Read logs without service-control privileges
 
-Non-administrators can read logs without permission to Start/Stop the services.
+Log-read permissions are separate from permission to Start/Stop the services.
+Non-administrators can read logs when the channel or filesystem ACL permits it.
 The MSI keeps Users read access to the default ProgramData log folder and grants
 Modify access only to the BFD service SID, alongside SYSTEM/Administrator full
 control. A custom `LogFilePath` uses the permissions provisioned for that location.

@@ -34,9 +34,10 @@ The MSI protects this key: SYSTEM and administrators have full control, and the
 enabled BFD service SID has read access. Use an elevated Administrator session
 to change configuration. The BGP broker reads only
 the configured BGP target; restart both services after changing either BGP value.
-Service configuration changes and Start/Stop require elevation. Non-administrators
-can still query service status and read logs; see [Monitor service status and BFD
-events](monitoring.md).
+Service configuration changes and Start/Stop require elevation.
+Non-administrators can query service status. Log reads depend on the host's
+Event Log and filesystem permissions; see
+[Monitor service status and BFD events](monitoring.md#access-permissions).
 
 ## Addresses and transport
 
@@ -210,7 +211,8 @@ peer, then [verify peer communication](setup.md#6-verify-peer-communication).
 The bundle installs `Set-BfdAuthenticationKey.ps1` in its Program Files
 directory. Use it to set or replace the key in PowerShell as Administrator on
 the BFD server. Configure `Auth` and `AuthKeyId` first, and coordinate the same
-key and authentication settings on the peer.
+key and authentication settings on the peer. Stop the service, provision the
+key at the hidden prompt, and start the service:
 
 ```powershell
 Stop-Service BfdWinService

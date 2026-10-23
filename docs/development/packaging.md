@@ -138,7 +138,7 @@ See [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/wxs/serviceconfig/
 The installed service is Automatic (Delayed Start) and remains stopped for address configuration.
 See [bundle installation](../setup.md#install-with-the-offline-setup-bundle).
 
-### Build with GitHub Actions
+## Build with GitHub Actions
 
 Send the build through its training session before calling it bodacious. The
 [Build Windows bundle workflow](../../.github/workflows/build-msi.yml) runs on pull
@@ -267,7 +267,7 @@ artifact. It contains only the offline setup bundle and its checksum.
 `COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
 including when a test fails.
 
-### Publish a GitHub release
+## Publish a GitHub release
 
 Pizza time comes after the release checks, dude. Pushing a version tag publishes a
 [GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
@@ -279,7 +279,7 @@ release publication.
 The release title
 includes the version tag, such as `BFD Windows Service v1.2.0`.
 
-#### Tag and publish the release
+### Tag and publish the release
 
 Use a GitHub tag in the form `vMAJOR.MINOR.PATCH` as the release version source.
 The MSI workflow accepts three numeric components without leading zeros,

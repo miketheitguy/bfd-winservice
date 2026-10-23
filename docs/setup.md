@@ -84,41 +84,13 @@ Run the setup executable without arguments for an interactive installation.
 For repair, use the same command with `/repair` instead of `/install`.
 Deployment automation uses the setup executable and its switches.
 
-## Remove a setup bundle installation
-
-In **PowerShell as Administrator**, run the setup executable with `/uninstall`:
-
-```powershell
-$result = Start-Process -FilePath 'SETUP_PATH' -ArgumentList @(
-    '/uninstall', '/quiet', '/norestart'
-) -WindowStyle Hidden -Wait -PassThru
-if ($result.ExitCode -notin @(0, 3010)) {
-    throw "Setup removal failed with exit code $($result.ExitCode)"
-}
-```
-
-Replace `SETUP_PATH` with the local setup executable path. You can also remove
-**BFD Windows Service** through Windows installed-app settings. Removal
-uninstalls the BFD service package and retains the shared Microsoft runtime for other
-applications. A failed BFD installation also retains a successfully installed
-runtime. Generated service logs remain available after removal. Confirm that
-`Get-Service BfdWinService,BfdBgpBroker` no longer finds either service.
-
-## Configure and start the installed session
-
-Turtle power starts with preflight, buddy. Like, for sure, complete these steps
-before the first start:
-
-1. [Configure the session](#2-configure-the-session), including the required
-   addresses and interface index. The bundle already provisions logging defaults.
-2. [Start the service](#4-start-the-service) and
-   [verify startup](#5-verify-startup).
-3. Configure the remote peer and [verify peer communication](#6-verify-peer-communication).
-
-The bundle registers the manifest automatically. Use the session and logging
-references to configure authentication, multihop, S-BFD, or file output.
+<a id="configure-and-start-the-installed-session"></a>
 
 ## Configure and verify the Windows service
+
+Follow these steps in order. If you have already installed the bundle, continue
+with [Configure the session](#2-configure-the-session). Keep the same elevated
+PowerShell window open throughout the procedure.
 
 ### 1. Install the services
 
@@ -267,6 +239,27 @@ administrative stop announces `AdminDown` as the role permits and releases any
 BGP Stop previously requested by BFD. Cleanup can take time; see
 [shutdown behavior and limits](protocol.md#supported-modes-and-limits) and
 [BGP cleanup](bgp.md#provider-timeouts-and-final-cleanup).
+
+## Remove a setup bundle installation
+
+In **PowerShell as Administrator**, run the setup executable with `/uninstall`:
+
+```powershell
+$result = Start-Process -FilePath 'SETUP_PATH' -ArgumentList @(
+    '/uninstall', '/quiet', '/norestart'
+) -WindowStyle Hidden -Wait -PassThru
+if ($result.ExitCode -notin @(0, 3010)) {
+    throw "Setup removal failed with exit code $($result.ExitCode)"
+}
+```
+
+Replace `SETUP_PATH` with the local setup executable path. You can also remove
+**BFD Windows Service** through Windows installed-app settings. Removal
+uninstalls the BFD service package and retains the shared Microsoft runtime for
+other applications. A failed BFD installation also retains a successfully
+installed runtime. Generated service logs remain available after removal.
+Confirm that `Get-Service BfdWinService,BfdBgpBroker` no longer finds either
+service.
 
 ## Installation reference
 

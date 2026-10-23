@@ -1,9 +1,9 @@
-# Documentation Audit: operator and developer guides
+# Documentation audit: operator and developer guides
 
 This audit helps Windows administrators and Rust maintainers assess the
 documentation against the implementation in this checkout.
 
-**Score:** 7/10 before → 10/10 after — ready for the reviewed documentation scope.
+**Score:** 8/10 before → 10/10 after — ready for the reviewed structure, clarity, and implementation-contract scope.
 **Shippable:** yes.
 **Diagnostic:** 10/10 — failed rows: none remaining in the reviewed scope.
 **Doc type / reader:** documentation-set audit for Windows administrators and Rust maintainers. **Language:** en.
@@ -24,10 +24,24 @@ documentation against the implementation in this checkout.
 | 9 | [Library development](development/library.md#raw-options-encoding-and-registry-loading) and [packet authentication](security/packet-authentication.md) | P11 verified commands and behavior | Secret ownership and programmatic field types describe the preceding implementation. | Document SecretString inputs, shared SecretSlice ownership, startup-only decryption, zeroization limits, and caller-owned encoded output. | High |
 | 10 | [Dispatcher measurements](performance.md) and [telemetry measurements](performance-telemetry-coalescing.md) | R5 verification and next steps | Capture provenance could be mistaken for measurements of the combined release. | Preserve exact development-build identities and state that secrecy and the combined 6.0.0 build are outside those recordings. | High |
 | 11 | [6.0.0 release notes](releases/6.0.0.md#version-and-compatibility) | R5 verification and next steps | The source migration and required major increment are undocumented. | Explain the public Rust API break, migration, compatible installed contracts, and separately scoped validation. | High |
+| 12 | [Setup](setup.md#configure-and-verify-the-windows-service) | R2 doc type matches the reader's task | A second configuration checklist repeats the main procedure, and removal interrupts the installation path. | Keep one numbered setup path, move removal after operation, and retain the previous section anchor for existing links. | High |
+| 13 | [Documentation index](README.md#review-performance-and-release-evidence) | R2 doc type matches the reader's task | Performance and release records are mixed into build tasks, and historical release notes have no index link. | Give measurements and release evidence their own section, with explicit build scope and a historical release link. | High |
+| 14 | [BGP guide](bgp.md) | R6 key points first | The introduction summarizes the queued Start action without explaining the status check described later in the guide. | Lead with the status check and conditional mutation so the summary distinguishes BFD Up from BGP readiness. | Medium |
+| 15 | [Configuration access](configuration.md#apply-changes-and-access-settings) and [log access](logging.md#read-logs-without-service-control-privileges) | P11 verified commands and behavior | Non-administrator log access reads as unconditional. | Separate service-query rights from channel and filesystem permissions. | Blocking |
+| 16 | [Log destinations](logging.md#log-destinations) and [logging internals](reference/logging-internals.md#output-queue-and-loss) | R6 key points first | File mirroring can be read to include broker records; queue wording obscures the distinction between avoiding writer I/O and guaranteeing timer latency. | Limit file output to BFD service records and describe nonblocking enqueue behavior precisely. | Medium |
+| 17 | [Packaging](development/packaging.md) | S2 task headings | CI validation and publication are nested under the local bundle-build task. | Promote CI and publication to top-level tasks while preserving anchor names. | Medium |
+| 18 | [Dispatcher measurements](performance.md) and [telemetry measurements](performance-telemetry-coalescing.md) | R6 key points first | The earlier capture has a generic title, and readers must scan long pages to find metric tables. | Name the dispatcher capture and add direct links to CPU, context-switch, memory, ready-time, scope, and provenance sections. | Medium |
 
 **Rewrite plan:** completed: organize by supported operator and developer tasks;
 verify behavior against source; replace stale descriptions; remove retired
 material; then check references, examples, and API documentation.
+
+Rows 12–18 record the structure, clarity, and accuracy pass against commit
+`fc857ae`. The initial diagnostic failed row 2 (duplicated and misplaced tasks)
+and row 3 (ambiguous summaries of verified behavior). Rows 1–11 retain the
+earlier implementation-alignment findings. The completed pass changes prose
+and navigation; it does not change application code, measured data, release
+versions, or the scope of earlier runtime results.
 
 ## Coverage
 

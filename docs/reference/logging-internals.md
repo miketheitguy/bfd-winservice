@@ -7,9 +7,10 @@ use [Logs and events](../logging.md).
 ## Output queue and loss
 
 Even a bodacious log pipeline has queue limits. One background writer handles
-the text and ETW workload for the engine and its BGP worker. Slow output does
-not delay BFD timers or Stop processing. The queue holds up to 256 records; when
-it fills, additional records are dropped instead of delaying protocol execution.
+the text and ETW workload for the engine and its BGP worker. Packet processing
+enqueues records without waiting for the writer's I/O. The queue holds up to
+256 records. When it fills, additional records are dropped instead of waiting
+for queue space.
 Text messages are limited to 16 KiB on UTF-8 character boundaries. When output
 resumes, the writer reports how many records were dropped to the enabled file
 log. This diagnostic does not produce an Operational event.

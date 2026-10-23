@@ -42,7 +42,6 @@ Choose a development task:
 | --- | --- |
 | Prepare a build host and contribute changes | [Contributor guide](../CONTRIBUTING.md) |
 | Run required, optimized, ASan, Miri, or native checks | [Development validation](development/validation.md) |
-| Inspect measured CPU, memory, context switches, and thread-ready percentiles | [Event-driven broker capture](performance.md) and [coalesced telemetry capture](performance-telemetry-coalescing.md) |
 | Change Rust configuration, engine, and service APIs | [Library development](development/library.md) |
 | Build deployment files and publish a release | [Packaging and releases](development/packaging.md) |
 | Maintain the diagram source and rendered views | [Diagram maintenance](development/diagrams.md) |
@@ -51,7 +50,19 @@ Choose a development task:
 | Review correctness, ownership, and security boundaries | [Code review checklist](../CODE_REVIEW.md) |
 | Select validation scope and record evidence | [Rust validation guide](../RUST_SKILLS_VALIDATION.md) |
 | Check documentation coverage and verification | [Documentation audit](documentation-audit.md) |
-| Review release functionality, compatibility, and validation limits | [6.0.0 release notes](releases/6.0.0.md) |
+
+## Review performance and release evidence
+
+Choose a record by its tested build. Performance captures describe the named
+development binaries; combined-build validation covers 6.0.0 separately:
+
+| Record | Scope |
+| --- | --- |
+| [Coalesced telemetry performance](performance-telemetry-coalescing.md) | CPU, memory, context switches, and thread-ready distributions with both scheduling changes, before the secrecy changes |
+| [Event-driven dispatcher performance](performance.md) | Earlier capture of the broker dispatcher change, before telemetry coalescing and secrecy changes |
+| [6.0.0 release and validation notes](releases/6.0.0.md) | Public Rust API migration, functionality, compatibility, and combined-build host/VM testing |
+| [6.0.0 numeric validation record](validation/6.0.0.json) | Build hashes, test counts, lab scenarios, and restoration results |
+| [5.0.0 release notes](releases/5.0.0.md) | Historical DPAPI configuration migration and validation scope |
 
 Repository-specific agent instructions are in [AGENTS.md](../AGENTS.md) and
 [CLAUDE.md](../CLAUDE.md).

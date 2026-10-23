@@ -1,13 +1,13 @@
 # Control a Windows BGP peer
 
-Cowabunga, BGP crew. Connect the state changes with care. Windows Server network
-admins, let's connect Bidirectional Forwarding Detection (BFD) state changes to
-your configured Border Gateway Protocol (BGP) peer. First, get the BFD session
-dialed in with [Set up a BFD session](setup.md).
+Cowabunga, Windows Server network admins. Use this guide to connect
+Bidirectional Forwarding Detection (BFD) state changes to your configured
+Border Gateway Protocol (BGP) peer. First, configure and verify BFD with
+[Set up a BFD session](setup.md).
 
-The BGP vibe check is separate from BFD readiness: `Up` requests a Start, but
-provider errors can leave the BGP peer stopped. No victory lap yet, dude: verify
-the peer and event logs.
+BFD `Up` triggers a peer-status check. The worker requests Start only if the
+peer is stopped and the action is still current. Provider errors can leave BGP
+stopped even when BFD is Up, so verify both peer status and event logs.
 
 Use [Configure the peer](#configure-the-peer) and [Verify state changes and
 actions](#verify-state-changes-and-actions) for setup. For operational details,
@@ -16,11 +16,12 @@ and [Service identities and authorization](#service-identities-and-authorization
 
 ## Before you begin
 
-Get the mission prerequisites lined up, turtle crew. Preflight check, buddy: the
-peer must already exist on a Windows Server with Remote Access/BGP configured.
+Before enabling control, confirm that the peer exists on a Windows Server
+with Remote Access/BGP configured.
 Install the setup bundle: BGP control requires the installed service identities.
-Without `BgpPeerName`, no BGP control worker or native MI query is started. BFD and the broker start independently; enable both
-services when you need BGP control or broker telemetry.
+Without `BgpPeerName`, BFD starts no BGP control worker and makes no provider
+queries. BFD and the broker start independently; enable both services when you
+need BGP control or broker telemetry.
 
 BGP control works with classical BFD and S-BFD initiators. Reflectors don't
 monitor peer state and reject `BgpPeerName`.
@@ -39,13 +40,14 @@ session telemetry without performing a provider operation. See
 
 ## Configure the peer
 
-Channel Donatello and double-check the target configuration. Time to lock in.
-Configure the existing peer in PowerShell as Administrator, then restart both
-services to load the target.
+In **PowerShell as Administrator**, configure the existing peer and restart
+both services to load the target. Use the same window for all three steps so
+`$parameters` remains available.
 
 ### 1. Set the peer name
 
-Set `BgpPeerName` to the **configured BGP peer name**, such as `Site17`. This is separate from the BFD peer IP address.
+Set `BgpPeerName` to the **configured BGP peer name**, such as `Site17`.
+This is separate from the BFD peer IP address.
 
 In PowerShell as Administrator, configure the peer name:
 

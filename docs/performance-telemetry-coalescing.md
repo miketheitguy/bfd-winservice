@@ -15,6 +15,12 @@ Their numbers measure the two scheduling changes, without attributing a
 performance effect to secret storage. See the
 [6.0.0 validation record](releases/6.0.0.md#validation) for combined-build testing.
 
+To inspect a metric, see [CPU usage](#cpu-usage),
+[context switches](#context-switches-per-second), [memory](#memory-usage), or
+[thread ready delay and ready time](#thread-ready-delay-and-ready-time).
+The [measurement limits](#measurement-limits) and
+[build identity](#data-and-build-identity) define the scope of these results.
+
 ## Scheduling behavior
 
 Routine sent, received, rejected, and withheld counters remain eligible for
