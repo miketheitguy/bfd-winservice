@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0" Author="BFD service performance investigation">
+  <Profiles>
+    <SystemCollector Id="ServicesCollector" Name="BFD services CPU and memory">
+      <BufferSize Value="256" />
+      <Buffers Value="128" />
+    </SystemCollector>
+    <SystemProvider Id="ServicesProvider">
+      <Keywords>
+        <Keyword Value="CpuConfig" />
+        <Keyword Value="ProcessThread" />
+        <Keyword Value="Loader" />
+        <Keyword Value="CSwitch" />
+        <Keyword Value="ReadyThread" />
+        <Keyword Value="SampledProfile" />
+        <Keyword Value="MemoryInfo" />
+        <Keyword Value="MemoryInfoWS" />
+        <Keyword Value="ProcessCounter" />
+        <Keyword Value="HardFaults" />
+      </Keywords>
+      <Stacks><Stack Value="SampledProfile" /></Stacks>
+    </SystemProvider>
+    <Profile Id="BfdServices.Verbose.File" Name="BfdServices" Description="Scheduler CPU time, sampled CPU stacks, process working sets and commit" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors><SystemCollectorId Value="ServicesCollector"><SystemProviderId Value="ServicesProvider" /></SystemCollectorId></Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

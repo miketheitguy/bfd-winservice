@@ -56,6 +56,11 @@ For BGP integration, follow [Control a Windows BGP peer](docs/bgp.md). For
 probes without a discriminator handshake, use
 [Configure Seamless BFD](docs/seamless.md).
 
+## Performance
+
+See [Performance](docs/performance.md) for the latest verified service
+measurements for version 6.0.0 and later.
+
 ## Documentation
 
 Choose a guide for your next task:
@@ -66,4 +71,4 @@ Choose a guide for your next task:
 | Query service status, inspect versions, and troubleshoot events | [Monitoring](docs/monitoring.md) and [logs](docs/logging.md) |
 | Review security and trust boundaries | [Security overview](docs/security.md) |
 | Build, test, or release changes | [Contributor guide](CONTRIBUTING.md) |
-| Find architecture references, measurements, and release records | [Documentation index](docs/README.md) |
+| Find architecture references and release notes | [Documentation index](docs/README.md) |

@@ -50,20 +50,20 @@ Choose a development task:
 | Review correctness, ownership, and security boundaries | [Code review checklist](../CODE_REVIEW.md) |
 | Select validation scope and record evidence | [Rust validation guide](../RUST_SKILLS_VALIDATION.md) |
 
-## Review performance and release evidence
+## Performance
 
-Choose a record by its tested build. Performance captures and release validation
-have separate scopes:
+Use the [performance section](performance.md) for the latest verified service
+measurements from version 6.0.0 or later.
 
-| Record | Scope |
+## Release notes
+
+Use these records for version changes, compatibility, and validation results:
+
+| Release | Notes and evidence |
 | --- | --- |
-| [6.0.1 release notes](releases/6.0.1.md) | Expected startup-failure recovery isolation, failure diagnostics, and installer validation |
-| [6.0.1 numeric validation record](validation/6.0.1.json) | Timing regression cases, installer checks, deployed hashes, and lab restoration |
-| [Coalesced telemetry performance](performance-telemetry-coalescing.md) | CPU, memory, context switches, and thread-ready distributions with both scheduling changes, before the secrecy changes |
-| [Event-driven dispatcher performance](performance.md) | Earlier capture of the broker dispatcher change, before telemetry coalescing and secrecy changes |
-| [6.0.0 release and validation notes](releases/6.0.0.md) | Public Rust API migration, functionality, compatibility, and combined-build host/VM testing |
-| [6.0.0 numeric validation record](validation/6.0.0.json) | Build hashes, test counts, lab scenarios, and restoration results |
-| [5.0.0 release notes](releases/5.0.0.md) | Historical DPAPI configuration migration and validation scope |
+| 6.0.1 | [Release notes](releases/6.0.1.md) and [validation record](validation/6.0.1.json): startup-failure test isolation and diagnostics |
+| 6.0.0 | [Release notes](releases/6.0.0.md) and [validation record](validation/6.0.0.json): Rust API migration, scheduling, secret ownership, and host/VM validation |
+| 5.0.0 | [Release notes](releases/5.0.0.md): DPAPI configuration migration and validation scope |
 
 Repository-specific agent instructions are in [AGENTS.md](../AGENTS.md) and
 [CLAUDE.md](../CLAUDE.md).

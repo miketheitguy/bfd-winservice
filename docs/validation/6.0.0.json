@@ -582,7 +582,6 @@
     "Three doctests ran on the Windows build host; prebuilt native harnesses ran in the VM.",
     "Miri was not run; it is not installed in the pinned Windows toolchain.",
     "ASan does not instrument Windows system DLLs or the prebuilt MSVC runtime.",
-    "Earlier performance captures exclude secrecy and are not measurements of this combined build.",
     "Two-vCPU, one-peer lab validation does not establish production capacity or long-term leak freedom."
   ]
 }

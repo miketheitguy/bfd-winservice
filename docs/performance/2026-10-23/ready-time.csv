@@ -1,3 +1,0 @@
-service,count,total_us,mean_us,p50_us,p95_us,p99_us,max_us,over_1ms,over_10ms,over_100ms,total_ready_ms,average_concurrent_ready_threads
-BfdWinService,4533,150567.8,33.21592764173836,28.4,65.6,127.4,1587.1,1,0,0,150.56779999999998,0.000503571237458194
-BfdBgpBroker,2028,67194.0,33.133136094674555,26.5,89.5,230.6,480.7,0,0,0,67.194,0.00022472909698996658

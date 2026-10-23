@@ -1,0 +1,3 @@
+# Preserve capture profile bytes so published SHA-256 values survive checkout.
+docs/performance/**/*.wprp -text whitespace=cr-at-eol
+docs/performance/**/*.wpaProfile -text whitespace=cr-at-eol

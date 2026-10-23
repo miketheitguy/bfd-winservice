@@ -1,0 +1,118 @@
+{
+  "version": "6.0.1",
+  "date_utc": "2026-10-23",
+  "source_commit": "fc9a91f8c389478f0508e676ae44ebdaa0836df6",
+  "build": "Local hardened release build installed by the 6.0.1 setup bundle; not the hosted CI executable.",
+  "windows": "Windows Server 2025 Standard Evaluation, build 26100",
+  "vm": "BFD-WS2025",
+  "peer": "BFD-Ubuntu2604, BIRD 2.18",
+  "configuration": {
+    "Local": "172.27.234.142",
+    "Peer": "172.27.229.113",
+    "Auth": "meticulous-sha1",
+    "AuthKeyId": 23,
+    "MinTxUs": 300000,
+    "MinRxUs": 300000,
+    "DetectMult": 3,
+    "BgpPeerName": "BirdLab"
+  },
+  "binaries": {
+    "BfdWinService": {
+      "version": "6.0.1",
+      "sha256": "A718EE5106360A21C6661BC94E91AFE419FF6048C9F805A66F1DE3F94839D0E4",
+      "pid": 4168
+    },
+    "BfdBgpBroker": {
+      "version": "6.0.1",
+      "sha256": "C9936A993DB9D148AE8BC9318CD483816E1F33CF94FA1FF52DF2A7EE65990156",
+      "pid": 5256
+    }
+  },
+  "wpr": "10.0.26100 (CoreSystem)",
+  "wpa_exporter": "11.8.423.12582",
+  "profiles_sha256": {
+    "A.wprp": "e9b848450d967bf9031e214ae5e63fa7764c536c223535d3f27a5aeb709c2b98",
+    "A.wpaProfile": "3a4e09177dc7f50ddd655fb5d8cb3188ce624c3a4dce68c0ed3bc82104a2475c",
+    "B.wprp": "44331c622b363a6e1b6f6a6695e239a77e778af5c66e434a5ddcd79936aa4175",
+    "B.wpaProfile": "5c283e4f2e6a8efaa4e9635a935440420d5548abe997afaf7ca5603e4c4cbe2c"
+  },
+  "captures": [
+    {
+      "capture": "A",
+      "purpose": "CPU and memory",
+      "request_start_utc": "2026-10-23T11:17:01.6220390Z",
+      "request_end_utc": "2026-10-23T11:22:01.7210531Z",
+      "analysis_seconds": 300,
+      "logical_processors": 2,
+      "guest_visible_memory_kib_at_start": 1855424,
+      "process_samples_per_service": 301,
+      "bgp_route_checks": 11,
+      "bgp_route_passes": 11,
+      "bfd_events": 0,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "linux_health": {
+        "before": {
+          "utc": "2026-10-23T11:17:01.082162+00:00",
+          "bfdState": "up",
+          "bgpEstablished": true,
+          "birdRoutePresent": true,
+          "kernelRoutePresent": true
+        },
+        "after": {
+          "utc": "2026-10-23T11:22:09.816755+00:00",
+          "bfdState": "up",
+          "bgpEstablished": true,
+          "birdRoutePresent": true,
+          "kernelRoutePresent": true
+        }
+      },
+      "etl_sha256": "41445e1d0289171f37530397d60122ec7c8d35638dee0b5ed728211fbe07c217"
+    },
+    {
+      "capture": "B",
+      "purpose": "Thread-ready stacks",
+      "request_start_utc": "2026-10-23T11:22:11.5778044Z",
+      "request_end_utc": "2026-10-23T11:27:11.6690030Z",
+      "analysis_seconds": 300,
+      "logical_processors": 2,
+      "guest_visible_memory_kib_at_start": 2027456,
+      "process_samples_per_service": 301,
+      "bgp_route_checks": 11,
+      "bgp_route_passes": 11,
+      "bfd_events": 0,
+      "lost_buffers": 0,
+      "lost_events": 0,
+      "linux_health": {
+        "before": {
+          "utc": "2026-10-23T11:22:11.114353+00:00",
+          "bfdState": "up",
+          "bgpEstablished": true,
+          "birdRoutePresent": true,
+          "kernelRoutePresent": true
+        },
+        "after": {
+          "utc": "2026-10-23T11:27:34.970082+00:00",
+          "bfdState": "up",
+          "bgpEstablished": true,
+          "birdRoutePresent": true,
+          "kernelRoutePresent": true
+        }
+      },
+      "etl_sha256": "17bc46771bd18b54f335582e47126e962cc9758806b436877b2e41f89f012cb9"
+    }
+  ],
+  "ready_analysis": {
+    "window_start_seconds": 1,
+    "window_end_seconds": 300,
+    "duration_seconds": 299,
+    "raw_dispatches": 5590,
+    "excluded_boundary_dispatches": 17
+  },
+  "percentile_method": "P50 median; P95/P99 nearest rank ceil(p*n).",
+  "limits": [
+    "One peer; steady state; no failure injection or load sweep.",
+    "Guest scheduler measurements include profiling overhead and host scheduling effects.",
+    "Ready episodes crossing either analysis boundary are excluded; total ready time is completed-episode sum."
+  ]
+}
