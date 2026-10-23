@@ -33,6 +33,11 @@ the native bridge retains its state, event, binding, and reply storage until
 completion. If ownership cannot be established, BFD fails closed instead of
 releasing pending storage. The broker admits one control manager and at most
 one queued provider request. Cancelled or expired queued requests are discarded.
+An auto-reset request event wakes the single consumer after enqueueing. While
+idle, the dispatcher waits for either that event or the service stop signal,
+giving stop priority when both are signaled. It does not poll an empty queue
+every 50 milliseconds. This changes idle dispatch only; active-call cancellation
+checks and provider watchdog supervision retain their existing budgets.
 An MI operation already running can still finish after its RPC caller cancels;
 cancellation does not roll it back. MI calls remain synchronous and can delay
 broker cleanup.

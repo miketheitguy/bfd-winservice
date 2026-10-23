@@ -146,8 +146,11 @@ installed services roll through these paths:
 
 1. `BfdWinService` receives and validates UDP packets and executes BFD/S-BFD
    timers as LocalService. Its mutable session has one engine owner.
-2. The engine coalesces telemetry into an immutable `ArcSwap` snapshot, normally
-   at most every 100 milliseconds, with a one-second unchanged refresh.
+2. The engine coalesces telemetry into an immutable `ArcSwap` snapshot. Changed
+   snapshots have a 100-millisecond minimum spacing. Routine counters publish on
+   existing packet-loop wakes, with a one-second refresh target; they do not
+   schedule a separate 100-millisecond wake. State, peer, communication, Poll,
+   and configuration changes retain prompt publication eligibility.
 3. BFD's private `ncalrpc` interface, `BfdWinService.Local.v2`, exposes only
    `GetSessionStatusV1`. An RPC worker authorizes the broker, loads one
    snapshot, and copies a fixed record without requesting packet-loop work.
@@ -161,6 +164,12 @@ installed services roll through these paths:
 6. The broker invokes native Management Infrastructure (MI) against the local
    `PS_BgpPeer` provider for its configured target. Windows RRAS manages the BGP
    connection to the remote peer.
+
+The broker's provider dispatcher waits on request and stop events while idle.
+Its capacity-one queue, caller authorization, deadlines, cancellation, and
+provider watchdog remain independent of telemetry. See the
+[provider reference](reference/bgp-provider.md#worker-retries-and-broker-recovery)
+for admission and cleanup limits.
 
 Telemetry vibe check: the status cache is, like, observational. Invalid,
 unavailable, or stale telemetry does not request a BGP action or become a

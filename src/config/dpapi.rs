@@ -1,37 +1,37 @@
 //! Noninteractive DPAPI decryption; registry ACLs control access to machine-scope blobs.
 #![allow(unsafe_code)]
 
+use secrecy::{zeroize::Zeroize, ExposeSecretMut, SecretSlice};
 use std::{io, ptr};
 use windows_sys::Win32::{
     Foundation::LocalFree,
     Security::Cryptography::{CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB},
 };
 
-struct Plaintext(CRYPT_INTEGER_BLOB);
+struct DpapiBuffer(CRYPT_INTEGER_BLOB);
 
-impl Drop for Plaintext {
+impl Drop for DpapiBuffer {
     fn drop(&mut self) {
         if !self.0.pbData.is_null() {
             // SAFETY: DPAPI returns one LocalAlloc allocation containing cbData
             // initialized bytes. This owner alone accesses and frees that allocation.
             // u32 lengths fit usize on the supported Windows x64 target.
             unsafe {
-                super::wipe(std::slice::from_raw_parts_mut(
-                    self.0.pbData,
-                    self.0.cbData as usize,
-                ));
+                std::slice::from_raw_parts_mut(self.0.pbData, self.0.cbData as usize).zeroize();
                 LocalFree(self.0.pbData.cast());
             }
         }
     }
 }
 
-pub(super) fn unprotect(ciphertext: &mut [u8]) -> io::Result<Vec<u8>> {
+pub(super) fn unprotect(ciphertext: &mut [u8]) -> io::Result<SecretSlice<u8>> {
+    #[cfg(test)]
+    DECRYPT_CALLS.with(|count| count.set(count.get() + 1));
     let input = CRYPT_INTEGER_BLOB {
         cbData: u32::try_from(ciphertext.len()).map_err(io::Error::other)?,
         pbData: ciphertext.as_mut_ptr(),
     };
-    let mut plaintext = Plaintext(CRYPT_INTEGER_BLOB {
+    let mut plaintext = DpapiBuffer(CRYPT_INTEGER_BLOB {
         cbData: 0,
         pbData: ptr::null_mut(),
     });
@@ -65,11 +65,20 @@ pub(super) fn unprotect(ciphertext: &mut [u8]) -> io::Result<Vec<u8>> {
             "Secrets\\AuthKeyDpapi must decrypt to a key of 1..=20 bytes",
         ));
     }
-    // SAFETY: successful DPAPI output owns cbData initialized bytes; the length
-    // was bounded above. Copy before the native owner wipes and frees its buffer.
-    Ok(unsafe {
-        std::slice::from_raw_parts(plaintext.0.pbData, plaintext.0.cbData as usize).to_vec()
-    })
+    // Box zeroed storage before copying plaintext, avoiding a plaintext Vec or
+    // reallocation. The native owner wipes and LocalFree-releases its copy next.
+    let mut secret = SecretSlice::from(vec![0; plaintext.0.cbData as usize]);
+    // SAFETY: successful DPAPI output owns cbData initialized bytes; its length
+    // was bounded above and the allocation remains alive through this copy.
+    secret.expose_secret_mut().copy_from_slice(unsafe {
+        std::slice::from_raw_parts(plaintext.0.pbData, plaintext.0.cbData as usize)
+    });
+    Ok(secret)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static DECRYPT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(all(test, not(miri)))]
@@ -81,7 +90,7 @@ pub(super) fn protect(key: &mut [u8]) -> Vec<u8> {
         cbData: u32::try_from(key.len()).unwrap(),
         pbData: key.as_mut_ptr(),
     };
-    let mut output = Plaintext(CRYPT_INTEGER_BLOB {
+    let mut output = DpapiBuffer(CRYPT_INTEGER_BLOB {
         cbData: 0,
         pbData: ptr::null_mut(),
     });
@@ -110,6 +119,7 @@ pub(super) fn protect(key: &mut [u8]) -> Vec<u8> {
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[test]
     fn machine_scope_round_trip_works_with_write_restricted_token() {
@@ -129,9 +139,8 @@ mod tests {
         let mut ciphertext = protect(&mut expected);
         let token = restricted_token(crate::bgp::ipc::SERVICE_SID, false);
         let _identity = OwnIdentity::enter(&token);
-        let mut actual = unprotect(&mut ciphertext).unwrap();
-        assert_eq!(actual, expected);
-        super::super::wipe(&mut actual);
+        let actual = unprotect(&mut ciphertext).unwrap();
+        assert_eq!(actual.expose_secret(), expected);
     }
 
     #[test]
@@ -145,6 +154,12 @@ mod tests {
             let mut ciphertext = protect(&mut vec![0x61; length]);
             assert!(unprotect(&mut ciphertext).is_err());
         }
-        assert_eq!(unprotect(&mut protect(&mut [0x42; 20])).unwrap().len(), 20);
+        assert_eq!(
+            unprotect(&mut protect(&mut [0x42; 20]))
+                .unwrap()
+                .expose_secret()
+                .len(),
+            20
+        );
     }
 }

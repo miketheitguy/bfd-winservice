@@ -395,7 +395,8 @@ impl Engine {
     }
 
     /// Returns immutable administrative snapshots. Recorded changes publish at
-    /// most every 100 ms; an unchanged engine republishes its view each second.
+    /// most every 100 ms on engine wakes, with a one-second refresh target.
+    /// State/configuration changes retain the shorter publication wake.
     /// Queries read shared `Arc` snapshots without requesting packet-loop work.
     pub fn status_observer(&self) -> StatusObserver {
         self.status_publisher.observer()
@@ -411,7 +412,9 @@ impl Engine {
                 self.timing,
                 self.transport.source_port,
             );
-            self.status_publisher.publish(snapshot, revision, now);
+            if self.status_publisher.publish(snapshot, revision, now) {
+                self.status_telemetry.published();
+            }
         }
     }
 
@@ -485,6 +488,7 @@ impl Engine {
         remote_discriminator: u32,
         log: &mut Logger,
     ) {
+        self.status_telemetry.prioritize();
         if !self.event_admitted(false, log) {
             return;
         }
@@ -562,6 +566,7 @@ impl Engine {
     }
     fn transmit(&mut self, kind: Transmission, log: &mut Logger, last_error: &mut Option<Instant>) {
         let now = Instant::now();
+        let polling = self.session.polling();
         let packet = self.session.prepare_packet(kind, now);
         if let Err(error) = self.transport.send(&packet.data) {
             self.status_telemetry.socket_error(&error, now);
@@ -575,6 +580,9 @@ impl Engine {
         } else {
             self.session.record_transmission(&packet);
             self.status_telemetry.sent(now);
+        }
+        if self.session.polling() != polling {
+            self.status_telemetry.prioritize();
         }
     }
 
@@ -591,6 +599,7 @@ impl Engine {
             reflector.set_timing(timing);
         }
         self.timing = timing;
+        self.status_telemetry.prioritize();
         Ok(())
     }
 
@@ -669,11 +678,12 @@ impl Engine {
     }
 
     /// Bounds a wait so the fallback settings read and the idle wakeup still occur.
-    /// Unpublished events shorten the status deadline to the publication interval.
+    /// Ordinary counters share existing protocol wakes; important changes retain
+    /// the publication-interval wake. The refresh remains a separate upper bound.
     fn idle_wait(&self, now: Instant, next_poll: Instant) -> Duration {
         let status_wait = self
             .status_publisher
-            .deadline(self.status_telemetry.revision())
+            .wake_deadline(self.status_telemetry.priority_change())
             .saturating_duration_since(now);
         if self.settings_retry {
             return next_poll
@@ -1045,6 +1055,7 @@ impl Engine {
             self.publish_status(Instant::now());
             let before_interval = self.session.transmit_interval();
             let before_enabled = self.session.periodic_enabled();
+            let before_polling = self.session.polling();
             let mut fault = None;
             match self.transport.receive_into(&mut datagram) {
                 Ok(()) => {
@@ -1063,6 +1074,9 @@ impl Engine {
                                 datagram.source,
                                 received_at,
                             );
+                            if self.session.polling() != before_polling {
+                                self.status_telemetry.prioritize();
+                            }
                             self.peer_report_changed(log);
                             if !communicating && self.session.communicating() {
                                 self.peer_communication_changed(
@@ -1230,6 +1244,59 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
+    fn ordinary_status_updates_share_wakes_and_keep_the_refresh_bound() {
+        let options = Options::reflector("127.0.0.89".parse().unwrap(), 99)
+            .into_validated()
+            .unwrap();
+        let mut log = Logger::new().unwrap();
+        let mut engine = Engine::from_config(options, &mut log).unwrap();
+        let observer = engine.status_observer();
+        let original = observer.snapshot().unwrap();
+        let created = original.publication.captured;
+        let poll = created + Duration::from_secs(10);
+
+        engine
+            .status_telemetry
+            .sent(created + Duration::from_millis(20));
+        assert_eq!(
+            engine.idle_wait(created + Duration::from_millis(50), poll),
+            Duration::from_millis(950),
+            "ordinary counters must not introduce a 100 ms wake"
+        );
+        engine.publish_status(created + Duration::from_millis(99));
+        assert!(Arc::ptr_eq(&original, &observer.snapshot().unwrap()));
+
+        // Model an existing packet/timer wake after publication becomes eligible.
+        let wake = created + Duration::from_millis(250);
+        engine.publish_status(wake);
+        let published = observer.snapshot().unwrap();
+        assert_eq!(published.packets_sent_successfully, 1);
+        assert_eq!(published.publication.captured, wake);
+        assert!(!Arc::ptr_eq(&original, &published));
+
+        engine
+            .status_telemetry
+            .sent(wake + Duration::from_millis(20));
+        assert_eq!(
+            engine.idle_wait(wake + Duration::from_millis(100), poll),
+            Duration::from_millis(900)
+        );
+        // With no intervening protocol wake, the refresh still publishes counters.
+        engine.publish_status(wake + status::REFRESH_INTERVAL);
+        assert_eq!(observer.snapshot().unwrap().packets_sent_successfully, 2);
+        assert_eq!(original.packets_sent_successfully, 0);
+
+        engine.live_settings = LiveSettings::Poll;
+        let at = wake + status::REFRESH_INTERVAL;
+        assert_eq!(
+            engine.idle_wait(at, at + Duration::from_millis(40)),
+            Duration::from_millis(40),
+            "settings reads retain their independent deadline"
+        );
+    }
+
+    #[cfg(not(miri))]
+    #[test]
     fn status_deadline_bounds_idle_wait_and_transitions_are_coalesced() {
         let options = Options::reflector("127.0.0.88".parse().unwrap(), 99)
             .into_validated()
@@ -1260,6 +1327,7 @@ mod tests {
         let first = created + status::PUBLICATION_INTERVAL;
         engine.publish_status(first);
         assert_eq!(observer.snapshot().unwrap().local_state, State::AdminDown);
+        assert!(!engine.status_telemetry.priority_change());
         let published = observer.snapshot().unwrap();
         // Changes inside one interval are coalesced into the next publication.
         engine.set_reflector_admin_down(false, &mut log);

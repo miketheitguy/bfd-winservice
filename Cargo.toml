@@ -1,6 +1,6 @@
 [package]
 name = "bfd-winservice"
-version = "5.0.0"
+version = "6.0.0"
 edition = "2021"
 default-run = "bfd-winservice"
 
@@ -9,6 +9,7 @@ arc-swap = "1.9"
 clap = { version = "4.5", features = ["derive"] }
 md-5 = "0.10"
 rand = "0.8"
+secrecy = "0.10.3"
 sha1 = "0.10"
 subtle = "2.6"
 thiserror = "2"

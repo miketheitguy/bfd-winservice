@@ -1,11 +1,10 @@
 //! RFC 5880 section 4 wire format and section 6.7 authentication.
-use crate::{
-    config::wipe,
-    error::{AuthError, ConfigError, PacketError},
-};
+use crate::error::{AuthError, ConfigError, PacketError};
 use clap::ValueEnum;
 use md5::Md5;
+use secrecy::{zeroize::Zeroizing, ExposeSecret, ExposeSecretMut, SecretSlice};
 use sha1::{Digest, Sha1};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 /// Size of the fixed BFD control header, excluding optional authentication.
@@ -16,7 +15,7 @@ const AUTH: u8 = 0x04;
 /// Bounded wire storage for runtime transmissions without heap allocation.
 #[derive(Clone)]
 pub(crate) struct PacketBuffer {
-    bytes: [u8; MAX_PACKET_LEN],
+    bytes: Zeroizing<[u8; MAX_PACKET_LEN]>,
     length: u8,
 }
 
@@ -110,18 +109,29 @@ impl AuthType {
 
 // Deliberately no Debug implementation: never include key material in logs.
 /// Validated authentication settings. Reconstruct to change the type or key.
+/// Clones share immutable secret storage, which is wiped when its last owner drops.
 ///
 /// ```compile_fail
 /// use bfd_winservice::packet::{AuthConfig, AuthType};
 /// let mut auth = AuthConfig::new(AuthType::KeyedSha1, 0, vec![1; 20]).unwrap();
 /// auth.kind = AuthType::SimplePassword; // Would invalidate the validated key length.
 /// ```
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AuthConfig {
     kind: AuthType,
     key_id: u8,
-    key: Vec<u8>,
+    key: Arc<SecretSlice<u8>>,
 }
+
+impl PartialEq for AuthConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.key_id == other.key_id
+            && bool::from(self.key.expose_secret().ct_eq(other.key.expose_secret()))
+    }
+}
+
+impl Eq for AuthConfig {}
 
 impl AuthConfig {
     /// Return the validated authentication type without exposing mutation.
@@ -130,33 +140,55 @@ impl AuthConfig {
     }
 
     /// Validate the key length for this type; None requires an empty key.
+    /// The supplied buffer is wiped on success and failure.
     ///
     /// # Errors
     /// Returns an error for a missing, oversized, or unexpected key.
-    pub fn new(kind: AuthType, key_id: u8, mut key: Vec<u8>) -> Result<Self, ConfigError> {
+    pub fn new(kind: AuthType, key_id: u8, key: Vec<u8>) -> Result<Self, ConfigError> {
+        let key = Zeroizing::new(key);
+        Self::validate_key_length(kind, key.len())?;
+        // Allocate before copying plaintext, so boxing cannot reallocate secret bytes.
+        let mut secret = SecretSlice::from(vec![0; key.len()]);
+        secret.expose_secret_mut().copy_from_slice(&key);
+        Ok(Self {
+            kind,
+            key_id,
+            key: Arc::new(secret),
+        })
+    }
+
+    pub(crate) fn from_secret(
+        kind: AuthType,
+        key_id: u8,
+        key: Arc<SecretSlice<u8>>,
+    ) -> Result<Self, ConfigError> {
+        Self::validate_key_length(kind, key.expose_secret().len())?;
+        Ok(Self { kind, key_id, key })
+    }
+
+    fn validate_key_length(kind: AuthType, length: usize) -> Result<(), ConfigError> {
         let max = if kind == AuthType::SimplePassword {
             16
         } else {
             kind.hash_len()
         };
         let error = if kind == AuthType::None {
-            (!key.is_empty()).then_some(ConfigError::UnexpectedKey)
+            (length != 0).then_some(ConfigError::UnexpectedKey)
         } else {
-            (key.is_empty() || key.len() > max)
-                .then_some(ConfigError::InvalidKeyLength { kind, max })
+            (length == 0 || length > max).then_some(ConfigError::InvalidKeyLength { kind, max })
         };
         if let Some(error) = error {
-            wipe(&mut key);
             return Err(error);
         }
-        Ok(Self { kind, key_id, key })
+        Ok(())
     }
 
     fn digest(&self, header: &[u8]) -> [u8; 20] {
         #[cfg(test)]
         DIGEST_CALLS.with(|count| count.set(count.get() + 1));
-        let mut padded_key = [0; 20];
-        padded_key[..self.key.len()].copy_from_slice(&self.key);
+        let mut padded_key = Zeroizing::new([0; 20]);
+        let secret = self.key.expose_secret();
+        padded_key[..secret.len()].copy_from_slice(secret);
         let key = &padded_key[..self.kind.hash_len()];
         let mut digest = [0; 20];
         match self.kind {
@@ -174,7 +206,6 @@ impl AuthConfig {
             }
             _ => unreachable!("digest only used for keyed authentication"),
         }
-        wipe(&mut padded_key);
         digest
     }
 
@@ -220,7 +251,8 @@ impl AuthConfig {
             return Err(AuthError::WrongKeyId);
         }
         if self.kind == AuthType::SimplePassword {
-            if auth_len != 3 + self.key.len() || !bool::from(data[27..].ct_eq(&self.key)) {
+            let key = self.key.expose_secret();
+            if auth_len != 3 + key.len() || !bool::from(data[27..].ct_eq(key)) {
                 return Err(AuthError::PasswordMismatch);
             }
             return Ok(None);
@@ -241,13 +273,6 @@ impl AuthConfig {
         }
         // Return the accepted sequence only after cryptographic verification succeeds.
         Ok(Some(seq))
-    }
-}
-
-impl Drop for AuthConfig {
-    fn drop(&mut self) {
-        // Each clone owns a separate key allocation; clear it before release.
-        wipe(&mut self.key);
     }
 }
 
@@ -370,6 +395,7 @@ impl ControlPacket {
     ///
     /// Does not validate header fields. The supplied sequence is used only by
     /// keyed authentication; this method does not advance sequence tracking.
+    /// Simple-password output contains the key; callers own its cleanup after use.
     pub fn encode(&self, auth: &AuthConfig, sequence: u32) -> Vec<u8> {
         self.encode_buffer(auth, sequence).to_vec()
     }
@@ -378,11 +404,11 @@ impl ControlPacket {
         let length = HEADER_LEN
             + match auth.kind {
                 AuthType::None => 0,
-                AuthType::SimplePassword => 3 + auth.key.len(),
+                AuthType::SimplePassword => 3 + auth.key.expose_secret().len(),
                 _ => 8 + auth.kind.hash_len(),
             };
         let mut packet = PacketBuffer {
-            bytes: [0; MAX_PACKET_LEN],
+            bytes: Zeroizing::new([0; MAX_PACKET_LEN]),
             length: u8::try_from(length).expect("validated authentication fits the BFD length"),
         };
         let data = &mut packet.bytes[..length];
@@ -406,7 +432,7 @@ impl ControlPacket {
             data[1] |= AUTH;
             if auth.kind == AuthType::SimplePassword {
                 data[24..27].copy_from_slice(&[1, packet.length - 24, auth.key_id]);
-                data[27..].copy_from_slice(&auth.key);
+                data[27..].copy_from_slice(auth.key.expose_secret());
             } else {
                 data[24..28].copy_from_slice(&[
                     auth.kind as u8,

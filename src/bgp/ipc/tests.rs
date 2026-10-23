@@ -18,6 +18,59 @@ use windows_sys::Win32::System::Rpc::{
 const WORLD: &str = "S-1-1-0";
 const FIXTURE: &str = "BFD_BGP_RPC_FIXTURE";
 
+fn queued_request() -> Request {
+    Request {
+        method: Method::Get,
+        response: mpsc::sync_channel(1).0,
+        cancelled: Arc::new(AtomicBool::new(false)),
+        deadline: Instant::now() + Duration::from_secs(5),
+    }
+}
+
+#[test]
+fn dispatcher_wakes_for_requests_and_preserves_the_queue_bound() {
+    let (sender, dispatcher) = Dispatcher::new().unwrap();
+    let stop = StopSignal::new().unwrap();
+    // Prequeued and subsequent requests must each retain their own notification.
+    for _ in 0..128 {
+        sender.try_send(queued_request()).unwrap();
+        assert_eq!(sender.try_send(queued_request()).unwrap_err(), ERROR_BUSY);
+        assert!(dispatcher.request(&stop).unwrap().is_some());
+    }
+    thread::scope(|scope| {
+        let wait_stop = &stop;
+        let waiting = scope.spawn(move || dispatcher.request(wait_stop).unwrap());
+        sender.try_send(queued_request()).unwrap();
+        assert!(waiting.join().unwrap().is_some());
+    });
+}
+
+#[test]
+fn dispatcher_stop_wakes_an_idle_wait_and_takes_priority_over_queued_work() {
+    let (_sender, dispatcher) = Dispatcher::new().unwrap();
+    let stop = StopSignal::new().unwrap();
+    thread::scope(|scope| {
+        let (finished, completion) = mpsc::sync_channel(1);
+        let wait_stop = &stop;
+        let waiting = scope.spawn(move || {
+            assert!(dispatcher.request(wait_stop).unwrap().is_none());
+            finished.send(()).unwrap();
+        });
+        assert_eq!(
+            completion.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        stop.signal().unwrap();
+        completion.recv_timeout(Duration::from_secs(5)).unwrap();
+        waiting.join().unwrap();
+    });
+
+    let (sender, dispatcher) = Dispatcher::new().unwrap();
+    sender.try_send(queued_request()).unwrap();
+    assert!(dispatcher.request(&stop).unwrap().is_none());
+    assert!(dispatcher.receiver.try_recv().is_ok());
+}
+
 struct Fixture {
     child: Child,
     directory: TempDir,

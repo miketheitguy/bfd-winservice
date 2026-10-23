@@ -160,9 +160,11 @@ and MD5 keys are 1–16 bytes; SHA-1 keys are 1–20 bytes. One key is active at
 time. The MSI creates the Secrets key with a protected ACL: SYSTEM and
 Administrators have full control, and `NT SERVICE\BfdWinService` has read access.
 
-With `Auth=none`, omit `Secrets\AuthKeyDpapi`; a provisioned key fails validation.
+With `Auth=none`, the service does not read or decrypt `Secrets\AuthKeyDpapi`.
 Missing keys for authenticated modes, unreadable values, wrong types, failed
 decryption, and invalid lengths stop startup. There is no plaintext fallback.
+The service loads the key only during startup. Restart after changing the key,
+authentication type, or key ID; live S-BFD settings updates retain the startup key.
 
 Classical multihop BFD with `BgpPeerName` requires `Auth=meticulous-sha1` or
 `Auth=meticulous-md5` and a valid matching key. Other modes fail startup

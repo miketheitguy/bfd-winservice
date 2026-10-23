@@ -1126,7 +1126,7 @@ mod tests {
         options.point_to_point = true;
         options.discriminator = Some(7);
         options.auth = crate::packet::AuthType::MeticulousSha1;
-        options.auth_key = Some("secret".to_owned());
+        options.auth_key = Some("secret".into());
         let auth = options.validate().unwrap();
         let mut session = Session::new(options.clone(), auth.clone()).unwrap();
         let now = Instant::now();

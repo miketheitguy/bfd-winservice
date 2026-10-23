@@ -9,6 +9,7 @@ use std::{
 
 use crate::error::ConfigError;
 use clap::ValueEnum;
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretSlice, SecretString};
 
 use crate::packet::{AuthConfig, AuthType};
 
@@ -22,25 +23,6 @@ pub(crate) use registry::load_bgp_target;
 pub use registry::load_registry;
 #[cfg(windows)]
 pub(crate) use registry::{load_sbfd_settings, SettingsWatch};
-
-/// Overwrites values that held secret material before their storage is released.
-/// Volatile writes keep the optimizer from removing stores to memory about to be freed.
-#[allow(unsafe_code)] // Volatile writes are the only portable way to keep these stores.
-pub(crate) fn wipe<T: Copy + Default>(values: &mut [T]) {
-    for value in values {
-        // SAFETY: value is a valid, aligned, exclusive reference to an initialized T.
-        unsafe { std::ptr::write_volatile(value, T::default()) };
-    }
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-}
-
-/// Clears a string that held key text, keeping it valid (and empty) UTF-8.
-#[allow(unsafe_code)] // Zero bytes are valid UTF-8, preserving the String invariant.
-pub(crate) fn wipe_string(text: &mut String) {
-    // SAFETY: wipe stores only zero bytes, which keep the contents valid UTF-8.
-    wipe(unsafe { text.as_mut_vec() });
-    text.clear();
-}
 
 /// Windows Service Control Manager service name.
 pub const SERVICE_NAME: &str = "BfdWinService";
@@ -216,12 +198,12 @@ pub struct Options {
     pub auth: AuthType,
     /// Authentication key identifier
     pub auth_key_id: u8,
-    /// Programmatic ASCII authentication key; registry loading uses Secrets\AuthKeyDpapi.
-    pub auth_key: Option<String>,
-    /// Programmatic authentication key as hexadecimal bytes; not a registry setting.
-    pub auth_key_hex: Option<String>,
+    /// Programmatic ASCII key in zeroizing storage; registry loading uses Secrets\AuthKeyDpapi.
+    pub auth_key: Option<SecretString>,
+    /// Programmatic hexadecimal key in zeroizing storage; not a registry setting.
+    pub auth_key_hex: Option<SecretString>,
     // Raw key recovered from Secrets\AuthKeyDpapi. Keep it out of public text settings.
-    auth_key_bytes: Option<Vec<u8>>,
+    auth_key_bytes: Option<Arc<SecretSlice<u8>>>,
     /// Append-log path read from LogFilePath; use an absolute path for SCM
     pub log_file_path: PathBuf,
     /// Enable append logging; false leaves the configured path untouched
@@ -239,11 +221,17 @@ pub struct Options {
 
 impl Options {
     /// Consumes raw settings, normalizes the profile, and checks all role invariants.
+    /// Releases secret input fields; authentication owns the validated key.
     ///
     /// # Errors
     /// Returns a typed configuration error without exposing authentication keys.
     pub fn into_validated(mut self) -> Result<ValidatedOptions, ConfigError> {
         let auth = self.validate()?;
+        // The validated authentication owns the key. Release input representations
+        // now, rather than retaining duplicate plaintext throughout service life.
+        self.auth_key.take();
+        self.auth_key_hex.take();
+        self.auth_key_bytes.take();
         let role = match self.session_type {
             SessionType::Classical => ProtocolRole::Classical(self.mode),
             SessionType::SbfdInitiator => ProtocolRole::Initiator {
@@ -441,8 +429,9 @@ impl Options {
             return Err(ConfigError::LinkLocalRequiresInterface);
         }
         let key = if let Some(bytes) = &self.auth_key_bytes {
-            bytes.clone()
+            return AuthConfig::from_secret(self.auth, self.auth_key_id, Arc::clone(bytes));
         } else if let Some(hex) = &self.auth_key_hex {
+            let hex = hex.expose_secret();
             if hex.len() % 2 != 0 || !hex.is_ascii() {
                 return Err(ConfigError::InvalidHexKey);
             }
@@ -450,13 +439,14 @@ impl Options {
             if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 return Err(ConfigError::InvalidHexByte);
             }
-            (0..hex.len())
-                .step_by(2)
-                .map(|i| {
-                    u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ConfigError::InvalidHexByte)
-                })
-                .collect::<Result<Vec<_>, _>>()?
+            let mut secret = SecretSlice::from(vec![0; hex.len() / 2]);
+            for (i, byte) in secret.expose_secret_mut().iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)
+                    .map_err(|_| ConfigError::InvalidHexByte)?;
+            }
+            return AuthConfig::from_secret(self.auth, self.auth_key_id, Arc::new(secret));
         } else if let Some(key) = &self.auth_key {
+            let key = key.expose_secret();
             if !key.is_ascii() {
                 return Err(ConfigError::NonAsciiKey);
             }
@@ -591,21 +581,6 @@ impl Options {
                 },
             )
             .into(),
-        }
-    }
-}
-
-impl Drop for Options {
-    fn drop(&mut self) {
-        if let Some(key) = &mut self.auth_key_bytes {
-            wipe(key);
-        }
-        // Validation copies keys into AuthConfig, which clears its own copy.
-        for key in [&mut self.auth_key, &mut self.auth_key_hex]
-            .into_iter()
-            .flatten()
-        {
-            wipe_string(key);
         }
     }
 }
@@ -775,16 +750,41 @@ mod tests {
     }
 
     #[test]
-    fn wiping_clears_secret_storage_and_keeps_strings_valid() {
-        let mut bytes = *b"secret";
-        wipe(&mut bytes);
-        assert_eq!(bytes, [0; 6]);
-        let mut units = [0x73u16, 0x65];
-        wipe(&mut units);
-        assert_eq!(units, [0, 0]);
-        let mut text = String::from("hidden-key");
-        wipe_string(&mut text);
-        assert!(text.is_empty());
+    fn validated_settings_release_secret_inputs_and_redact_text() {
+        for hex in [false, true] {
+            let mut options = multihop();
+            options.auth = AuthType::MeticulousSha1;
+            if hex {
+                options.auth_key_hex = Some("00ff8041".into());
+            } else {
+                options.auth_key = Some("hidden-key".into());
+            }
+            let debug = format!("{:?} {:?}", options.auth_key, options.auth_key_hex);
+            assert!(debug.contains("REDACTED"));
+            assert!(!debug.contains("hidden-key") && !debug.contains("00ff8041"));
+            let auth = options.validate().unwrap();
+            let snapshot = options.into_validated().unwrap();
+            assert!(snapshot.auth_key.is_none() && snapshot.auth_key_hex.is_none());
+            assert!(snapshot.auth_key_bytes.is_none());
+            assert!(&auth == snapshot.authentication());
+        }
+    }
+
+    #[test]
+    fn validated_settings_transfer_the_decrypted_key_without_copying() {
+        let mut options = multihop();
+        options.auth = AuthType::MeticulousSha1;
+        let key = Arc::new(SecretSlice::from(vec![0, 255, 128, 65]));
+        let weak = Arc::downgrade(&key);
+        options.auth_key_bytes = Some(key);
+        let snapshot = options.into_validated().unwrap();
+        assert!(snapshot.auth_key_bytes.is_none());
+        assert_eq!(weak.strong_count(), 1);
+        let auth = snapshot.authentication().clone();
+        drop(snapshot);
+        assert_eq!(weak.strong_count(), 1);
+        drop(auth);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]

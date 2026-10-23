@@ -4,11 +4,13 @@
 use super::{Mode, Options, SessionType, Timing, ValidatedOptions, PARAMETERS_KEY};
 use crate::packet::AuthType;
 use clap::ValueEnum;
+use secrecy::zeroize::{Zeroize, Zeroizing};
 use std::{
     io,
     net::IpAddr,
     os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle},
     ptr,
+    sync::Arc,
 };
 use windows_sys::Win32::{
     Foundation::{
@@ -35,6 +37,8 @@ use windows_sys::Win32::{
 /// incorrect value types, invalid Unicode/enums, or overflowing numeric values.
 /// Authenticated sessions require a decryptable Secrets\AuthKeyDpapi binary value.
 /// Error messages identify value names and never include authentication keys.
+/// Call only during service startup; live updates use load_sbfd_settings and
+/// retain the startup key without reading or decrypting it again.
 pub fn load_registry() -> io::Result<ValidatedOptions> {
     Registry::new(HKEY_LOCAL_MACHINE, PARAMETERS_KEY)
         .load()?
@@ -228,21 +232,6 @@ impl Registry {
                 .map_err(|_| invalid("Auth", "has an unsupported authentication type"))?;
         }
         options.auth_key_id = self.narrow("AuthKeyId")?.unwrap_or(options.auth_key_id);
-        // DPAPI is the only registry key source.
-        // Access errors and malformed blobs never fall back to unauthenticated BFD.
-        let mut secrets_path = self.path.clone();
-        secrets_path.pop();
-        if !secrets_path.is_empty() {
-            secrets_path.push(u16::from(b'\\'));
-        }
-        secrets_path.extend("Secrets".encode_utf16().chain(Some(0)));
-        let secrets = Self {
-            root: self.root,
-            path: secrets_path,
-        };
-        if let Some(mut ciphertext) = secrets.binary("AuthKeyDpapi")? {
-            options.auth_key_bytes = Some(super::dpapi::unprotect(&mut ciphertext)?);
-        }
         if let Some(path) = self.string("LogFilePath")? {
             options.log_file_path = path.into();
         }
@@ -253,6 +242,25 @@ impl Registry {
         options.bgp_peer_name = self.string("BgpPeerName")?;
         options.bgp_routing_domain = self.string("BgpRoutingDomain")?;
         options.verbose = self.boolean("Verbose")?;
+        // This full loader is used at startup only. Disabled authentication never
+        // opens Secrets; live S-BFD reads use sbfd_settings instead of this path.
+        if options.auth != AuthType::None {
+            let mut secrets_path = self.path.clone();
+            secrets_path.pop();
+            if !secrets_path.is_empty() {
+                secrets_path.push(u16::from(b'\\'));
+            }
+            secrets_path.extend("Secrets".encode_utf16().chain(Some(0)));
+            let secrets = Self {
+                root: self.root,
+                path: secrets_path,
+            };
+            // DPAPI is the only registry key source. Failures never fall back to
+            // unauthenticated BFD. Both ciphertext and native plaintext are wiped.
+            if let Some(mut ciphertext) = secrets.binary("AuthKeyDpapi")? {
+                options.auth_key_bytes = Some(Arc::new(super::dpapi::unprotect(&mut ciphertext)?));
+            }
+        }
         Ok(options)
     }
 
@@ -323,9 +331,9 @@ impl Registry {
         Ok(Some(value))
     }
 
-    fn binary(&self, name: &str) -> io::Result<Option<Vec<u8>>> {
+    fn binary(&self, name: &str) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
         let name_wide = wide(name);
-        let mut buffer = vec![0u8; 1024];
+        let mut buffer = Zeroizing::new(vec![0u8; 1024]);
         // Match the text reader's 64-KiB limit and four-attempt growth budget.
         for _ in 0..4 {
             let mut bytes = u32::try_from(buffer.len()).map_err(io::Error::other)?;
@@ -346,6 +354,7 @@ impl Registry {
                 return Ok(None);
             }
             if status == ERROR_MORE_DATA {
+                buffer.zeroize();
                 if bytes > 65536 {
                     return Err(invalid("Secrets\\AuthKeyDpapi", "exceeds 64 KiB"));
                 }
@@ -398,7 +407,7 @@ impl Registry {
             }
             // Values can hold authentication keys; clear every native buffer we release.
             if status == ERROR_MORE_DATA {
-                super::wipe(&mut buffer);
+                buffer.zeroize();
                 if bytes > 65536 || !bytes.is_multiple_of(2) {
                     return Err(invalid(name, "has an invalid or oversized string length"));
                 }
@@ -410,10 +419,10 @@ impl Registry {
             }
             let result = check(status, name, "REG_SZ")
                 .and_then(|()| decode_string(name, &buffer, bytes).map(Some));
-            super::wipe(&mut buffer);
+            buffer.zeroize();
             return result;
         }
-        super::wipe(&mut buffer);
+        buffer.zeroize();
         Err(invalid(name, "changed size repeatedly while reading"))
     }
 }
@@ -972,7 +981,7 @@ mod tests {
                     == AuthConfig::new(AuthType::MeticulousSha1, 0, expected.to_vec()).unwrap()
             );
             fixture.string("Auth", "none");
-            assert!(fixture.load().unwrap().validate().is_err());
+            assert!(fixture.load().unwrap().validate().is_ok());
             fixture.string("Auth", "meticulous-md5");
             fixture.protected_key(&mut [1; 17]);
             assert!(fixture.load().unwrap().validate().is_err());
@@ -982,6 +991,7 @@ mod tests {
         fn native_registry_rejects_invalid_dpapi_values_without_legacy_fallback() {
             let fixture = Fixture::new();
             fixture.addresses();
+            fixture.string("Auth", "meticulous-sha1");
             fixture.string("AuthKey", "legacy-must-not-be-used");
             for (kind, bytes) in [
                 (REG_SZ, vec![0, 0]),
@@ -997,6 +1007,67 @@ mod tests {
                         && !error.contains("legacy-must-not-be-used")
                 );
             }
+        }
+
+        #[test]
+        fn native_registry_does_not_read_secrets_when_authentication_is_disabled() {
+            let fixture = Fixture::new();
+            fixture.addresses();
+            fixture.dword("Multihop", 1);
+            let decryptions = super::super::super::dpapi::DECRYPT_CALLS.with(|count| count.get());
+            // Invalid ciphertext and even an invalid value type must be ignored.
+            for (kind, bytes) in [
+                (REG_BINARY, b"invalid-dpapi-secret".as_slice()),
+                (REG_SZ, &[0, 0]),
+            ] {
+                fixture.secret(kind, bytes);
+                let options = fixture.load().unwrap().into_validated().unwrap();
+                assert_eq!(options.authentication().kind(), AuthType::None);
+            }
+            assert_eq!(
+                super::super::super::dpapi::DECRYPT_CALLS.with(|count| count.get()),
+                decryptions
+            );
+        }
+
+        #[test]
+        fn native_registry_decrypts_once_at_startup_and_retains_key_for_live_updates() {
+            use crate::packet::{test_packet, State};
+            let fixture = Fixture::new();
+            fixture.string("Local", "192.0.2.2");
+            fixture.string("SessionType", "sbfd-reflector");
+            fixture.dword("Discriminator", 99);
+            fixture.string("Auth", "meticulous-sha1");
+            fixture.protected_key(&mut [0, 255, 128, 65]);
+            let decryptions = super::super::super::dpapi::DECRYPT_CALLS.with(|count| count.get());
+            let options = fixture.load().unwrap().into_validated().unwrap();
+            assert_eq!(
+                super::super::super::dpapi::DECRYPT_CALLS.with(|count| count.get()),
+                decryptions + 1
+            );
+            assert!(options.auth_key_bytes.is_none());
+            // Corrupt stored identity/key material after startup. Timing reloads,
+            // packet encoding and verification must continue using the startup key.
+            fixture.secret(REG_BINARY, b"invalid-dpapi-secret");
+            fixture.string("Auth", "not-a-live-setting");
+            fixture.dword("MinRxUs", 500_000);
+            let registry = Registry::new(fixture.key, "");
+            let auth = options.authentication().clone();
+            for sequence in 1..=3 {
+                assert_eq!(
+                    registry.sbfd_settings(&options).unwrap().0.min_rx_us,
+                    500_000
+                );
+                let packet = test_packet(State::Down).encode(&auth, sequence);
+                assert_eq!(auth.verify(&packet, None).unwrap(), Some(sequence));
+            }
+            assert_eq!(
+                super::super::super::dpapi::DECRYPT_CALLS.with(|count| count.get()),
+                decryptions + 1
+            );
+            // A subsequent startup reads the new configuration and fails closed.
+            fixture.string("Auth", "meticulous-sha1");
+            assert!(fixture.load().is_err());
         }
 
         #[test]

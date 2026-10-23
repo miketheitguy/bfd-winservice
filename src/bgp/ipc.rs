@@ -7,7 +7,7 @@ use crate::{local_rpc, runtime::StopSignal};
 use std::{
     ffi::c_void,
     io,
-    os::windows::io::AsRawHandle,
+    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     ptr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -19,9 +19,12 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{
         ERROR_ACCESS_DENIED, ERROR_BUSY, ERROR_INVALID_DATA, ERROR_NOT_FOUND,
-        ERROR_OPERATION_ABORTED, ERROR_SERVICE_NOT_ACTIVE,
+        ERROR_OPERATION_ABORTED, ERROR_SERVICE_NOT_ACTIVE, WAIT_FAILED, WAIT_OBJECT_0,
     },
-    System::Rpc::{RpcServerTestCancel, RpcServerUnregisterIf, RPC_S_CALL_IN_PROGRESS, RPC_S_OK},
+    System::{
+        Rpc::{RpcServerTestCancel, RpcServerUnregisterIf, RPC_S_CALL_IN_PROGRESS, RPC_S_OK},
+        Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, INFINITE},
+    },
 };
 
 pub(crate) const SERVICE_SID: &str =
@@ -61,7 +64,7 @@ pub(crate) fn require_broker_identity() -> io::Result<()> {
 struct Policy {
     user: String,
     group: String,
-    sender: SyncSender<Request>,
+    sender: RequestSender,
     stop: StopSignal,
 }
 
@@ -86,8 +89,77 @@ impl Request {
     }
 }
 
-pub(crate) struct Listener {
+struct RequestSender {
+    sender: SyncSender<Request>,
+    ready: Arc<OwnedHandle>,
+}
+
+impl RequestSender {
+    fn try_send(&self, request: Request) -> Result<(), u32> {
+        self.sender.try_send(request).map_err(|_| ERROR_BUSY)?;
+        // SAFETY: the shared event remains owned throughout notification.
+        if unsafe { SetEvent(self.ready.as_raw_handle()) } == 0 {
+            return Err(io::Error::last_os_error()
+                .raw_os_error()
+                .map_or(ERROR_SERVICE_NOT_ACTIVE, |code| code as u32));
+        }
+        Ok(())
+    }
+}
+
+struct Dispatcher {
     receiver: Receiver<Request>,
+    ready: Arc<OwnedHandle>,
+}
+
+impl Dispatcher {
+    fn new() -> io::Result<(RequestSender, Self)> {
+        // SAFETY: creates a private, initially clear auto-reset event; no pointers retained.
+        let raw = unsafe { CreateEventW(ptr::null(), 0, 0, ptr::null()) };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: successful creation transfers this new handle into RAII ownership.
+        let ready = Arc::new(unsafe { OwnedHandle::from_raw_handle(raw) });
+        let (sender, receiver) = mpsc::sync_channel(1);
+        Ok((
+            RequestSender {
+                sender,
+                ready: Arc::clone(&ready),
+            },
+            Self { receiver, ready },
+        ))
+    }
+
+    fn request(&self, stop: &StopSignal) -> io::Result<Option<Request>> {
+        let handles = [stop.event().as_raw_handle(), self.ready.as_raw_handle()];
+        if stop.is_requested() {
+            return Ok(None);
+        }
+        // SAFETY: both handles remain owned for this synchronous wait. Stop is
+        // first so it wins when both events are signaled. There is one consumer.
+        let result = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE) };
+        if result == WAIT_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        if result == WAIT_OBJECT_0 || stop.is_requested() {
+            return Ok(None);
+        }
+        if result != WAIT_OBJECT_0 + 1 {
+            return Err(io::Error::other("unexpected BGP dispatcher wait result"));
+        }
+        // Always consume the event before removing the request. The producer
+        // enqueues before signaling, so a subsequent enqueue cannot lose its
+        // wakeup to this request's auto-reset event consumption.
+        self.receiver
+            .try_recv()
+            .map(Some)
+            .map_err(|_| io::Error::other("BGP RPC dispatcher closed"))
+    }
+}
+
+pub(crate) struct Listener {
+    dispatcher: Dispatcher,
     _descriptor: local_rpc::LocalAllocation,
 }
 
@@ -98,7 +170,7 @@ impl Listener {
     }
     fn with_policy(endpoint: &str, user: &str, group: &str, stop: StopSignal) -> io::Result<Self> {
         let descriptor = local_rpc::LocalAllocation::descriptor(&format!("D:P(A;;GA;;;{group})"))?;
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let (sender, dispatcher) = Dispatcher::new()?;
         POLICY
             .set(Policy {
                 user: user.to_owned(),
@@ -116,21 +188,12 @@ impl Listener {
             local_rpc::register_interface(endpoint, descriptor.0, interface, Some(authorize))
         }?;
         Ok(Self {
-            receiver,
+            dispatcher,
             _descriptor: descriptor,
         })
     }
     pub(crate) fn request(&self, stop: &StopSignal) -> io::Result<Option<Request>> {
-        while !stop.is_requested() {
-            match self.receiver.recv_timeout(Duration::from_millis(50)) {
-                Ok(request) => return Ok(Some(request)),
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(io::Error::other("BGP RPC dispatcher closed"))
-                }
-            }
-        }
-        Ok(None)
+        self.dispatcher.request(stop)
     }
 }
 
@@ -223,17 +286,18 @@ unsafe extern "C" fn bgp_rpc_control(
     let _cancel = CancelOnDrop(Arc::clone(&cancelled));
     let (sender, receiver) = mpsc::sync_channel(1);
     let deadline = Instant::now() + Duration::from_millis(u64::from(CALL_TIMEOUT_MS));
-    if policy
-        .sender
-        .try_send(Request {
-            method,
-            response: sender,
-            cancelled,
-            deadline,
-        })
-        .is_err()
-    {
-        return ERROR_BUSY;
+    if let Err(status) = policy.sender.try_send(Request {
+        method,
+        response: sender,
+        cancelled,
+        deadline,
+    }) {
+        if status != ERROR_BUSY {
+            // A failed notification must not leave a live dispatcher asleep with
+            // queued work. CancelOnDrop invalidates this request before it can run.
+            let _ = policy.stop.signal();
+        }
+        return status;
     }
     loop {
         // SAFETY: this thread is executing the current native RPC call.

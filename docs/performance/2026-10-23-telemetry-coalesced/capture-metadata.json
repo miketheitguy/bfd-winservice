@@ -1,0 +1,88 @@
+{
+  "date_utc": "2026-10-23",
+  "captures": [
+    {
+      "capture": "A",
+      "purpose": "CPU and memory",
+      "request_start_utc": "2026-10-23T04:23:37.3758732Z",
+      "request_end_utc": "2026-10-23T04:28:37.4760776Z",
+      "analysis_seconds": 300,
+      "logical_processors": 2,
+      "guest_visible_memory_kib_at_start": 1963456,
+      "samples_per_service": 301,
+      "bgp_route_checks": 11,
+      "bfd_events": 0,
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "supporting_cpu": {
+        "BfdWinService": {
+          "scheduler_cpu_ms": 148.64820000081266,
+          "process_counter_cpu_ms": 218.75,
+          "sampled_cpu_observations": 23
+        },
+        "BfdBgpBroker": {
+          "scheduler_cpu_ms": 84.95009999976982,
+          "process_counter_cpu_ms": 109.375,
+          "sampled_cpu_observations": 32
+        }
+      }
+    },
+    {
+      "capture": "B",
+      "purpose": "Thread-ready stacks",
+      "request_start_utc": "2026-10-23T04:29:20.9383371Z",
+      "request_end_utc": "2026-10-23T04:34:21.0333833Z",
+      "analysis_seconds": 300,
+      "logical_processors": 2,
+      "guest_visible_memory_kib_at_start": 2082240,
+      "samples_per_service": 301,
+      "bgp_route_checks": 11,
+      "bfd_events": 0,
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "supporting_cpu": {
+        "BfdWinService": {
+          "scheduler_cpu_ms": 188.79499999996065,
+          "process_counter_cpu_ms": 187.5,
+          "sampled_cpu_observations": 36
+        },
+        "BfdBgpBroker": {
+          "scheduler_cpu_ms": 113.38430000023169,
+          "process_counter_cpu_ms": 93.75,
+          "sampled_cpu_observations": 105
+        }
+      }
+    }
+  ],
+  "build": {
+    "base_tag": "v5.0.0",
+    "base_commit": "1c191fa3486caf8717e213943d7c7fe190107c53",
+    "changed_sources": {
+      "src/bgp/ipc.rs": "de23ea7fe5443fe534c1c6a2a5cc602c5ab6e0d3361311a093aa1d9c20b4bc20",
+      "src/bgp/ipc/tests.rs": "350d36e201eea9b7797288f02140dd7ef2b7e3f5d204bd504f4ad475ae47547e",
+      "src/runtime.rs": "d85eedf78dea8c4cb943fae33e2080a49856eb18618443477f47cc36f4cc53d3",
+      "src/runtime/status.rs": "3b01f1997fce714f8a3fdcb50e59b988399a3351ddbbb8ed723808f977be0cc8"
+    },
+    "rustc": "rustc 1.101.0-nightly (21b707e3f 2026-09-30)\nbinary: rustc\ncommit-hash: 21b707e3f97e0b522ebd2f277a862339625ad83f\ncommit-date: 2026-09-30\nhost: x86_64-pc-windows-msvc\nrelease: 1.101.0-nightly\nLLVM version: 23.1.1",
+    "cargo": "cargo 1.101.0-nightly (f3865b2a4 2026-09-29)"
+  },
+  "binaries": {
+    "BfdWinService": {
+      "version": "5.0.0",
+      "sha256": "8820E6A779512C97284399A8F408428C0F23A652EF20C20972359B04DB502C85",
+      "pid": 5192
+    },
+    "BfdBgpBroker": {
+      "version": "5.0.0",
+      "sha256": "3CEFE8F707FBCAAABCFCEBC82C38F04C80F514E0179ACACF8FDD135D46712088",
+      "pid": 3944
+    }
+  },
+  "ready_analysis": {
+    "start_seconds": 1,
+    "end_seconds": 300,
+    "duration_seconds": 299,
+    "raw_dispatches": 5560,
+    "excluded_boundary_dispatches": 23
+  }
+}

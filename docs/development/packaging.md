@@ -48,7 +48,8 @@ three numeric fields within Windows Installer's `255.255.65535` version limits.
 To reproduce a tagged release locally, stamp its version before building:
 
 ```powershell
-.\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0'
+.\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0' `
+    -RepositoryRoot (Get-Location).Path
 .\scripts\Build-Bundle.ps1
 ```
 

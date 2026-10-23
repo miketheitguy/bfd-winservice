@@ -85,7 +85,7 @@ fn options(kind: AuthType, public_value: u32) -> Options {
     options.discriminator = Some(LOCAL_DISC);
     options.auth = kind;
     options.auth_key_id = KEY_ID;
-    options.auth_key_hex = (kind != AuthType::None).then(|| format!("{public_value:08x}"));
+    options.auth_key_hex = (kind != AuthType::None).then(|| format!("{public_value:08x}").into());
     options.min_tx_us = 100_000;
     options.min_rx_us = 100_000;
     options

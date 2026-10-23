@@ -29,6 +29,7 @@ For exact input bounds, mutation strategy, and assertions, see the
 
 Install the repository's pinned Rust toolchain and Visual Studio C++ Build Tools
 with AddressSanitizer, as described in [the contributor guide](../CONTRIBUTING.md#before-you-begin).
+Run the build wrapper commands in PowerShell 7 (`pwsh`).
 The [Windows cargo-fuzz guide](https://rust-fuzz.github.io/book/cargo-fuzz/windows/setup.html)
 describes the runtime requirements.
 

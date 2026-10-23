@@ -132,8 +132,12 @@ rather than clamped, transmuted, or mapped to a default state.
 Turtle power keeps observation separate from packet processing. One owner keeps
 the state story, like, totally mellow: BFD's engine exclusively owns mutable
 session state. It updates scalar telemetry and existing monotonic samples during
-packet processing. Changed publications have a 100-millisecond minimum spacing;
-unchanged refresh targets one second. Scheduling can delay either publication.
+packet processing. Changed publications have a 100-millisecond minimum spacing.
+Ordinary packet counters and activity timestamps publish on existing engine
+wakes after that spacing, with a one-second refresh target. They do not add a
+100-millisecond packet-loop wake. State, peer, communication, Poll, and
+configuration changes retain the shorter publication wake; new socket-error
+conditions also request it. Scheduling can delay any publication.
 The capture metadata, instance, sequence, and event instants belong to the same
 immutable publication as the protocol values.
 

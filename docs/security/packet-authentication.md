@@ -95,7 +95,12 @@ The Secrets key has a protected ACL granting SYSTEM and Administrators full
 control and the BFD service SID read access. Machine-scope DPAPI permits any
 local account holding the ciphertext to decrypt it, so that ACL remains the
 service-specific access boundary. Logs and configuration errors omit key values.
-The service wipes temporary decrypted buffers and clears its owned key storage
-when it is released; active packet authentication still requires key bytes in memory. See
+The service reads and decrypts the key only during startup when authentication is
+enabled. Live S-BFD updates retain that key without accessing the stored secret.
+The native DPAPI allocation is wiped before `LocalFree`, and temporary ciphertext
+buffers are zeroized. Validated authentication uses shared `secrecy::SecretSlice`
+storage; cloning authentication does not copy key bytes. Consumed input fields
+are released after validation, and the key is wiped when its last owner drops.
+Active packet authentication still requires key bytes in memory. See
 [Configure authentication](../configuration.md#authentication) for the settings
 and an example.

@@ -170,6 +170,11 @@ recovery, and final route/stability checks. Native loopback and installer
 fixtures alone do not establish these results. Record the tested source,
 scenario outcomes, and restoration checks with each run.
 
+During an RRAS restart, SCM can report Running before the BGP provider accepts
+queries. A lab sampler can treat the specific `0x800710dd` service-not-running
+result as unavailable while retrying within its readiness timeout. Preserve
+other query errors as failures; do not infer provider readiness from SCM alone.
+
 ## Verify protected authentication keys
 
 On Windows, run the provisioning-script fixtures and native registry tests:
@@ -230,7 +235,8 @@ its Rust code; ASan can work with an uninstrumented standard library, but that
 reduces coverage. See [Cargo's build-std configuration](https://doc.rust-lang.org/cargo/reference/unstable.html#build-std).
 
 Install the Visual Studio C++ Build Tools with the AddressSanitizer component.
-From the repository root, run the test wrapper:
+Use PowerShell 7 (`pwsh`) for the ASan and fuzz build wrappers. From the
+repository root, run the test wrapper:
 
 ```powershell
 .\scripts\Test-Asan.ps1
@@ -242,6 +248,10 @@ active Cargo build record and emitted ASan hooks in the native RPC client before
 running tests. Build records, native instrumentation evidence, and test output
 are written under `target/asan`. Confirm that the wrapper reports verified
 native instrumentation and that the tests finish without an ASan report.
+
+Run socket test suites one at a time on a given host. Separate Cargo target
+directories do not isolate the loopback addresses and ports used by the native
+UDP fixtures.
 
 For a focused check, pass Cargo arguments to the wrapper:
 

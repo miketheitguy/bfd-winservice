@@ -688,7 +688,7 @@ mod tests {
         options.multihop = true;
         options.auth = crate::packet::AuthType::MeticulousSha1;
         options.auth_key_id = 9;
-        options.auth_key = Some("hidden-key".to_owned());
+        options.auth_key = Some("hidden-key".into());
         let source = "[2001:db8::2]:55000".parse().unwrap();
         let payload = authentication_payload(&options, 7, source, "authentication digest mismatch");
         let mut expected = Vec::new();

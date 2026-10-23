@@ -1,0 +1,588 @@
+{
+  "version": "6.0.0",
+  "date_utc": "2026-10-23",
+  "source_base_commit": "8e0effb5b28634cc626da5b2551a0b383a6e70de",
+  "changed_source_sha256": {
+    "Cargo.lock": "c97439da50cc8e61bf763b59987a9b3beb02d1ec1688d099461158e1ec09ed76",
+    "Cargo.toml": "c0d91f970dec7d44813d0fb45783a509a6589d40cc841291e200abde5f24e12b",
+    "fuzz/Cargo.lock": "7cd6e6af8d0782fa41263d7a6cfbf8dfaee8f55bc9e23ffac80cdb314631cd81",
+    "fuzz/src/lib.rs": "426d88261d0687277e32345c880c4f6dbd2f8a0d15a07a7f7de6d9b7c814724e",
+    "src/bgp/ipc.rs": "de23ea7fe5443fe534c1c6a2a5cc602c5ab6e0d3361311a093aa1d9c20b4bc20",
+    "src/bgp/ipc/tests.rs": "350d36e201eea9b7797288f02140dd7ef2b7e3f5d204bd504f4ad475ae47547e",
+    "src/config.rs": "79febfb1006b3ad0eaf8b6cc6278b05eeb92cddc5ef4c6c07bc2612a85ae55d7",
+    "src/config/dpapi.rs": "f03321a471560415cc69b10fdcc56362feddcb222ae6c4d3ef67ac44db40fbaf",
+    "src/config/registry.rs": "1842bd67763a3924f8269b3728f95c6bd1380104c82cb2445965bff3607ab2e2",
+    "src/event_log.rs": "e3f39e816590da5cde71c9c3591c16a54810eff3a34feb4668737c9be56bc8a1",
+    "src/packet.rs": "faf3ad6676784898f243c1264e12b8c45cc6e84bbce026e3f7643c1c1f2189cf",
+    "src/runtime.rs": "d85eedf78dea8c4cb943fae33e2080a49856eb18618443477f47cc36f4cc53d3",
+    "src/runtime/status.rs": "d12f766df5ea27187687509da0e84cec56c9666a2f0cca2f8ec00fd18ea6fafa",
+    "src/transport.rs": "66160eccf722f0c0fa6730513b75653897e571a1f60f00c33f6cff84bb01e78e",
+    "tests/windows_udp.rs": "37f79bca58e8b8602666bd5eff8e5c88e7423a05955e9d9e409e3d9b2a7e422a"
+  },
+  "environment": {
+    "windows": "Windows Server 2025, build 26100",
+    "windows_vm": "BFD-WS2025",
+    "vcpus": 2,
+    "peer": "Ubuntu 26.04 / BIRD 2.18",
+    "toolchain": "[toolchain]\nchannel = \"nightly-2026-10-01\"\ncomponents = [\"clippy\", \"rustfmt\", \"rust-src\"]\ntargets = [\"x86_64-pc-windows-msvc\"]\nprofile = \"minimal\""
+  },
+  "host_tests_passed_per_profile_including_doctests": 303,
+  "vm_tests": [
+    {
+      "label": "debug-windows_hardening",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "a3805856e1d94b8ec7ebb1d06067c5350c36849e467f39fd54a8b328066aba78"
+    },
+    {
+      "label": "debug-service_entry",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "48b5d2aa8e245067ebde515027e3e6f826a892f3fe02b0d2fe3cf73e25139907"
+    },
+    {
+      "label": "debug-bfd-bgp-broker",
+      "passed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "e3d997a99b83ee35182befdef91181dbea7edf20e7c4bfa3b71497f6a473437f"
+    },
+    {
+      "label": "debug-rfc7419",
+      "passed": 4,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "eee05f6d0a10310bc9189543fa93c6a9be4c10ffa6502e4cbf40a81ef16c3de7"
+    },
+    {
+      "label": "debug-rfc7880",
+      "passed": 9,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "b09e646b7f58193e9914e321ddeef006eb02954a17e4c7d9b48976f449e4e697"
+    },
+    {
+      "label": "debug-seamless",
+      "passed": 12,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "d1e2ba590b8e10acaad19276adf20dec2626435f3d33c7a5d4bee2ea629ec9a2"
+    },
+    {
+      "label": "debug-rfc5880",
+      "passed": 18,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "269d9106e92b18cba847e0093f6499316f9f61aa5fdc2b2832c5f82cb666f2cb"
+    },
+    {
+      "label": "debug-bfd-winservice",
+      "passed": 4,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "da9950f8246bc8a2184826602dc963784ad93fb9211b5d8983b4dbf89c33b11f"
+    },
+    {
+      "label": "debug-windows_status",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "347dff459d410ec00dbe58cb2e41e9e668daa3f0efaa6514d42be9a419995f08"
+    },
+    {
+      "label": "debug-windows_udp",
+      "passed": 13,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "938ce5df72fba1795cdc521514f4d7a30570c11a3462143213e84fe17475eb40"
+    },
+    {
+      "label": "debug-windows_seamless",
+      "passed": 6,
+      "ignored": 1,
+      "exit_code": 0,
+      "harness_sha256": "b763d87adb2de932d39236f1ecac20c80e3ba09f02b680a95b8ef29e810979b5"
+    },
+    {
+      "label": "debug-bfd_winservice",
+      "passed": 231,
+      "ignored": 11,
+      "exit_code": 0,
+      "harness_sha256": "95b9a0dc9c83bcc586d66c0df44e76b3bc7acae709b636a0766c3baf961dccf6"
+    },
+    {
+      "label": "release-bfd-bgp-broker",
+      "passed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "dba08889745c81192d9cfa33e6cc115e3b9fb2b12c4d72b75f3f5bece861f440"
+    },
+    {
+      "label": "release-rfc7419",
+      "passed": 4,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "a02cd54f12657b067f7a7547f5f6ec9252a16c2edd7b574b6de1488f43b79293"
+    },
+    {
+      "label": "release-windows_hardening",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "dd32e68a0aff8d552385fd5d1c4a1f9f6d1dc015c21b645bf2c93a0ded47e33b"
+    },
+    {
+      "label": "release-windows_status",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "8dbce10be94ab3d1eb0c776b1f7536135e4d0ac3383df9f122080a8b974658a3"
+    },
+    {
+      "label": "release-service_entry",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "eec792f5ce2e897d49fdc8fe3278876c2e705d7837c3357af065d88a634c1df4"
+    },
+    {
+      "label": "release-rfc7880",
+      "passed": 9,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "3703aa74c4ed06b942448a30ac7c0bb89ecf3d84558a1deef6ed6fdbf5e3999f"
+    },
+    {
+      "label": "release-seamless",
+      "passed": 12,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "b8a4d5eb8a0a8b1e1f4314fe6a3cca1900e78024f3098b93a4ccec9952008618"
+    },
+    {
+      "label": "release-bfd-winservice",
+      "passed": 4,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "48bc423b63fbaa00fbbd9ea5232d1c95f7c327425a775a8ea5998ab6d454c1ad"
+    },
+    {
+      "label": "release-rfc5880",
+      "passed": 18,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "8f5b4006a7584106f20504f0716429db0af085550599e5a2017be995aca0ebf8"
+    },
+    {
+      "label": "release-windows_seamless",
+      "passed": 6,
+      "ignored": 1,
+      "exit_code": 0,
+      "harness_sha256": "004c1845821966e875c964029b25ce102123eb96a15f860c7b98e6c0b9e6013d"
+    },
+    {
+      "label": "release-windows_udp",
+      "passed": 13,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "33460e43a157fe6b8852999d8d7e985c1d8e79fcd39914c2336b6390c6170946"
+    },
+    {
+      "label": "release-bfd_winservice",
+      "passed": 231,
+      "ignored": 11,
+      "exit_code": 0,
+      "harness_sha256": "ff1fbd67e54de44ba24968cefaf55efa6ae1b159de337a5c28c4c2020fa04430"
+    },
+    {
+      "label": "asan-bfd_winservice",
+      "passed": 231,
+      "ignored": 11,
+      "exit_code": 0,
+      "harness_sha256": "cde19a61fc8c57907b76bfaed3539a1b4d3b61bf16928f95a164467b8f387e60"
+    },
+    {
+      "label": "asan-bfd-winservice",
+      "passed": 4,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "60c06f6340a97993b00eb854fbe1609570e656e6dd0a17e273e90d3e97cc5f46"
+    },
+    {
+      "label": "asan-windows_hardening",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "a26bcf6f711a03c7baac920e49d46804dd7cd4f15df83969cac350ab3b70c3bd"
+    },
+    {
+      "label": "asan-rfc7880",
+      "passed": 9,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "2b6a22be3fcc4a45fdb334e76d8c7aceed227361d90591cfc93a7c7b29efe587"
+    },
+    {
+      "label": "asan-rfc5880",
+      "passed": 18,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "38b8f7d1bb492e424e57e28d448aae7c29563f00d2e141af9c42d43c00aecf8e"
+    },
+    {
+      "label": "asan-service_entry",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "78a1d2ee121a06238a5de082713a9336bf71f34f027a5300b2a758519425d7d0"
+    },
+    {
+      "label": "asan-windows_seamless",
+      "passed": 6,
+      "ignored": 1,
+      "exit_code": 0,
+      "harness_sha256": "cae27fb2e375048a44ce35e8b9e13261c65e3550f235e3c6ef3832b7a0b3a522"
+    },
+    {
+      "label": "asan-rfc7419",
+      "passed": 4,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "4c00b86fada8781f9c226b30971c3180f3c2407c7b923bc3433ae257e2fe58df"
+    },
+    {
+      "label": "asan-seamless",
+      "passed": 12,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "00631139af4b532f09afdf3e821d95f9b1d37b1035a7784c2e3b69ccc9d6999f"
+    },
+    {
+      "label": "asan-bfd-bgp-broker",
+      "passed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "3809c53865524db949e584682ad008ed4ac3bf633f24824e1d48959982c62ef0"
+    },
+    {
+      "label": "asan-windows_status",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "1df095b2f085875d769991ae32863bf2dde86a78f90b8937c3000faa852861ea"
+    },
+    {
+      "label": "asan-windows_udp",
+      "passed": 13,
+      "ignored": 0,
+      "exit_code": 0,
+      "harness_sha256": "d3ca4923d443decc9044a7dd936abd99e04110c96ad7e5c80fb6d9c6079d8087"
+    },
+    {
+      "label": "native-native_provider_traffic_preserves_fixed_rpc_policy_and_replacement_rejection",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0
+    },
+    {
+      "label": "native-native_bgp_rpc_and_provider_security_coexist",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0
+    },
+    {
+      "label": "native-native_mi_reads_configured_rras_peer",
+      "passed": 1,
+      "ignored": 0,
+      "exit_code": 0
+    }
+  ],
+  "lab_harness_sha256": {
+    "auth_probe.py": "c5e4048921533d9d81003187b2ba939941f4944e73d91f2da0b0c216d79f3d97",
+    "Collect-Evidence.ps1": "e14eda5d6ef3fba42dc3d70d86caa67fee08f4bd9a01055f14da43d677205936",
+    "Lab.ps1": "8545344210c88dc6a5a250e335be8393925f17e3e95ac17944f0558c01c50d49",
+    "Test-Authentication.ps1": "64629b1822df62b55fea23410a63d25a24979a6ac7ef4f658404797c54cfe285",
+    "Test-BgpOnly.ps1": "d5f76389fcdce826ea951679ec95ffb74d3a3cbfb10844a60361a62e59c96ef4",
+    "Test-ClientEvents.ps1": "5e5422f61362ec0fffb1f8a2fc6201124f8703b962153be21a170abf551c4d7a",
+    "Test-Final.ps1": "6b96ec7b182fa27b72086f65c70f84cf5abfb50f24e641257342c79adab1b83f",
+    "Test-Interruptions.ps1": "a14c2d98b5e80f4612e3a00a7f0cbf64f2e78e4103f38a4c085c7274055d269c",
+    "Test-Isolated.ps1": "ff7528bb6171bbe1b5aa4c49d8c939b991ec26beb05a91f525fdc91d4bc8b176",
+    "Test-Reverse.ps1": "74f2622a034f7d3fef9bfb1e00f899a15d2945fcadba420becede77d42127964"
+  },
+  "vm_fuzz_regression_tests_passed": 9,
+  "vm_fuzz_campaigns": {
+    "packet": {
+      "runs": 10000,
+      "asan_findings": 0
+    },
+    "session": {
+      "runs": 10000,
+      "asan_findings": 0
+    },
+    "initiator": {
+      "runs": 10000,
+      "asan_findings": 0
+    },
+    "reflector": {
+      "runs": 10000,
+      "asan_findings": 0
+    }
+  },
+  "installer": {
+    "rollback_fixtures_passed": true,
+    "fresh_install_repair_security_removal_passed": true,
+    "bundle": {
+      "Version": "6.0.0",
+      "InitialRuntime": "v14.51.36247.00",
+      "InstalledRuntime": "v14.51.36247.00",
+      "RepeatInstall": true,
+      "Repair": true,
+      "RuntimeRetainedAfterUninstall": true
+    },
+    "published_upgrade": {
+      "PreviousVersion": "2.0.0",
+      "Version": "6.0.0",
+      "FailedUpgradeRestoredPublishedBytes": true,
+      "ConfigurationPreserved": true,
+      "OtherServicePolicyPreserved": true,
+      "BfdPrivilegesReducedToChangeNotify": true,
+      "BrokerPrivilegesReducedToChangeNotify": true,
+      "LogsPreserved": true,
+      "Repair": true,
+      "MutualRpcAuthentication": true
+    }
+  },
+  "preserved_lab_upgrade": {
+    "StartedUtc": "2026-10-23T04:59:09.1927297Z",
+    "FinishedUtc": "2026-10-23T05:00:17.4377999Z",
+    "ParametersPreserved": true,
+    "ProtectedKeyPreserved": true,
+    "BfdUp": true,
+    "BgpConnected": true,
+    "Files": [
+      {
+        "Name": "bfd-bgp-broker.exe",
+        "Version": "6.0.0",
+        "SHA256": "5E20618DF5580E5F6B3F588026A5BDB98854C519B542C11F4878F6A37CE37621"
+      },
+      {
+        "Name": "bfd-winservice.exe",
+        "Version": "6.0.0",
+        "SHA256": "5833D38A135A4A6EFE6EDB890B44BFF20F1ED81E20724A40A156BAB6D13D3ED2"
+      }
+    ]
+  },
+  "authentication_cases": [
+    {
+      "mode": "keyed-sha1",
+      "case": "matching-credentials",
+      "passed": true
+    },
+    {
+      "mode": "keyed-sha1",
+      "case": "wrong-secret",
+      "passed": true
+    },
+    {
+      "mode": "keyed-sha1",
+      "case": "wrong-id",
+      "passed": true
+    },
+    {
+      "mode": "keyed-sha1",
+      "case": "missing-auth",
+      "passed": true
+    },
+    {
+      "mode": "keyed-sha1",
+      "case": "wrong-type",
+      "passed": true
+    },
+    {
+      "mode": "keyed-sha1",
+      "case": "replay",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-md5",
+      "case": "matching-credentials",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-md5",
+      "case": "wrong-secret",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-md5",
+      "case": "wrong-id",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-md5",
+      "case": "missing-auth",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-md5",
+      "case": "wrong-type",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-md5",
+      "case": "replay",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-sha1",
+      "case": "matching-credentials",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-sha1",
+      "case": "wrong-secret",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-sha1",
+      "case": "wrong-id",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-sha1",
+      "case": "missing-auth",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-sha1",
+      "case": "wrong-type",
+      "passed": true
+    },
+    {
+      "mode": "meticulous-sha1",
+      "case": "replay",
+      "passed": true
+    },
+    {
+      "mode": "simple-password",
+      "case": "matching-credentials",
+      "passed": true
+    },
+    {
+      "mode": "simple-password",
+      "case": "wrong-secret",
+      "passed": true
+    },
+    {
+      "mode": "simple-password",
+      "case": "wrong-id",
+      "passed": true
+    },
+    {
+      "mode": "simple-password",
+      "case": "missing-auth",
+      "passed": true
+    },
+    {
+      "mode": "simple-password",
+      "case": "wrong-type",
+      "passed": true
+    },
+    {
+      "mode": "simple-password",
+      "case": "replay",
+      "passed": true
+    }
+  ],
+  "isolated_controllers": {
+    "passed": true,
+    "bird_cycles": 3,
+    "windows_cycles": 3,
+    "bgp_only_passed": true
+  },
+  "interruption_cases": [
+    {
+      "name": "Windows BFD administrative stop and restart",
+      "passed": true
+    },
+    {
+      "name": "Stopping Windows BFD releases its own BGP Stop",
+      "passed": true
+    },
+    {
+      "name": "Independent BFD and broker startup and shutdown",
+      "passed": true
+    },
+    {
+      "name": "Broker unavailable during BFD failure and pending-action recovery",
+      "passed": true
+    },
+    {
+      "name": "Windows RRAS BGP service stop and restart with healthy BFD",
+      "passed": true
+    },
+    {
+      "name": "BIRD BFD protocol administrative disable and enable",
+      "passed": true
+    },
+    {
+      "name": "BIRD daemon service stop and restart",
+      "passed": true
+    },
+    {
+      "name": "Windows BGP operator Stop and Start while BFD stays Up",
+      "passed": true
+    },
+    {
+      "name": "Both BFD-to-BGP controllers, bidirectional BFD loss",
+      "passed": true
+    },
+    {
+      "name": "One-way BFD loss from BIRD to Windows",
+      "passed": true
+    },
+    {
+      "name": "One-way BFD loss from Windows to BIRD",
+      "passed": true
+    },
+    {
+      "name": "BIRD daemon freeze and resume",
+      "passed": true
+    },
+    {
+      "name": "Windows BFD process termination and SCM recovery",
+      "passed": true
+    },
+    {
+      "name": "Windows transit adapter down and up",
+      "passed": true
+    }
+  ],
+  "disabled_file_logging_recovery": {
+    "passed": true,
+    "failure_report_interval_seconds": 60.522679399999994
+  },
+  "final_stability": {
+    "passed": true,
+    "observed_seconds": 121.0733,
+    "samples": 13,
+    "configuration_preserved": true,
+    "protected_key_preserved": true
+  },
+  "linux_restoration": {
+    "passed": true,
+    "configurationAndOriginalKeyPreserved": true,
+    "negotiatedDetectionSeconds": 0.9,
+    "nftTables": []
+  },
+  "setup_sha256": "0a851dea4ccded814fb9e9b204fddf2e03c8023923c4bc83e5b10ba1b16aeb34",
+  "limits": [
+    "Three doctests ran on the Windows build host; prebuilt native harnesses ran in the VM.",
+    "Miri was not run; it is not installed in the pinned Windows toolchain.",
+    "ASan does not instrument Windows system DLLs or the prebuilt MSVC runtime.",
+    "Earlier performance captures exclude secrecy and are not measurements of this combined build.",
+    "Two-vCPU, one-peer lab validation does not establish production capacity or long-term leak freedom."
+  ]
+}

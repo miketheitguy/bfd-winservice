@@ -198,9 +198,9 @@ impl StatusObserver {
     }
 }
 
-/// Publishes changed telemetry at most every [`PUBLICATION_INTERVAL`] and an
-/// unchanged view every [`REFRESH_INTERVAL`]. The engine thread only compares a
-/// revision until publication is due; readers never delay a publication.
+/// Publishes changed telemetry at most every [`PUBLICATION_INTERVAL`]. Ordinary
+/// updates use existing engine wakes, bounded by [`REFRESH_INTERVAL`]. Important
+/// changes retain the earlier wake; readers never request a publication.
 pub(crate) struct StatusPublisher {
     observer: StatusObserver,
     last_publish: Instant,
@@ -228,15 +228,25 @@ impl StatusPublisher {
         self.observer.clone()
     }
 
-    /// Returns when the next publication is due for the telemetry `revision`.
-    /// The engine's idle wait uses it, so an unchanged engine wakes only for
-    /// the one-second refresh.
+    /// Returns the earliest eligible publication time for this revision.
+    /// Eligibility alone does not require a separate packet-loop wake.
     pub(crate) fn deadline(&self, revision: u64) -> Instant {
         self.last_publish
             + if revision == self.published_revision {
                 REFRESH_INTERVAL
             } else {
                 PUBLICATION_INTERVAL
+            }
+    }
+
+    /// Ordinary counters can wait for protocol work, but must not postpone the
+    /// refresh. State/configuration changes retain the shorter publication wake.
+    pub(crate) fn wake_deadline(&self, priority_change: bool) -> Instant {
+        self.last_publish
+            + if priority_change {
+                PUBLICATION_INTERVAL
+            } else {
+                REFRESH_INTERVAL
             }
     }
 
@@ -277,8 +287,9 @@ impl Drop for StatusPublisher {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct PeerReport {
+    discriminator: u32,
     state: State,
     diagnostic: u8,
     min_tx_us: u32,
@@ -325,6 +336,7 @@ pub(crate) struct StatusTelemetry {
     instance: NonZeroU128,
     started: Instant,
     revision: u64,
+    priority_change: bool,
     anchor: Instant,
     anchor_utc: SystemTime,
     allowed_peers: Arc<[IpAddr]>,
@@ -361,6 +373,7 @@ impl StatusTelemetry {
             instance: NonZeroU128::new(rand::random()).unwrap_or(NonZeroU128::MIN),
             started: now,
             revision: 0,
+            priority_change: false,
             anchor: now,
             anchor_utc: utc,
             allowed_peers: Arc::from(options.allowed_peers.as_slice()),
@@ -404,6 +417,22 @@ impl StatusTelemetry {
         self.revision
     }
 
+    pub(crate) fn priority_change(&self) -> bool {
+        self.priority_change
+    }
+
+    /// A protocol/administrative change needs the shorter publication wake.
+    /// This flag never changes a BFD transmission or detection deadline.
+    pub(crate) fn prioritize(&mut self) {
+        self.changed();
+        self.priority_change = true;
+    }
+
+    /// Only the engine owner clears priority after storing a coherent snapshot.
+    pub(crate) fn published(&mut self) {
+        self.priority_change = false;
+    }
+
     fn changed(&mut self) {
         // Only equality matters, so wrapping cannot hide a change in practice.
         self.revision = self.revision.wrapping_add(1);
@@ -433,6 +462,9 @@ impl StatusTelemetry {
 
     pub(crate) fn received(&mut self, source: SocketAddr, now: Instant) {
         self.changed();
+        if self.last_source != Some(source) {
+            self.prioritize();
+        }
         self.packets_received_accepted = self.packets_received_accepted.saturating_add(1);
         self.last_received = Some(RecordedTime::pending(now));
         self.last_source = Some(source);
@@ -441,13 +473,18 @@ impl StatusTelemetry {
     pub(crate) fn received_session(&mut self, session: &Session, source: SocketAddr, now: Instant) {
         self.received(source, now);
         let (min_tx_us, min_rx_us, detect_mult) = session.remote_timing();
-        self.peer_report = Some(PeerReport {
+        let report = PeerReport {
+            discriminator: session.remote_discriminator(),
             state: session.remote_state(),
             diagnostic: session.remote_diagnostic(),
             min_tx_us,
             min_rx_us,
             detect_mult,
-        });
+        };
+        if self.peer_report != Some(report) {
+            self.prioritize();
+        }
+        self.peer_report = Some(report);
     }
 
     pub(crate) fn sent(&mut self, now: Instant) {
@@ -457,7 +494,7 @@ impl StatusTelemetry {
     }
 
     pub(crate) fn transition(&mut self, state: State, diagnostic: Diagnostic, now: Instant) {
-        self.changed();
+        self.prioritize();
         self.state_since = RecordedTime::pending(now);
         match state {
             State::Up => {
@@ -478,7 +515,7 @@ impl StatusTelemetry {
     }
 
     pub(crate) fn detection_timeout(&mut self) {
-        self.changed();
+        self.prioritize();
         self.detection_timeouts = self.detection_timeouts.saturating_add(1);
     }
 
@@ -527,13 +564,16 @@ impl StatusTelemetry {
 
     pub(crate) fn socket_error(&mut self, error: &io::Error, now: Instant) {
         self.changed();
+        if self.last_socket_error.is_none() || self.last_socket_error_code != error.raw_os_error() {
+            self.prioritize();
+        }
         self.socket_errors = self.socket_errors.saturating_add(1);
         self.last_socket_error_code = error.raw_os_error();
         self.last_socket_error = Some(RecordedTime::pending(now));
     }
 
     pub(crate) fn configuration_reload(&mut self, succeeded: bool, now: Instant) {
-        self.changed();
+        self.prioritize();
         self.last_configuration_reload = Some(RecordedTime::pending(now));
         self.last_configuration_reload_succeeded = Some(succeeded);
     }
@@ -703,6 +743,49 @@ mod tests {
             publisher.deadline(telemetry.revision()),
             late + PUBLICATION_INTERVAL
         );
+    }
+
+    #[test]
+    fn routine_packets_do_not_request_wakes_but_peer_and_state_changes_do() {
+        let (_, mut session, mut telemetry, now) = fixture();
+        let source = "127.0.0.81:52002".parse().unwrap();
+        telemetry.received_session(&session, source, now);
+        assert!(telemetry.priority_change());
+        telemetry.published();
+        let revision = telemetry.revision();
+        telemetry.received_session(&session, source, now);
+        telemetry.sent(now);
+        telemetry.withheld();
+        telemetry.rejected(RejectionReason::InvalidDatagram, now);
+        assert_ne!(telemetry.revision(), revision);
+        assert!(!telemetry.priority_change());
+
+        let new_source = "127.0.0.81:52003".parse().unwrap();
+        telemetry.received_session(&session, new_source, now);
+        assert!(telemetry.priority_change());
+        telemetry.published();
+        session.remote_discriminator = 77;
+        telemetry.received_session(&session, new_source, now);
+        assert!(telemetry.priority_change());
+        telemetry.published();
+
+        telemetry.transition(State::Up, Diagnostic::None, now);
+        assert!(telemetry.priority_change());
+        telemetry.published();
+        telemetry.detection_timeout();
+        assert!(telemetry.priority_change());
+        telemetry.published();
+        telemetry.configuration_reload(true, now);
+        assert!(telemetry.priority_change());
+        telemetry.published();
+        let error = io::Error::from_raw_os_error(10051);
+        telemetry.socket_error(&error, now);
+        assert!(telemetry.priority_change());
+        telemetry.published();
+        telemetry.socket_error(&error, now);
+        assert!(!telemetry.priority_change());
+        telemetry.socket_error(&io::Error::from_raw_os_error(10050), now);
+        assert!(telemetry.priority_change());
     }
 
     #[test]
@@ -922,7 +1005,7 @@ mod tests {
         options.remote_discriminator = Some(99);
         options.auth = AuthType::MeticulousSha1;
         options.auth_key_id = 9;
-        options.auth_key = Some("status-secret-key".to_owned());
+        options.auth_key = Some("status-secret-key".into());
         let options = options.into_validated().unwrap();
         let mut session = Session::from_config(options.clone());
         let now = Instant::now();

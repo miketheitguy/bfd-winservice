@@ -145,7 +145,7 @@ fn authenticated_engine_discards_unauthenticated_handshake_and_poll_packets() {
         options.passive = true;
         options.auth = kind;
         options.auth_key_id = 9;
-        options.auth_key = Some("secret".to_owned());
+        options.auth_key = Some("secret".into());
         options.log_file_path = log.path().to_path_buf();
         options.log_to_file = true;
         assert!(!options.verbose);
@@ -903,7 +903,7 @@ fn point_to_point_bootstrap_and_source_changes_keep_the_configured_destination()
     options.interface_index = Some(loopback_interface(&options));
     options.point_to_point = true;
     options.auth = AuthType::MeticulousSha1;
-    options.auth_key = Some("secret".to_owned());
+    options.auth_key = Some("secret".into());
     let auth = options.validate().unwrap();
     let peer = UdpSocket::bind("127.0.0.41:3784").unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();

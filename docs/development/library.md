@@ -92,11 +92,29 @@ registry names and defaults, use the [configuration reference](../configuration.
 
 Registry-backed authentication reads bounded binary ciphertext from
 `Parameters\Secrets\AuthKeyDpapi` and calls DPAPI with UI forbidden and no
-optional entropy. The native allocation owner wipes plaintext before
-`LocalFree`; raw key copies in configuration and authentication owners are
-cleared on release. The provisioning tool uses machine-scope DPAPI and verifies
-the persisted value before reporting success. Programmatic `Options::auth_key`
-and `Options::auth_key_hex` are library inputs; they are not registry settings.
+optional entropy, only during service startup with authentication enabled.
+Live S-BFD updates never load the secret. The native allocation owner zeroizes
+plaintext before `LocalFree`; ciphertext buffers are also zeroized on release.
+The decrypted key is copied directly into fixed-length `secrecy::SecretSlice<u8>`
+storage. Authentication clones share this allocation through `Arc`, and its last
+owner wipes it on drop. `Options::into_validated` releases the secret input fields
+instead of retaining duplicate plaintext. The provisioning tool uses machine-scope
+DPAPI and verifies the persisted value before reporting success.
+
+Programmatic `Options::auth_key` and `Options::auth_key_hex` are
+`Option<secrecy::SecretString>` library inputs;
+they are not registry settings. Set them with `Some("key".into())`, or convert an
+owned `String` with `.into()`. This field-type change requires source updates for
+callers assigning `String` directly. `AuthConfig::new` still accepts `Vec<u8>` and
+wipes that input on both success and failure. Its equality implementation compares
+key bytes in constant time; its clones share the secret rather than copying it.
+
+Runtime transmit buffers and padded digest-key buffers use `Zeroizing` storage.
+The public `ControlPacket::encode` convenience API returns an ordinary `Vec<u8>`;
+Simple Password output contains the password, so its caller owns cleanup.
+Zeroization covers these owned buffers when they are dropped. It does not erase
+copies held by callers, crash dumps, or registers, or guarantee cleanup after a
+process abort.
 
 ## Initialize broker management security
 
