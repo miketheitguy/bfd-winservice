@@ -1,3 +1,10 @@
+---
+name: rust-check
+description: "Rust coding standards and best practices for AI agents."
+---
+
+
+
 Idiomatic Rust Patterns
 Use Concise Control Flow
 Prefer ? operator over explicit match statements for error propagation:

@@ -1,10 +1,29 @@
 # BFD Windows service
 
-Cowabunga, Windows network crew! Let's get your session totally dialed in. This service runs a Bidirectional Forwarding Detection (BFD) session with
-one IPv4 or IPv6 peer, or a stateless Seamless BFD reflector for multiple
-initiators. Follow this guide to install and configure the service. Optional
-Border Gateway Protocol (BGP) control starts and stops a configured Windows BGP
-peer as session state changes.
+## What is BFD?
+
+Bidirectional Forwarding Detection (BFD) uses frequent, lightweight probes to
+detect failures in the forwarding path between two systems. It can detect
+failures in less than a second, including failures that leave the network
+interface up. This lets routing protocols react sooner than their own failure
+timers, reducing the time traffic follows an unusable path.
+
+When integrated with Border Gateway Protocol (BGP), BFD can trigger a peer
+session shutdown so BGP removes the affected routes and selects an available
+alternative. In this anycast DNS example, Server A and Server B advertise the
+same address, `203.0.113.53/32`. After Server A becomes unreachable, Router C
+redirects Client D's DNS queries to Server B without changing the DNS address:
+
+![Anycast DNS failover: Router C detects Server A's failure with BFD, notifies BGP, and reroutes Client D's queries for 203.0.113.53 to Server B.](docs/images/anycast-dns-bfd-bgp.gif)
+
+## BFD on Windows
+
+Cowabunga, Windows network crew! Let's get your session totally dialed in. This
+service runs a Bidirectional Forwarding Detection (BFD) session with one IPv4 or
+IPv6 peer, or a stateless Seamless BFD reflector for multiple initiators. Follow
+this guide to install and configure the service. Optional Border Gateway
+Protocol (BGP) control starts and stops a configured Windows BGP peer as session
+state changes.
 
 The packet engine runs as LocalService. A separate LocalSystem broker manages
 the configured BGP peer through authenticated local RPC. For the process and
@@ -31,7 +50,8 @@ setup together:
   x64 processor.
 - The x64 offline setup bundle (`BfdWinService-VERSION-x64-setup.exe`) from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
-- Administrator PowerShell access to install the service and configure registry settings.
+- Administrator PowerShell access to install the service and configure registry
+  settings.
 - A local IP address, its interface index, and a remote BFD peer that you can
   configure. See [network requirements](docs/protocol.md).
 
@@ -43,7 +63,8 @@ Get the installation lined up before the pizza break, crew. Use
 ### 1. Install the service
 
 Kick shell with the package, dude. Follow
-[Install with the offline setup bundle](docs/setup.md#install-with-the-offline-setup-bundle)
+[Install with the offline setup
+bundle](docs/setup.md#install-with-the-offline-setup-bundle)
 to install Microsoft's native x64 Visual C++ runtime and the service.
 The bundle installs the files and Automatic (Delayed Start) services,
 registers the Operational provider, and

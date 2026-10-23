@@ -1,3 +1,10 @@
+---
+name: rust-windows-hardening
+description: "Rust security hardening guide for Windows Server 2019+. Apply this when compiling production binaries to mitigate memory corruption and control-flow hijacking."
+---
+
+
+
 # Rust Security Hardening Guide: Windows Server 2019+
 
 This guide details how to configure production-ready binary hardening for Rust applications targeting **Windows Server 2019 and newer**. It utilizes stable codegen flags, nightly sanitizers, and strict **Microsoft Visual Studio (MSVC)** linker parameters to protect binaries against exploit primitives like memory corruption and control-flow hijacking.
