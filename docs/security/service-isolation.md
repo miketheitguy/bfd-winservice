@@ -159,16 +159,40 @@ control and configuration changes; SYSTEM retains full control.
 
 ### Protected object permissions
 
-The MSI protects these objects:
+The MSI protects these objects. Filesystem paths below assume the default
+Windows, Program Files, and ProgramData locations; installation and log paths
+can differ on a customized system.
+
+`Parameters` contains non-secret configuration, including the authentication
+mode (`Auth`) and key identifier (`AuthKeyId`). The encrypted authentication
+key is the `AuthKeyDpapi` value under the separately protected
+`Parameters\Secrets` subkey.
 
 | Object | Write/control access | Read/query access |
 | --- | --- | --- |
-| Both SCM service objects | SYSTEM and Administrators have full control, including Start/Stop and configuration changes. | Authenticated Users have query-config, query-status, enumerate-dependents, interrogate, and read-control rights (`0x2008d`). No Start/Stop, reconfiguration, or custom controls. |
-| Installed executables, manifest, administration scripts, and installation directory | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
-| `HKLM\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters` | SYSTEM and Administrators have full control. | BFD service SID has read access; the LocalSystem broker reads its BGP target. Ordinary users cannot read authentication keys. |
-| `Parameters\Secrets` | SYSTEM and Administrators have full control under its own protected, repairable ACL. | BFD service SID has read access to the machine-scope DPAPI `AuthKeyDpapi` blob. The service cannot write it. |
-| Default file-log directory | SYSTEM and Administrators have full control; BFD service SID has Modify access. | Users retain read access. Custom log paths use their provisioned filesystem ACLs. |
-| `BFD-Service/Operational` event channel | Windows Event Log permissions govern event publication and channel management. | The manifest supplies no custom channel access ACL; existing Windows log-read permissions remain in effect. |
+| SCM service objects: `BfdWinService` and `BfdBgpBroker` | SYSTEM and Administrators have full control, including Start/Stop and configuration changes. | Authenticated Users have query-config, query-status, enumerate-dependents, interrogate, and read-control rights (`0x2008d`). No Start/Stop, reconfiguration, or custom controls. |
+| `C:\Program Files\BfdWinService` | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| `C:\Program Files\BfdWinService\bfd-winservice.exe` | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| `C:\Program Files\BfdWinService\bfd-bgp-broker.exe` | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| `C:\Program Files\BfdWinService\BFD-Service.man` | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| `C:\Program Files\BfdWinService\Initialize-Logging.ps1` | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| `C:\Program Files\BfdWinService\Set-BfdAuthenticationKey.ps1` | SYSTEM and Administrators have full control. | Users and the BFD service SID have read/execute access. |
+| `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters` | SYSTEM and Administrators have full control. | BFD service SID has read access to non-secret settings; the LocalSystem broker reads its BGP target. Ordinary users have no read grant. |
+| `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets` | SYSTEM and Administrators have full control under its own protected, repairable ACL. | BFD service SID can read the machine-scope DPAPI `AuthKeyDpapi` ciphertext but cannot write it. Ordinary users have no read grant. |
+| `C:\ProgramData\BfdWinService` | SYSTEM and Administrators have full control; BFD service SID has Modify access. | Users retain read access. Custom log paths use their provisioned filesystem ACLs. |
+| Event channel `BFD-Service/Operational`; default backing file `C:\Windows\System32\winevt\Logs\BFD-Service%4Operational.evtx` | Windows Event Log permissions govern event publication and channel management. | The manifest supplies no custom channel access ACL; existing Windows log-read permissions remain in effect. |
+
+The file-log directory contains `C:\ProgramData\BfdWinService\trace.log` when
+file logging is enabled. The event channel has a separate backing file managed
+by Windows Event Log. To confirm its configured path and channel permissions,
+use [`wevtutil gl`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil):
+
+```powershell
+wevtutil gl 'BFD-Service/Operational'
+```
+
+Check `logFileName` for the configured event-log file and `channelAccess` for
+the channel security descriptor.
 
 The BFD service SID's write restriction adds a token check; it does not replace
 these object ACLs or restrict every read. The explicit service-SID grant on the
