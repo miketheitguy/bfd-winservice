@@ -1,0 +1,1749 @@
+{
+  "width": 7600,
+  "height": 6570,
+  "palette": {
+    "cream": "#FBF2DB",
+    "ink": "#462D42",
+    "orange": "#C95C31",
+    "gold": "#E7B747",
+    "teal": "#477B71",
+    "pink": "#CB7791",
+    "plum": "#735078",
+    "paper": "#FFFBEF",
+    "sage": "#E6EBD4",
+    "peach": "#F8DEBD",
+    "rose": "#F3DBDE",
+    "lilac": "#E9DFED",
+    "blue": "#DCEBE8",
+    "line": "#876251",
+    "muted": "#735F5E"
+  },
+  "sections": [
+    {
+      "id": "seeds",
+      "title": "01 / Plant the idea",
+      "kicker": "Requirements → implementation → review → version",
+      "x": 110,
+      "y": 570,
+      "w": 1640,
+      "h": 1230,
+      "fill": "#F8DEBD",
+      "color": "#C95C31",
+      "items": [
+        {
+          "id": "S1",
+          "title": "Protocol & security contracts",
+          "body": "RFC behavior, compatibility, supported roles\nTrust boundaries, performance, known limits",
+          "x": 220,
+          "y": 810,
+          "w": 670,
+          "h": 230
+        },
+        {
+          "id": "S2",
+          "title": "Health integration proposal",
+          "body": "PROPOSAL ONLY • no runtime implementation\nSeparate DNS/AD plugin host; broker AND rule",
+          "x": 990,
+          "y": 810,
+          "w": 650,
+          "h": 230
+        },
+        {
+          "id": "S3",
+          "title": "Reusable protocol library",
+          "body": "Portable configuration, packet/auth codecs\nClassical/S-BFD state and stateless reflection",
+          "x": 220,
+          "y": 1140,
+          "w": 670,
+          "h": 230
+        },
+        {
+          "id": "S4",
+          "title": "Contributor feedback loop",
+          "body": "Implement → format → lint → test → rustdoc\nReview ownership, security & behavior receipts",
+          "x": 990,
+          "y": 1140,
+          "w": 650,
+          "h": 230
+        },
+        {
+          "id": "S5",
+          "title": "Windows build environment",
+          "body": "Pinned nightly + rust-src; locked dependencies\nx64 MSVC + Windows SDK; .NET/WiX tooling",
+          "x": 220,
+          "y": 1470,
+          "w": 670,
+          "h": 230
+        },
+        {
+          "id": "S6",
+          "title": "Release compatibility decision",
+          "body": "Judge the complete change set with SemVer\nFunctionality + migration impact in release notes\nvMAJOR.MINOR.PATCH; MSI numeric limits",
+          "x": 990,
+          "y": 1470,
+          "w": 650,
+          "h": 230
+        }
+      ]
+    },
+    {
+      "id": "ci",
+      "title": "02 / Let the checks bloom",
+      "kicker": "Three independent windows-2025 runners • same source and tag version",
+      "x": 1830,
+      "y": 570,
+      "w": 2480,
+      "h": 1230,
+      "fill": "#E6EBD4",
+      "color": "#477B71",
+      "items": [
+        {
+          "id": "C1",
+          "title": "CI entry & version stamping",
+          "body": "Pull requests to main or v* tag pushes → checkout → pinned toolchain\nPR uses package version; tag stamps service and both lockfiles",
+          "x": 1940,
+          "y": 810,
+          "w": 2260,
+          "h": 180
+        },
+        {
+          "id": "C2",
+          "title": "ASan job",
+          "body": "Select x64 compiler + matching runtime\nCompile sanitized graph; verify native hooks\nRun Rust/native tests; retain diagnostics",
+          "x": 1940,
+          "y": 1090,
+          "w": 680,
+          "h": 280
+        },
+        {
+          "id": "C3",
+          "title": "Fuzz job",
+          "body": "Audit, format, lint & harness regressions\nFour ASan campaigns: 15 s or 10,000 runs\nKeep crash inputs and logs",
+          "x": 2730,
+          "y": 1090,
+          "w": 680,
+          "h": 280
+        },
+        {
+          "id": "C4",
+          "title": "Production build job",
+          "body": "Audit + version/ACL/key/recovery fixtures\nOptimized tests + RPC/MI coexistence\nBuild, inspect and exercise installer lifecycle",
+          "x": 3520,
+          "y": 1090,
+          "w": 680,
+          "h": 280
+        },
+        {
+          "id": "C5",
+          "title": "Separate build graphs",
+          "body": "Tests unwind; ASan instruments tests\nProduction aborts on panic; normal release payload\nFuzz uses prebuilt std and its own workspace",
+          "x": 1940,
+          "y": 1470,
+          "w": 1070,
+          "h": 230
+        },
+        {
+          "id": "C6",
+          "title": "Publication gate",
+          "body": "Require ASan + fuzz + production job success\nSame tagged source; notes + asset checksum checks\nPR validation has read-only repository access",
+          "x": 3120,
+          "y": 1470,
+          "w": 1080,
+          "h": 230
+        }
+      ]
+    },
+    {
+      "id": "harvest",
+      "title": "03 / Harvest & ship",
+      "kicker": "Build ordinary release artifacts → validate lifecycle → publish verified assets",
+      "x": 4390,
+      "y": 570,
+      "w": 3100,
+      "h": 1230,
+      "fill": "#F3DBDE",
+      "color": "#735078",
+      "items": [
+        {
+          "id": "P1",
+          "title": "Hardened Rust graph",
+          "body": "Service + dependencies + rebuilt standard library\nCFG, stack protection, checked arithmetic\nx64 ASLR/NX/EH-continuation/CET metadata",
+          "x": 4500,
+          "y": 810,
+          "w": 850,
+          "h": 280
+        },
+        {
+          "id": "P2",
+          "title": "Native RPC build",
+          "body": "Robust x64 MIDL → client/server C stubs\nMSVC C bridge + allocators + narrow SEH\nStatic library links Windows RPC runtime",
+          "x": 5480,
+          "y": 810,
+          "w": 850,
+          "h": 280
+        },
+        {
+          "id": "P3",
+          "title": "Native resources & provenance",
+          "body": "Event manifest + version resources\nStamp both executable versions\nRecord MSVC toolset and CRT versions",
+          "x": 6460,
+          "y": 810,
+          "w": 850,
+          "h": 280
+        },
+        {
+          "id": "P4",
+          "title": "Production executables",
+          "body": "BFD engine + BGP broker, panic=abort\nVerify PE protections and no ASan import\nNo release PDBs; match numeric versions",
+          "x": 4500,
+          "y": 1210,
+          "w": 850,
+          "h": 280
+        },
+        {
+          "id": "P5",
+          "title": "Offline WiX/Burn bundle",
+          "body": "Private x64 MSI + pinned Microsoft VC runtime\nCheck runtime signature/hash + compatibility\nEmbed binaries, events and administration tools",
+          "x": 5480,
+          "y": 1210,
+          "w": 850,
+          "h": 280
+        },
+        {
+          "id": "P6",
+          "title": "Package inspection",
+          "body": "Inspect MSI tables, ACLs, firewall and lifecycle\nCheck embedded payloads, version and runtime detection\nThen run disposable installation tests [10]",
+          "x": 6460,
+          "y": 1210,
+          "w": 850,
+          "h": 280
+        },
+        {
+          "id": "P7",
+          "title": "Workflow artifacts",
+          "body": "Setup + SHA-256: 30 days\nASan, fuzz, installer diagnostics: 14 days",
+          "x": 4500,
+          "y": 1550,
+          "w": 850,
+          "h": 190
+        },
+        {
+          "id": "P8",
+          "title": "Tag-only publication",
+          "body": "Separate job gets contents:write\nNotes required for release creation",
+          "x": 5480,
+          "y": 1550,
+          "w": 850,
+          "h": 190
+        },
+        {
+          "id": "P9",
+          "title": "Published release",
+          "body": "Setup executable + matching SHA-256 only\nPreserve published tags and existing assets",
+          "x": 6460,
+          "y": 1550,
+          "w": 850,
+          "h": 190
+        }
+      ]
+    },
+    {
+      "id": "host",
+      "title": "04 / Host, boot & peers",
+      "kicker": "Provision security before readiness",
+      "x": 110,
+      "y": 1920,
+      "w": 1480,
+      "h": 2450,
+      "fill": "#F8DEBD",
+      "color": "#C95C31",
+      "items": [
+        {
+          "id": "L1",
+          "title": "Remote BFD / S-BFD peers",
+          "body": "IPv4 or IPv6 • 3784 single-hop / 4784 multihop\n7784 S-BFD requests; replies to initiator source port",
+          "x": 220,
+          "y": 2150,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L2",
+          "title": "Elevated offline installation",
+          "body": "Verify download hash → setup/runtime/MSI transaction\nProvision payload, service policy, ACLs, events & firewall",
+          "x": 220,
+          "y": 2375,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L3",
+          "title": "Protected configuration & keys",
+          "body": "Admin selects role, addresses, timers, auth, BGP target\nStopped-service key tool → machine DPAPI → protected Secrets",
+          "x": 220,
+          "y": 2600,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L4",
+          "title": "Windows SCM issues service tokens",
+          "body": "BFD starts independently; broker depends only on RpcSs\nDelayed auto start; minimum privilege and service-SID policy",
+          "x": 220,
+          "y": 2825,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L5",
+          "title": "Fail-closed startup gates",
+          "body": "Check exact account, enabled service SID and privileges\nBFD also checks restricting SIDs before resources or endpoints",
+          "x": 220,
+          "y": 3050,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L6",
+          "title": "Worker and endpoint readiness",
+          "body": "Validate configuration → initial observer → secure endpoints\nReport Running after bounded readiness; monitor starts afterward",
+          "x": 220,
+          "y": 3275,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L7",
+          "title": "Separate operational states",
+          "body": "SCM Running = service lifecycle; BFD Up = accepted probes\nRPC success and BGP Connected have independent meaning",
+          "x": 220,
+          "y": 3500,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L8",
+          "title": "Orderly stop / preshutdown",
+          "body": "Close observer → announce AdminDown → finish final BGP action\nDrain RPC; bound cleanup; BFD preshutdown provisioned at 125 s",
+          "x": 220,
+          "y": 3725,
+          "w": 1260,
+          "h": 170
+        },
+        {
+          "id": "L9",
+          "title": "Failure, recovery & restart",
+          "body": "Transient socket faults back off while protocol timers continue\nFatal errors/crash use SCM recovery; ordinary Stop stays stopped",
+          "x": 220,
+          "y": 3950,
+          "w": 1260,
+          "h": 170
+        }
+      ]
+    },
+    {
+      "id": "bfd",
+      "title": "05 / BfdWinService • the packet garden",
+      "kicker": "LocalService + restricted BFD service SID • only SeChangeNotifyPrivilege • one mutable engine owner",
+      "x": 1670,
+      "y": 1920,
+      "w": 2180,
+      "h": 2450,
+      "fill": "#DCEBE8",
+      "color": "#477B71",
+      "items": [
+        {
+          "id": "B1",
+          "title": "UDP transport",
+          "body": "Exclusive sockets; stable 49152–65535 source\nAncillary destination, interface, TTL/hop limit\nEvent-driven receive / stop / settings waits",
+          "x": 1780,
+          "y": 2160,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B2",
+          "title": "Path acceptance",
+          "body": "Firewall is a separate kernel gate\nPeer / point-to-point, port, destination & interface\nSingle-hop TTL=255; optional MinTtl elsewhere",
+          "x": 2460,
+          "y": 2160,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B3",
+          "title": "Wire packet & auth",
+          "body": "Header, length, flags and discriminators\nNone, password, meticulous MD5, keyed/meticulous SHA-1\nDigest/replay checks precede state updates",
+          "x": 3140,
+          "y": 2160,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B4",
+          "title": "Classical BFD",
+          "body": "One asynchronous single-/multihop session\nDown → Init → Up; passive & Demand handling\nPoll/Final, learned discriminator & diagnostics",
+          "x": 1780,
+          "y": 2590,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B5",
+          "title": "S-BFD initiator",
+          "body": "Provisioned remote discriminator; direct Up\nBounded outstanding probes + reply correlation\nReplay/expiry checks and anycast sources",
+          "x": 2460,
+          "y": 2590,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B6",
+          "title": "S-BFD reflector",
+          "body": "One stateless listener, many initiators\nDemand/loop checks; reverse discriminator pair\nSequence reflection + bounded per-source replies",
+          "x": 3140,
+          "y": 2590,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B7",
+          "title": "Timer & work scheduler",
+          "body": "Negotiated TX/RX, jitter, detection expiry\nPoll timing, suppression & congestion backoff\nReuse waits; bound receive and event work",
+          "x": 1780,
+          "y": 3020,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B8",
+          "title": "Single-owner engine",
+          "body": "Selected protocol role owns accepted state\nRun receive, expiry, transmission & transitions\nFan out observations and optional BGP actions",
+          "x": 2460,
+          "y": 3020,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B9",
+          "title": "Transmit & socket recovery",
+          "body": "Prepare → send → commit only on success\nFailed send keeps sequence/Poll/probe uncommitted\nReceive/wait recovery uses 10–250 ms backoff",
+          "x": 3140,
+          "y": 3020,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B10",
+          "title": "Settings updates",
+          "body": "Registry notification reloads S-BFD timing\nReflector maintenance changes Up/AdminDown\nStartup role, key & BGP target need restart",
+          "x": 1780,
+          "y": 3450,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B11",
+          "title": "Immutable telemetry",
+          "body": "Coherent ArcSwap snapshots; no reader lock\n100 ms change spacing / 1 s refresh target\nCounters publish on existing engine wakes",
+          "x": 2460,
+          "y": 3450,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B12",
+          "title": "BGP policy & mailbox",
+          "body": "Optional; first Up enables Get / Start-if-stopped\nLater Down → Stop; AdminDown releases own Stop\nBounded latest Stop/Start pair; worker off engine",
+          "x": 3140,
+          "y": 3450,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B13",
+          "title": "Engine shutdown",
+          "body": "Invalidate status observer immediately\nRole-permitted AdminDown announcements\nRelease own BGP Stop; finish bounded final action",
+          "x": 1780,
+          "y": 3880,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B14",
+          "title": "Bounded diagnostics",
+          "body": "Lifecycle, communication, state, auth & errors\nBackground writer → ETW + optional file\nUTC lines; 64 MiB rotation + one backup",
+          "x": 2460,
+          "y": 3880,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "B15",
+          "title": "Status RPC server",
+          "body": "Read-only GetSessionStatusV1\nAuthorize broker; copy one fixed snapshot\nNo packet-loop query; unregister and drain",
+          "x": 3140,
+          "y": 3880,
+          "w": 600,
+          "h": 280
+        }
+      ]
+    },
+    {
+      "id": "rpc",
+      "title": "06 / Two local paths",
+      "kicker": "Security checks apply to both",
+      "x": 3930,
+      "y": 1920,
+      "w": 1050,
+      "h": 2450,
+      "fill": "#F8DEBD",
+      "color": "#C95C31",
+      "items": [
+        {
+          "id": "R1",
+          "title": "Binding & server identity",
+          "body": "ncalrpc only; WINNT + packet privacy\nStatic Identify/effective-only credentials\nV5 pins exact account AND service SID",
+          "x": 4040,
+          "y": 2160,
+          "w": 830,
+          "h": 280
+        },
+        {
+          "id": "R2",
+          "title": "Endpoint & caller authorization",
+          "body": "Protected service-SID ACLs\nEvery call: actual transport/auth + exact account\nEnabled service SID through Authz; no impersonation",
+          "x": 4040,
+          "y": 2590,
+          "w": 830,
+          "h": 280
+        },
+        {
+          "id": "R3",
+          "title": "Native ownership & deadlines",
+          "body": "Bounded records, admission and real async deadlines\nCancel/complete before freeing native call storage\nDeny runtime management; no reverse RPC callbacks",
+          "x": 4040,
+          "y": 3020,
+          "w": 830,
+          "h": 280
+        },
+        {
+          "id": "R4",
+          "title": "BGP control → broker",
+          "body": "BFD initiates Get / Start / Stop\nBfdWinService.Bgp.v2 • BgpControl 2.0\nRequest carries no caller-selected target",
+          "x": 4040,
+          "y": 3450,
+          "w": 830,
+          "h": 280
+        },
+        {
+          "id": "R5",
+          "title": "Session status → BFD",
+          "body": "Broker initiates GetSessionStatusV1\nBfdWinService.Local.v2 • BfdLocal 2.0\nReplies return on the same initiated call",
+          "x": 4040,
+          "y": 3880,
+          "w": 830,
+          "h": 280
+        }
+      ]
+    },
+    {
+      "id": "broker",
+      "title": "07 / BfdBgpBroker",
+      "kicker": "SYSTEM + broker service SID • only SeChangeNotifyPrivilege",
+      "x": 5060,
+      "y": 1920,
+      "w": 1530,
+      "h": 2450,
+      "fill": "#E9DFED",
+      "color": "#735078",
+      "items": [
+        {
+          "id": "G1",
+          "title": "Broker COM/MI host",
+          "body": "Verify own SCM-issued identity\nSet process COM security before provider use\nProvider runs as broker, without caller token",
+          "x": 5170,
+          "y": 2160,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G2",
+          "title": "Protected fixed target",
+          "body": "Read configured peer + routing domain\nGet / Start / Stop are the only operations\nNo public COM class factory or UDP listener",
+          "x": 5870,
+          "y": 2160,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G3",
+          "title": "Native MI provider worker",
+          "body": "Serialized local PS_BgpPeer requests\nGet / Start / Stop through MI + COM\nProvider identity stays the reduced SYSTEM token",
+          "x": 5170,
+          "y": 2590,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G4",
+          "title": "Checked provider outcomes",
+          "body": "Reject unknown/ambiguous connectivity\nStart/Stop require success and peer read-back\nCancellation cannot undo an executed operation",
+          "x": 5870,
+          "y": 2590,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G5",
+          "title": "Bounded dispatcher",
+          "body": "One admitted control manager + one queued request\nDiscard cancelled/expired work before execution\nIdle waits on request/stop events",
+          "x": 5170,
+          "y": 3020,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G6",
+          "title": "Provider watchdog",
+          "body": "20 s active request supervision\nCrash exit → SCM restart after 5 s\nPending failure retries; completed action not replayed",
+          "x": 5870,
+          "y": 3020,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G7",
+          "title": "BGP control server",
+          "body": "Authorize LocalService + BFD service SID\nAccept fixed operations for protected target\nRPC disconnect alone never changes the peer",
+          "x": 5170,
+          "y": 3450,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G8",
+          "title": "Broker stop & diagnostics",
+          "body": "Stop provider/telemetry supervision\nRetain unfinished native call storage\nOwn background ETW writer; 60 s stop budget",
+          "x": 5870,
+          "y": 3450,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G9",
+          "title": "In-process telemetry worker",
+          "body": "After Running, query BFD and validate reply\n2 s bind / 2 s call / 8 s supervision\nOne stalled worker is retained and quarantined",
+          "x": 5170,
+          "y": 3880,
+          "w": 610,
+          "h": 280
+        },
+        {
+          "id": "G10",
+          "title": "Checked observational cache",
+          "body": "Validate complete record and freshness\nUnavailable/invalid/stale → no fabricated state\nCache never drives BGP; provider stays independent",
+          "x": 5870,
+          "y": 3880,
+          "w": 610,
+          "h": 280
+        }
+      ]
+    },
+    {
+      "id": "outside",
+      "title": "08 / Out in the world",
+      "kicker": "Windows provider & observation",
+      "x": 6670,
+      "y": 1920,
+      "w": 820,
+      "h": 2450,
+      "fill": "#E6EBD4",
+      "color": "#477B71",
+      "items": [
+        {
+          "id": "X1",
+          "title": "Windows RRAS / BGP",
+          "body": "Native RemoteAccess MI provider\nWindows owns the BGP session\nThis project supplies local management",
+          "x": 6780,
+          "y": 2160,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "X2",
+          "title": "Remote BGP peer",
+          "body": "Windows-managed routing connection\nBGP wire authentication is deployed separately\nPeer state differs from BFD state",
+          "x": 6780,
+          "y": 2590,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "X3",
+          "title": "Routes & service traffic",
+          "body": "Withdraw/relearn routes when BGP changes\nAlternate path / anycast DNS can take traffic\nForwarding outcome needs lab verification",
+          "x": 6780,
+          "y": 3020,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "X4",
+          "title": "Operators & monitoring",
+          "body": "SCM state, Event Log, optional file output\nSession cache stays private inside the broker\nCorrelate BFD, provider and routing evidence",
+          "x": 6780,
+          "y": 3450,
+          "w": 600,
+          "h": 280
+        },
+        {
+          "id": "X5",
+          "title": "Performance evidence",
+          "body": "WPR ETW + process samples → WPA exports\nCPU, memory, context switches & ready time\nCapture matching health and source receipts",
+          "x": 6780,
+          "y": 3880,
+          "w": 600,
+          "h": 280
+        }
+      ]
+    },
+    {
+      "id": "tests",
+      "title": "09 / Proof grows here • functional & connection harnesses",
+      "kicker": "Purple dashed arrows name the boundaries checked • fixtures, sanitized tests and production artifacts have different scopes",
+      "x": 110,
+      "y": 4510,
+      "w": 3740,
+      "h": 1770,
+      "fill": "#E9DFED",
+      "color": "#735078",
+      "items": [
+        {
+          "id": "T1",
+          "title": "Portable protocol & configuration",
+          "body": "Locked Cargo tests + optimized release tests\nRFC 5880 / 7419 / 7880; malformed/auth/replay cases\nState/timer, secrets, config and reflector invariants",
+          "x": 220,
+          "y": 4750,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T2",
+          "title": "Native UDP connection harness",
+          "body": "Loopback engine + real IPv4/IPv6 sockets\nTTL, interface, ports, auth, Poll/Final and shutdown\nS-BFD anycast, multiple clients and live settings",
+          "x": 1430,
+          "y": 4750,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T3",
+          "title": "Publication & telemetry pressure",
+          "body": "Retain snapshots and run busy readers during UDP\nCheck freshness, invalid records, retry & quarantine\nVerify packet timing and engine progress",
+          "x": 2640,
+          "y": 4750,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T4",
+          "title": "Token & service-entry fixtures",
+          "body": "Process-isolated account/group/restricted tokens\nReject missing/disabled/deny-only SIDs and privileges\nSCM-only entry, malformed config, HKCU DPAPI fixtures",
+          "x": 220,
+          "y": 5120,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T5",
+          "title": "Dual RPC security connections",
+          "body": "Authorized calls + anonymous/wrong identity rejection\nReplacement server, protocol/privacy & management denial\nCancellation, malformed records, native SEH, MI coexistence",
+          "x": 1430,
+          "y": 5120,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T6",
+          "title": "BGP control/provider harness",
+          "body": "Fake backend: flaps, supersession, timeout and cleanup\nNative MI fixtures validate provider contract\nOpt-in RRAS test reads an existing peer only",
+          "x": 2640,
+          "y": 5120,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T7",
+          "title": "Production image evidence",
+          "body": "Release harness inspects both normal executables\nx64 relocation/CFG/NX/ASLR, cookies, EH/CET metadata\nNo ASan imports; metadata does not prove host enforcement",
+          "x": 220,
+          "y": 5490,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T8",
+          "title": "PowerShell policy regressions",
+          "body": "Version stamping, ACL and installer hardening models\nKey provisioning/read-back, rollback privileges\nRecovery isolation and native-runtime policy fixtures",
+          "x": 1430,
+          "y": 5490,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T9",
+          "title": "ASan harness, end to end",
+          "body": "Select compiler/runtime → compile without running\nCheck active build receipt + emitted native ASan hooks\nRun Rust/deps/std + maintained C/MIDL tests → logs",
+          "x": 2640,
+          "y": 5490,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T10",
+          "title": "Fuzz inputs & mutation",
+          "body": "Locked separate workspace → generate deterministic seeds\nStructured authenticated mutation + raw-byte fallback\nSynthetic public key bytes; bounded action sequences",
+          "x": 220,
+          "y": 5860,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T11",
+          "title": "Four ASan fuzz targets",
+          "body": "packet • classical session • initiator • reflector\nCoverage-guided libFuzzer + explicit acceptance oracles\nIn-memory only; 5 s/input, 2 GiB, bounded run count/time",
+          "x": 1430,
+          "y": 5860,
+          "w": 1100,
+          "h": 270
+        },
+        {
+          "id": "T12",
+          "title": "Failure → durable regression",
+          "body": "Collect coverage/logs and preserve crash input\nReplay exact target/input → investigate → fix → regression\nKeep source receipts; rerun affected validation",
+          "x": 2640,
+          "y": 5860,
+          "w": 1100,
+          "h": 270
+        }
+      ]
+    },
+    {
+      "id": "deploy",
+      "title": "10 / Installation & deployment harness, end to end",
+      "kicker": "Sequential CI lifecycle suites • real installed state • hosted Windows runner or explicit disposable BFD-WS2025 VM",
+      "x": 3930,
+      "y": 4510,
+      "w": 2660,
+      "h": 1770,
+      "fill": "#F8DEBD",
+      "color": "#C95C31",
+      "items": [
+        {
+          "id": "D1",
+          "title": "Isolate & prepare",
+          "body": "Enforce disposable-host guard; admin\nCheckpoint VM; match payload/test revision\nPrebuilt tests can run without Rust in guest",
+          "x": 4040,
+          "y": 4750,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D2",
+          "title": "Inject MSI rollback",
+          "body": "Fresh + preexisting-service fixtures\nFail after deferred policy mutation\nAbsent / empty / explicit privilege lists",
+          "x": 4920,
+          "y": 4750,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D3",
+          "title": "Check exact restoration",
+          "body": "Accounts, dependencies, ACLs, SIDs\nPrivileges + recovery policy restored\nNo new payload, endpoint policy or firewall residue",
+          "x": 5800,
+          "y": 4750,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D4",
+          "title": "Fresh MSI installation",
+          "body": "Inspect binaries, SCM policy & ACLs\nSecrets/Parameters/log directory ACLs\nFive executable-specific UDP firewall rules",
+          "x": 4040,
+          "y": 5120,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D5",
+          "title": "Configure & start independently",
+          "body": "Provision DPAPI; corrupt/missing key fails\nExtra privilege startup rejection + recovery\nInspect actual SCM-issued running tokens",
+          "x": 4920,
+          "y": 5120,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D6",
+          "title": "Installed connections",
+          "body": "Both RPC paths authenticate service identity\nUnrelated administrator caller is denied\nInstalled reflector source-port boundaries",
+          "x": 5800,
+          "y": 5120,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D7",
+          "title": "Observe & recover",
+          "body": "Rendered ETW + file-output-off behavior\nCrash installed broker; verify SCM recovery\nBound failure diagnostics before cleanup",
+          "x": 4040,
+          "y": 5490,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D8",
+          "title": "Repair & remove",
+          "body": "Retain config + encrypted key bytes\nRemove legacy dependency; recheck RPC/tokens\nRotate 64 MiB log; uninstall retains user logs",
+          "x": 4920,
+          "y": 5490,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D9",
+          "title": "Bundle maintenance",
+          "body": "Runtime detect/install → repeat → repair\nRemove product; retain shared VC runtime\n3010 accepted without forced reboot",
+          "x": 5800,
+          "y": 5490,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D10",
+          "title": "Published-baseline upgrade",
+          "body": "Download v2.0.0 setup + verify SHA-256\nInject failed upgrade → exact rollback\nThen successful upgrade + repair + key migration",
+          "x": 4040,
+          "y": 5860,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D11",
+          "title": "Preserve & restore",
+          "body": "Compare bytes, versions, registration\nConfig, service policy, ACLs and logs\nRemove product; restore lab configuration",
+          "x": 4920,
+          "y": 5860,
+          "w": 680,
+          "h": 270
+        },
+        {
+          "id": "D12",
+          "title": "Lifecycle receipts",
+          "body": "Bounded service/event diagnostics on failure\nInstaller, bundle and upgrade logs/JSON\nSuccess completes production CI job",
+          "x": 5800,
+          "y": 5860,
+          "w": 680,
+          "h": 270
+        }
+      ]
+    },
+    {
+      "id": "lab",
+      "title": "11 / The wider trip",
+      "kicker": "Separate lab work & feedback",
+      "x": 6670,
+      "y": 4510,
+      "w": 820,
+      "h": 1770,
+      "fill": "#F3DBDE",
+      "color": "#735078",
+      "items": [
+        {
+          "id": "Q1",
+          "title": "Deploy the lab",
+          "body": "Windows RRAS + Ubuntu/BIRD peers\nMatch source, hashes, config & checkpoints\nManual/lab orchestration; separate from CI",
+          "x": 6780,
+          "y": 4750,
+          "w": 600,
+          "h": 270
+        },
+        {
+          "id": "Q2",
+          "title": "Interoperability matrix",
+          "body": "Authentication and protocol modes\nWindows/BIRD withdrawals + recoveries\nBGP-only controls; routes on both sides",
+          "x": 6780,
+          "y": 5120,
+          "w": 600,
+          "h": 270
+        },
+        {
+          "id": "Q3",
+          "title": "Faults & restoration",
+          "body": "Service/process interruption; adapter/packet faults\nLogging-disabled recovery; final route/stability checks\nRestore peers, routes, settings and lab checkpoint",
+          "x": 6780,
+          "y": 5490,
+          "w": 600,
+          "h": 270
+        },
+        {
+          "id": "Q4",
+          "title": "Evidence → next change",
+          "body": "Performance traces + health checks\nScenario results → docs & compatibility notes\nDefects → focused regressions → next review",
+          "x": 6780,
+          "y": 5860,
+          "w": 600,
+          "h": 270
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": "S2",
+      "to": "S1",
+      "label": "design input",
+      "kind": "flow"
+    },
+    {
+      "from": "S1",
+      "to": "S3",
+      "label": "contracts",
+      "kind": "flow"
+    },
+    {
+      "from": "S3",
+      "to": "S4",
+      "label": "change",
+      "kind": "flow"
+    },
+    {
+      "from": "S4",
+      "to": "S5",
+      "label": "build",
+      "kind": "flow"
+    },
+    {
+      "from": "S4",
+      "to": "S6",
+      "label": "impact",
+      "kind": "flow"
+    },
+    {
+      "from": "S5",
+      "to": "C1",
+      "label": "validate",
+      "kind": "flow"
+    },
+    {
+      "from": "S6",
+      "to": "C1",
+      "label": "tag version",
+      "kind": "flow"
+    },
+    {
+      "from": "C1",
+      "to": "C2",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "C1",
+      "to": "C3",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "C1",
+      "to": "C4",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "C2",
+      "to": "C5",
+      "label": "test graph",
+      "kind": "flow"
+    },
+    {
+      "from": "C3",
+      "to": "C5",
+      "label": "fuzz graph",
+      "kind": "flow"
+    },
+    {
+      "from": "C2",
+      "to": "C6",
+      "label": "pass",
+      "kind": "flow"
+    },
+    {
+      "from": "C3",
+      "to": "C6",
+      "label": "pass",
+      "kind": "flow"
+    },
+    {
+      "from": "C4",
+      "to": "P1",
+      "label": "release graph",
+      "kind": "flow"
+    },
+    {
+      "from": "P2",
+      "to": "P4",
+      "label": "native library",
+      "kind": "flow"
+    },
+    {
+      "from": "P3",
+      "to": "P4",
+      "label": "resources",
+      "kind": "flow"
+    },
+    {
+      "from": "P1",
+      "to": "P4",
+      "label": "link",
+      "kind": "flow"
+    },
+    {
+      "from": "P4",
+      "to": "P5",
+      "label": "payload",
+      "kind": "flow"
+    },
+    {
+      "from": "P5",
+      "to": "P6",
+      "label": "inspect",
+      "kind": "flow"
+    },
+    {
+      "from": "P6",
+      "to": "D1",
+      "label": "exercise lifecycle",
+      "kind": "flow"
+    },
+    {
+      "from": "D12",
+      "to": "P7",
+      "label": "validated assets",
+      "kind": "flow"
+    },
+    {
+      "from": "D12",
+      "to": "C6",
+      "label": "build job pass",
+      "kind": "flow"
+    },
+    {
+      "from": "P7",
+      "to": "P8",
+      "label": "download",
+      "kind": "flow"
+    },
+    {
+      "from": "C6",
+      "to": "P8",
+      "label": "allow publish",
+      "kind": "flow"
+    },
+    {
+      "from": "P8",
+      "to": "P9",
+      "label": "publish",
+      "kind": "flow"
+    },
+    {
+      "from": "P9",
+      "to": "L2",
+      "label": "download & verify",
+      "kind": "flow"
+    },
+    {
+      "from": "L2",
+      "to": "L3",
+      "label": "configure",
+      "kind": "flow"
+    },
+    {
+      "from": "L3",
+      "to": "L4",
+      "label": "start",
+      "kind": "flow"
+    },
+    {
+      "from": "L4",
+      "to": "L5",
+      "label": "tokens",
+      "kind": "flow"
+    },
+    {
+      "from": "L5",
+      "to": "L6",
+      "label": "verified",
+      "kind": "flow"
+    },
+    {
+      "from": "L6",
+      "to": "B8",
+      "label": "run",
+      "kind": "flow"
+    },
+    {
+      "from": "L6",
+      "to": "G1",
+      "label": "broker ready",
+      "kind": "flow"
+    },
+    {
+      "from": "L7",
+      "to": "X4",
+      "label": "interpret",
+      "kind": "flow"
+    },
+    {
+      "from": "L8",
+      "to": "B13",
+      "label": "stop",
+      "kind": "flow"
+    },
+    {
+      "from": "L9",
+      "to": "L4",
+      "label": "recover",
+      "kind": "flow"
+    },
+    {
+      "from": "L3",
+      "to": "B10",
+      "label": "settings",
+      "kind": "flow"
+    },
+    {
+      "from": "L3",
+      "to": "G2",
+      "label": "fixed target",
+      "kind": "flow"
+    },
+    {
+      "from": "L1",
+      "to": "B1",
+      "label": "UDP",
+      "kind": "wire"
+    },
+    {
+      "from": "B1",
+      "to": "B2",
+      "label": "datagram",
+      "kind": "flow"
+    },
+    {
+      "from": "B2",
+      "to": "B3",
+      "label": "validated path",
+      "kind": "flow"
+    },
+    {
+      "from": "B3",
+      "to": "B4",
+      "label": "classical",
+      "kind": "flow"
+    },
+    {
+      "from": "B3",
+      "to": "B5",
+      "label": "initiator",
+      "kind": "flow"
+    },
+    {
+      "from": "B3",
+      "to": "B6",
+      "label": "reflector",
+      "kind": "flow"
+    },
+    {
+      "from": "B4",
+      "to": "B8",
+      "label": "state",
+      "kind": "flow"
+    },
+    {
+      "from": "B5",
+      "to": "B8",
+      "label": "state",
+      "kind": "flow"
+    },
+    {
+      "from": "B6",
+      "to": "B8",
+      "label": "response",
+      "kind": "flow"
+    },
+    {
+      "from": "B7",
+      "to": "B8",
+      "label": "due work",
+      "kind": "flow"
+    },
+    {
+      "from": "B8",
+      "to": "B9",
+      "label": "send",
+      "kind": "flow"
+    },
+    {
+      "from": "B9",
+      "to": "B1",
+      "label": "datagram",
+      "kind": "flow"
+    },
+    {
+      "from": "B10",
+      "to": "B7",
+      "label": "timing",
+      "kind": "flow"
+    },
+    {
+      "from": "B10",
+      "to": "B6",
+      "label": "maintenance",
+      "kind": "flow"
+    },
+    {
+      "from": "B8",
+      "to": "B11",
+      "label": "publish",
+      "kind": "flow"
+    },
+    {
+      "from": "B8",
+      "to": "B12",
+      "label": "transitions",
+      "kind": "flow"
+    },
+    {
+      "from": "B8",
+      "to": "B14",
+      "label": "events",
+      "kind": "flow"
+    },
+    {
+      "from": "B8",
+      "to": "B13",
+      "label": "cleanup",
+      "kind": "flow"
+    },
+    {
+      "from": "B11",
+      "to": "B15",
+      "label": "immutable view",
+      "kind": "flow"
+    },
+    {
+      "from": "B13",
+      "to": "B12",
+      "label": "release own Stop",
+      "kind": "flow"
+    },
+    {
+      "from": "B12",
+      "to": "R4",
+      "label": "ncalrpc",
+      "kind": "rpc"
+    },
+    {
+      "from": "R4",
+      "to": "G7",
+      "label": "initiate",
+      "kind": "rpc"
+    },
+    {
+      "from": "G9",
+      "to": "R5",
+      "label": "ncalrpc",
+      "kind": "rpc"
+    },
+    {
+      "from": "R5",
+      "to": "B15",
+      "label": "initiate",
+      "kind": "rpc"
+    },
+    {
+      "from": "G9",
+      "to": "G10",
+      "label": "checked reply",
+      "kind": "flow"
+    },
+    {
+      "from": "R1",
+      "to": "R2",
+      "label": "authenticate",
+      "kind": "flow"
+    },
+    {
+      "from": "R2",
+      "to": "R3",
+      "label": "authorize",
+      "kind": "flow"
+    },
+    {
+      "from": "R3",
+      "to": "R4",
+      "label": "shared policy",
+      "kind": "flow"
+    },
+    {
+      "from": "R3",
+      "to": "R5",
+      "label": "shared policy",
+      "kind": "flow"
+    },
+    {
+      "from": "G1",
+      "to": "G3",
+      "label": "COM security",
+      "kind": "flow"
+    },
+    {
+      "from": "G2",
+      "to": "G3",
+      "label": "fixed target",
+      "kind": "flow"
+    },
+    {
+      "from": "G7",
+      "to": "G5",
+      "label": "admit",
+      "kind": "flow"
+    },
+    {
+      "from": "G5",
+      "to": "G3",
+      "label": "execute",
+      "kind": "flow"
+    },
+    {
+      "from": "G3",
+      "to": "G4",
+      "label": "read back",
+      "kind": "flow"
+    },
+    {
+      "from": "G6",
+      "to": "G3",
+      "label": "supervise",
+      "kind": "flow"
+    },
+    {
+      "from": "G6",
+      "to": "L9",
+      "label": "recover broker",
+      "kind": "flow"
+    },
+    {
+      "from": "G8",
+      "to": "G9",
+      "label": "stop supervisor",
+      "kind": "flow"
+    },
+    {
+      "from": "G8",
+      "to": "G5",
+      "label": "stop provider",
+      "kind": "flow"
+    },
+    {
+      "from": "G3",
+      "to": "X1",
+      "label": "COM / MI",
+      "kind": "flow"
+    },
+    {
+      "from": "X1",
+      "to": "X2",
+      "label": "BGP",
+      "kind": "wire"
+    },
+    {
+      "from": "X2",
+      "to": "X3",
+      "label": "routes",
+      "kind": "flow"
+    },
+    {
+      "from": "B14",
+      "to": "X4",
+      "label": "diagnostics",
+      "kind": "flow"
+    },
+    {
+      "from": "G9",
+      "to": "X4",
+      "label": "RPC health events",
+      "kind": "flow"
+    },
+    {
+      "from": "X4",
+      "to": "X5",
+      "label": "capture",
+      "kind": "flow"
+    },
+    {
+      "from": "X3",
+      "to": "Q1",
+      "label": "verify externally",
+      "kind": "flow"
+    },
+    {
+      "from": "Q1",
+      "to": "Q2",
+      "label": "exercise",
+      "kind": "flow"
+    },
+    {
+      "from": "Q2",
+      "to": "Q3",
+      "label": "faults",
+      "kind": "flow"
+    },
+    {
+      "from": "Q3",
+      "to": "Q4",
+      "label": "record",
+      "kind": "flow"
+    },
+    {
+      "from": "X5",
+      "to": "Q4",
+      "label": "measurements",
+      "kind": "flow"
+    },
+    {
+      "from": "Q4",
+      "to": "T12",
+      "label": "regressions",
+      "kind": "flow"
+    },
+    {
+      "from": "T1",
+      "to": "T2",
+      "label": "native tests",
+      "kind": "flow"
+    },
+    {
+      "from": "T2",
+      "to": "T3",
+      "label": "load",
+      "kind": "flow"
+    },
+    {
+      "from": "T4",
+      "to": "T5",
+      "label": "identity fixtures",
+      "kind": "flow"
+    },
+    {
+      "from": "T5",
+      "to": "T6",
+      "label": "provider boundary",
+      "kind": "flow"
+    },
+    {
+      "from": "T7",
+      "to": "T8",
+      "label": "package policy",
+      "kind": "flow"
+    },
+    {
+      "from": "T8",
+      "to": "T9",
+      "label": "sanitized graph",
+      "kind": "flow"
+    },
+    {
+      "from": "T10",
+      "to": "T11",
+      "label": "mutate",
+      "kind": "flow"
+    },
+    {
+      "from": "T11",
+      "to": "T12",
+      "label": "crash / evidence",
+      "kind": "flow"
+    },
+    {
+      "from": "T12",
+      "to": "S4",
+      "label": "fix & recheck",
+      "kind": "flow"
+    },
+    {
+      "from": "T1",
+      "to": "B4",
+      "label": "RFC/state",
+      "kind": "test"
+    },
+    {
+      "from": "T2",
+      "to": "B1",
+      "label": "UDP/path",
+      "kind": "test"
+    },
+    {
+      "from": "T3",
+      "to": "B11",
+      "label": "publication",
+      "kind": "test"
+    },
+    {
+      "from": "T4",
+      "to": "L5",
+      "label": "token policy",
+      "kind": "test"
+    },
+    {
+      "from": "T5",
+      "to": "R2",
+      "label": "RPC gates",
+      "kind": "test"
+    },
+    {
+      "from": "T6",
+      "to": "G3",
+      "label": "provider contract",
+      "kind": "test"
+    },
+    {
+      "from": "T7",
+      "to": "P4",
+      "label": "PE metadata",
+      "kind": "test"
+    },
+    {
+      "from": "T8",
+      "to": "L2",
+      "label": "installer policy",
+      "kind": "test"
+    },
+    {
+      "from": "T9",
+      "to": "P2",
+      "label": "native memory",
+      "kind": "test"
+    },
+    {
+      "from": "T11",
+      "to": "B3",
+      "label": "in-memory APIs",
+      "kind": "test"
+    },
+    {
+      "from": "C2",
+      "to": "T9",
+      "label": "runs",
+      "kind": "flow"
+    },
+    {
+      "from": "C3",
+      "to": "T10",
+      "label": "runs",
+      "kind": "flow"
+    },
+    {
+      "from": "C4",
+      "to": "T1",
+      "label": "runs",
+      "kind": "flow"
+    },
+    {
+      "from": "D1",
+      "to": "D2",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "D2",
+      "to": "D3",
+      "label": "rollback",
+      "kind": "flow"
+    },
+    {
+      "from": "D3",
+      "to": "D4",
+      "label": "fresh install",
+      "kind": "flow"
+    },
+    {
+      "from": "D4",
+      "to": "D5",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "D5",
+      "to": "D6",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "D6",
+      "to": "D7",
+      "label": "recovery",
+      "kind": "flow"
+    },
+    {
+      "from": "D7",
+      "to": "D8",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "D8",
+      "to": "D9",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "D9",
+      "to": "D10",
+      "label": "baseline",
+      "kind": "flow"
+    },
+    {
+      "from": "D10",
+      "to": "D11",
+      "label": "",
+      "kind": "flow"
+    },
+    {
+      "from": "D11",
+      "to": "D12",
+      "label": "receipts",
+      "kind": "flow"
+    },
+    {
+      "from": "D5",
+      "to": "L5",
+      "label": "installed token",
+      "kind": "test"
+    },
+    {
+      "from": "D6",
+      "to": "R2",
+      "label": "installed RPC",
+      "kind": "test"
+    },
+    {
+      "from": "D8",
+      "to": "B14",
+      "label": "rotation",
+      "kind": "test"
+    }
+  ]
+}
