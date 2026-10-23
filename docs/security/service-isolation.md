@@ -1,12 +1,10 @@
 # Service isolation and permissions
 
-Cowabunga, service crew. Check the token before the mission starts. Windows
-admins and developers, let's check which permissions each process actually gets,
-dude. This reference explains installed service identities, privilege validation,
-protected objects, and the broker's Component Object Model (COM) and Management
-Infrastructure (MI) provider boundary. Use it to distinguish service isolation
-from local administrative access. For channel authentication, see
-[Local RPC security](local-rpc.md).
+Cowabunga, service crew. This reference explains installed service identities,
+privilege validation, protected objects, and the broker's Component Object Model
+(COM) and Management Infrastructure (MI) provider boundary. Use it to
+distinguish service isolation from local administrative access. For channel
+authentication, see [Local RPC security](local-rpc.md).
 
 See the [security overview](../security.md) for the full boundary map. On this
 page:
@@ -17,10 +15,8 @@ page:
 
 ## Identities and privileges
 
-Keep every turtle in its assigned permissions lane. Windows account and
-service-SID checks keep each process in its lane with the permissions its role
-needs. The network-facing BFD service and the privileged BGP broker use separate
-identities.
+The network-facing BFD service and privileged BGP broker use separate Windows
+accounts and service SIDs.
 
 ### Installed service tokens
 
@@ -43,14 +39,13 @@ semantics](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/n
 
 ### Startup identity checks
 
-Channel Donatello: inspect the token before opening resources. Identity
-preflight, buddy: before loading configuration, creating sockets, or registering
-local RPC, BFD checks its own process token. `TokenUser` must be
-LocalService. The BFD SID must be enabled and not deny-only in `TokenGroups`;
-both that SID and the write-restricted marker `S-1-5-33` must appear in
-`TokenRestrictedSids`. These queries never attach a token to a thread or require
-`SeImpersonatePrivilege`. SCM's installed SID-type policy supplies the write
-restriction; the startup guard verifies the expected account and SID lists.
+Before loading configuration, creating sockets, or registering local RPC, BFD
+checks its own process token. `TokenUser` must be LocalService. The BFD SID must
+be enabled and not deny-only in `TokenGroups`; both that SID and the
+write-restricted marker `S-1-5-33` must appear in `TokenRestrictedSids`. These
+queries never attach a token to a thread or require `SeImpersonatePrivilege`.
+SCM's installed SID-type policy supplies the write restriction; the startup
+guard verifies the expected account and SID lists.
 
 ### Permissions by identity
 
@@ -67,38 +62,36 @@ Here's the permissions lineup for installed services and local callers:
 
 ### BFD privilege allowlist
 
-Turtle power comes with a deliberately small privilege list. The MSI sets BFD's
-SCM `RequiredPrivileges` list to only `SeChangeNotifyPrivilege` in a native
-commit action after the installation transaction succeeds. Installation leaves
-the services stopped, so the allowlist
+The MSI sets BFD's SCM `RequiredPrivileges` list to only
+`SeChangeNotifyPrivilege` in a native commit action after the installation
+transaction succeeds. Installation leaves the services stopped, so the allowlist
 is in place before the first normal service start. SCM applies it when Windows
 creates the process. Changes take effect on the next service start; SCM retains
 `SeChangeNotifyPrivilege` even if it is not explicitly requested. The explicit
 list records this installation's intended minimum. See Microsoft's
 [required service privileges](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_required_privileges_infow).
-BFD then queries the actual token with `TOKEN_QUERY` and
-requires exactly enabled `SeChangeNotifyPrivilege`. A missing or disabled
-required privilege, an extra privilege even if disabled, or a query error fails
-startup before loading configuration, creating sockets, or registering RPC.
-BFD never repairs its token or requests `TOKEN_ADJUST_PRIVILEGES`. The retained
-privilege bypasses directory traversal checks; see Microsoft's [privilege
-constants](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants).
+BFD then queries the actual token with `TOKEN_QUERY` and requires exactly
+enabled `SeChangeNotifyPrivilege`. A missing or disabled required privilege, an
+extra privilege even if disabled, or a query error fails startup before loading
+configuration, creating sockets, or registering RPC. BFD never repairs its token
+or requests `TOKEN_ADJUST_PRIVILEGES`. The retained privilege bypasses directory
+traversal checks; see Microsoft's
+[privilege constants](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants).
 BFD uses unnamed synchronization events and does not create global file-mapping
 or symbolic-link objects. Its RPC and socket paths do not require
-`SeCreateGlobalPrivilege`; see Microsoft's [kernel object namespace
-rules](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces).
+`SeCreateGlobalPrivilege`; see Microsoft's
+[kernel object namespace rules](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces).
 Local RPC authentication keeps that reduced service identity and does not attach
 a caller token to a thread. Access to the broker comes from its RPC interface
 ACL and service identity checks.
 
 ### Broker privilege allowlist
 
-A privileged broker still needs ninja discipline. The MSI sets the LocalSystem
-broker's SCM `RequiredPrivileges` list to only `SeChangeNotifyPrivilege`. SCM
-removes other privileges before process creation. After verifying its service
-identity, the broker uses the same read-only token validation as BFD before
-initializing COM/MI, loading its target, or registering RPC. An unexpected token
-fails startup; the broker does not adjust privileges.
+The MSI sets the LocalSystem broker's SCM `RequiredPrivileges` list to only
+`SeChangeNotifyPrivilege`. SCM removes other privileges before process creation.
+After verifying its service identity, the broker uses the same read-only token
+validation as BFD before initializing COM/MI, loading its target, or registering
+RPC. An unexpected token fails startup; the broker does not adjust privileges.
 
 Provider calls use the broker's own account without `SeImpersonatePrivilege`.
 Its SYSTEM account and group memberships still confer administrative access;
@@ -136,7 +129,6 @@ place; repair the deployment rather than adding privileges to bypass rejection.
 
 ### Installation and rollback
 
-Keep the rollback plan totally tubular, including unusual prior settings.
 Deferred account/SID configuration and rollback preserve the existing privilege
 policy, including an unspecified or empty list. The protected snapshot records
 both services' exact privilege policies before any mutation. The commit action
@@ -157,7 +149,6 @@ from Windows file properties.
 
 ## Service control, configuration, and diagnostic access
 
-Know who can read, configure, and kick shell with service controls.
 Authenticated readers can inspect the granted service information; elevated
 administrators and SYSTEM hold the configuration and control rights.
 
@@ -168,7 +159,7 @@ control and configuration changes; SYSTEM retains full control.
 
 ### Protected object permissions
 
-Object-permission vibe check: the MSI protects these objects:
+The MSI protects these objects:
 
 | Object | Write/control access | Read/query access |
 | --- | --- | --- |

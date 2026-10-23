@@ -58,52 +58,23 @@ campaign:
    .\scripts\Test-Fuzz.ps1 -Seconds 15 -Runs 10000
    ```
 
-The wrapper selects the MSVC compiler and matching ASan runtime, checks the
-driver version, fetches locked dependencies, generates a starting corpus, and
-runs all four targets. It forwards the configured Windows hardening flags to
-cargo-fuzz, which otherwise replaces target-specific Rust flags. `--dev` selects
-the fuzz package's optimized development profile with debug information, avoiding
-the production profile's `/DEBUG:NONE`. The wrapper disables the repository's
-global `build-std` setting by invoking cargo-fuzz outside the checkout because
-cargo-fuzz 0.13.2 documents it as incompatible with sanitizer-coverage
-instrumentation. The harness and its Rust dependencies receive AddressSanitizer
-and coverage instrumentation; the pinned prebuilt standard library does not.
-Fuzz builds omit the Rust EH-continuation compiler flag and final
-`/GUARD:EHCONT` link setting because that prebuilt library has no matching
-metadata. Production builds continue to rebuild the standard library with the
-complete hardening configuration.
+The wrapper selects the compiler and matching ASan runtime, verifies the driver,
+fetches locked dependencies, generates a starting corpus, and runs all four
+targets. Build overrides and instrumentation limits are documented in the
+[fuzz build reference](../docs/security/fuzzing.md#resource-and-build-limits).
 
 Confirm that each target ends with a `DONE` line containing a nonzero `cov`
 value. The wrapper exits with an error if libFuzzer reports that the executable
 has no coverage feedback.
 
-The test-only libFuzzer C++ engine uses `/EHsc`, `/MD`, `/GS`, CFG, EH-continuation
-metadata, `/sdl`, and visible `/W4` diagnostics. Its upstream narrowing, shadowing,
-and unused-parameter warnings are nonfatal. The wrapper suppresses C4146 only
-because `/sdl` promotes libFuzzer's intentional unsigned negation to an error.
-CRT compatibility definitions permit its portable `fopen` and `putenv` calls.
-These settings are scoped to the C++ engine; maintained RPC C retains its
-independent `/W4 /WX` policy. All harness oracles are safe Rust. A narrow,
-MSVC-only unsafe module registers the linker-provided sanitizer counters and PC
-table after libFuzzer's C++ globals have initialized; the registration is
-process-lifetime and runs once before the first oracle invocation.
-
 ## GitHub Actions
 
-The [Build Windows bundle workflow](../.github/workflows/build-msi.yml) runs a
-separate `fuzz` job on pull requests targeting `main` and release-tag pushes
-matching `v*`. Ordinary pushes to `main` don't start full validation. See the
-[workflow trigger policy](../docs/development/packaging.md#build-with-github-actions).
-The job audits the fuzz lockfile, checks formatting and Clippy, runs
-the harness regression tests, and runs all four ASan targets with
+The
+[release workflow](../docs/development/packaging.md#build-with-github-actions)
+runs a separate `fuzz` job. It audits the fuzz lockfile, checks formatting and
+Clippy, runs the harness regression tests, and runs all four ASan targets with
 `-Seconds 15 -Runs 10000`. Each campaign stops at whichever budget it reaches
-first, after compilation. Release publication requires successful `asan`,
-`fuzz`, and `build-msi` jobs for the same workflow run.
-
-On tags, version stamping updates the service entry in `fuzz/Cargo.lock` along
-with the root manifest and lockfile. This keeps locked fuzz builds consistent
-with the release version without changing the fuzz package's version or locked
-third-party dependencies.
+first, after compilation.
 
 The diagnostic upload step runs even after a failure. It retains
 `target/fuzz/*.log` and `target/fuzz/artifacts/**`, when present, for 14 days in

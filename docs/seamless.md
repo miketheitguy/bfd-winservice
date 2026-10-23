@@ -1,9 +1,8 @@
 # Configure Seamless BFD
 
-Cowabunga, S-BFD crew. Choose your part in the probe mission. Windows network
-admins, let's catch the IP-routed Seamless Bidirectional Forwarding Detection
-(S-BFD) wave. You can run a persistent initiator that probes a remote entity, or
-a stateless reflector that answers probes.
+Cowabunga, S-BFD crew. Configure a persistent Seamless Bidirectional Forwarding
+Detection (S-BFD) initiator to probe a remote entity, or a stateless reflector
+to answer probes.
 
 The implementation uses [RFC 7880](https://www.rfc-editor.org/rfc/rfc7880.html)
 for protocol behavior and [RFC 7881](https://www.rfc-editor.org/rfc/rfc7881.html)
@@ -18,7 +17,7 @@ After completing [Before you begin](#before-you-begin), choose
 
 ## Before you begin
 
-Before you send probes, get these prerequisites dialed in, buddy:
+Before configuring either role:
 
 - Install the [setup bundle](setup.md#install-with-the-offline-setup-bundle).
 - Open **PowerShell as Administrator**. These examples use
@@ -32,15 +31,9 @@ Before you send probes, get these prerequisites dialed in, buddy:
 - Stop an existing `BfdWinService` before changing its role or startup settings.
   Remove values that are invalid for the selected role before starting it.
 
-For Windows service execution, the bundle creates the service and registers the
-Operational log. Configure one of the roles in this guide before starting the
-service. Each process runs one role. Loose files alone do not provision the
-service identities or access policies required for service execution.
-
 ## Configure an initiator
 
-Time for the turtle team to send the probes. On the node sending probes to a
-provisioned reflector, this is your line to ride.
+Configure the node that sends probes to a provisioned reflector.
 
 ### 1. Provision the target and discriminators
 
@@ -97,17 +90,16 @@ response establishes the session without entering `Init`. Cowabunga! That
 response is your establishment receipt.
 
 The initial request already contains `RemoteDiscriminator`. No discriminator
-exchange or routing-protocol advertisement is required by the service. The
-establishment vibe check is one valid `Up` response; an `AdminDown` response
-proves communication while the entity remains unavailable.
+exchange or routing-protocol advertisement is required by the service. One valid
+`Up` response establishes the session. An `AdminDown` response proves
+communication while the entity remains unavailable.
 
 For operator checks and the broker's private telemetry contract, see
 [Available monitoring interfaces](monitoring.md#available-monitoring-interfaces).
 
 ## Configure a reflector
 
-Keep the reply side totally tubular, dude. On the node answering initiator
-probes, follow this procedure and keep it, like, totally mellow.
+Configure the node that answers initiator probes.
 
 ### 1. Provision the local entity
 
@@ -163,8 +155,7 @@ lookup must succeed before the reply is sent.
 
 ## Restrict sources and support anycast
 
-Channel Donatello: check which sources belong in this setup. Choose who gets
-past the source-filter vibe check with `AllowedPeers`:
+Use `AllowedPeers` to restrict sources:
 
 - On an initiator, `Peer` is always accepted. `AllowedPeers` adds permitted
   response sources, including individual nodes serving an anycast target.
@@ -195,15 +186,14 @@ the initiator's state or create a separate session.
 
 ## Authentication and loop prevention
 
-Turtle power needs authentication and loop checks. Configure matching `Auth`,
-`AuthKeyId`, and a DPAPI-protected key in `Secrets\AuthKeyDpapi` using the
+Configure matching `Auth`, `AuthKeyId`, and a DPAPI-protected key in
+`Secrets\AuthKeyDpapi` using the
 [authentication reference](configuration.md#authentication). Simple-password,
 both SHA-1 modes, and meticulous keyed MD5 are available.
 
 ### Keyed probe correlation
 
-Bodacious replies still need to match the outstanding probe. Replay check, dude:
-a keyed reflector verifies the digest and returns the request's sequence number
+A keyed reflector verifies the digest and returns the request's sequence number
 with a newly computed digest. It doesn't apply a sequence window to incoming
 requests. An initiator accepts a keyed response only for an outstanding,
 unexpired transmitted sequence and consumes it once, including across
@@ -214,28 +204,25 @@ this bound.
 
 ### Role and port checks
 
-Ninja discipline keeps the request and reply roles straight. Initiators send
-Demand=1 and accept only Demand=0 responses. Reflectors accept only Demand=1
-requests and send Demand=0 responses. Reflectors also reject source ports `0`
-and `7784`, preventing reflector-to-reflector loops. Invalid packets never
-refresh liveness or cause a response. Authentication failures use Operational
-event `105`.
+Initiators send Demand=1 and accept only Demand=0 responses. Reflectors accept
+only Demand=1 requests and send Demand=0 responses. Reflectors also reject
+source ports `0` and `7784`, preventing reflector-to-reflector loops. Invalid
+packets never refresh liveness or cause a response. Authentication failures use
+Operational event `105`.
 
 ### Reflection limits
 
-Keep the reply traffic under control before the pizza party. A reflector answers
-at most 1,000 valid requests per second from any one source address. The limiter
-tracks at most 4,096 source addresses in a one-second window; additional sources
-receive no reply until the window resets. These are runtime traffic limits, not
-per-peer BFD sessions. Keep that distinction straight, dude. The service reports
-withheld replies with Warning event 4. Without `AllowedPeers`, startup also logs
-Warning event 4.
+A reflector answers at most 1,000 valid requests per second from any one source
+address. The limiter tracks at most 4,096 source addresses in a one-second
+window; additional sources receive no reply until the window resets. These are
+runtime traffic limits, not per-peer BFD sessions. The service reports withheld
+replies with Warning event 4. Without `AllowedPeers`, startup also logs Warning
+event 4.
 
 ## Change timing and entity availability
 
-Cowabunga, maintenance crew. Check which settings can change live. Rad, S-BFD
-supports live timing updates and reflector maintenance without restarting the
-session. Other settings retain their startup-only behavior.
+S-BFD supports live timing updates and reflector maintenance without restarting
+the session. Other settings retain their startup-only behavior.
 
 ### Registry reload behavior
 
@@ -282,9 +269,8 @@ Changes combined before the first Poll transmission share that Poll.
 
 ### Put a reflector in maintenance
 
-Give the reflector a planned break, turtle crew. For a maintenance break that
-keeps the listener active, set the reflector's maintenance flag to mark the
-entity temporarily unavailable:
+To mark the entity unavailable while keeping its listener active, set the
+reflector's maintenance flag:
 
 ```powershell
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
@@ -308,8 +294,7 @@ For library callers, see [S-BFD timing APIs](development/library.md#s-bfd-librar
 
 ## RFC 7882 use-case coverage and limits
 
-A totally tubular deployment still stays within the implemented scope. The IP
-implementation provides these capabilities:
+The IP implementation provides these capabilities:
 
 | Requirement | Implementation |
 | --- | --- |

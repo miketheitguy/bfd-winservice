@@ -159,49 +159,15 @@ service process. Windows obtains identities from native tokens. The protocol
 does not accept caller-supplied SIDs, process IDs, roles, passwords, or identity
 metadata as authentication evidence.
 
-## Accounts, service SIDs, and privileges
+## Implementation and verification
 
-SCM creates the two service tokens. BFD uses LocalService with a restricted
-service SID; the broker uses LocalSystem with its own service SID. Both verify
-their identity and expected privileges before opening their interfaces.
-For exact SIDs, retained privileges, ACLs, and COM/MI security, see
-[Service isolation and permissions](security/service-isolation.md).
+Use these references for implementation details and checks:
 
-## Server identity checks
-
-The client pins the expected account and service SID together through a QOS V5
-conditional server descriptor. Mutual authentication flags or an endpoint name
-alone are insufficient. The expected policy remains fixed for the process
-lifetime. See [binding and server setup](security/local-rpc.md#binding-and-server-setup).
-
-## Caller identity and authorization
-
-Windows checks the protected interface ACL before the security callback. The
-callback validates local transport and authentication; both callback and manager
-require the exact authenticated account and enabled, non-deny-only service SID.
-If the restricting-SID list is nonempty, it must also contain that service SID,
-including for write-restricted callers. An unrestricted caller still needs the
-exact account and enabled service SID. Both channels use the same guard, dude.
-Authz queries do this without impersonating the caller. Runtime management is
-denied separately. See [per-call authorization](security/local-rpc.md#per-call-authorization-and-cleanup).
-
-## Deadlines, cancellation, and resource ownership
-
-Native resources stay owned until completion, including after cancellation.
-A stuck telemetry worker is retained and quarantined without blocking provider
-work or accumulating replacements. See the [status cancellation contract](rpc-session-status-design.md#cancellation-and-shutdown).
-BGP control has separate [provider and cleanup budgets](reference/bgp-provider.md).
-
-## Wire validation and extension limits
-
-Robust fixed-size MIDL stubs bound the native record. One checked Rust conversion
-accepts the whole status or rejects it; authentication doesn't prove the report
-is true. See [status fields and validation](rpc-session-status-design.md).
-
-## Verify the implementation
-
-Bring the receipts before the pizza celebration. Use the
-[native RPC verification procedure](security/local-rpc.md#verify-the-implementation)
-for rejection and recovery tests. Use [operator monitoring](monitoring.md#verify-broker-to-bfd-authentication)
-to inspect authentication on an installed host. Fixture results and installed
-service results have different scopes.
+| Topic | Reference |
+| --- | --- |
+| Accounts, privileges, ACLs, and COM/MI policy | [Service isolation](security/service-isolation.md) |
+| Fixed server identity policy, interface ACLs, and per-call Authz checks without impersonation | [Local RPC security](security/local-rpc.md#binding-and-server-setup) |
+| Status fields, checked conversion, freshness, and native cancellation ownership | [RPC status contract](rpc-session-status-design.md) |
+| BGP dispatch and provider cleanup budgets | [BGP provider](reference/bgp-provider.md) |
+| Native rejection, recovery, and installed-token tests | [RPC verification](security/local-rpc.md#verify-the-implementation) |
+| Installed-host authentication events | [Monitoring](monitoring.md#verify-broker-to-bfd-authentication) |

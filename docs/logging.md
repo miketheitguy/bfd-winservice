@@ -1,19 +1,13 @@
 # Logs and events
 
-Cowabunga, log crew. Follow the events to the evidence. Windows operators and
-admins, let's read the receipts. Use this guide to read Bidirectional Forwarding
-Detection (BFD) events and configure log destinations. Use
-[Set up a BFD session](setup.md) to provision a fresh installation.
-
-Log vibe check, dude: event 1 means the engine started; event 102 means BFD
-reached `Up`. Broker event 300 for mutual RPC authentication proves a separate
-service identity check, even when BFD is `Down`.
+Cowabunga, log crew. Use this guide to configure file output and look up BFD
+event IDs, fields, and reporting limits. For lifecycle, state, and broker
+authentication queries, use [monitoring](monitoring.md).
 
 ## Log destinations
 
-Pick where the turtle team gets its diagnostic receipts. The Windows service
-uses Event Tracing for Windows (ETW) to publish Operational events and supports
-optional file output:
+The Windows service uses Event Tracing for Windows (ETW) to publish Operational
+events and supports optional file output:
 
 | Destination | When used | Content |
 | --- | --- | --- |
@@ -22,10 +16,9 @@ optional file output:
 
 ### Packet text
 
-Keep the noise mellow: ordinary send errors are logged at most once per second.
-Generic discard reasons require `Verbose=1` and have a separate one-second
-limit. These messages go to the configured file; they do not produce
-Operational events.
+Ordinary send errors are logged at most once per second. Generic discard reasons
+require `Verbose=1` and have a separate one-second limit. These messages go to
+the configured file; they do not produce Operational events.
 
 ### Rotation, loss, and timestamps
 
@@ -41,27 +34,18 @@ for queue sizes, retry intervals, flush budgets, and library APIs.
 
 ## Read logs without service-control privileges
 
-Log-read permissions are separate from permission to Start/Stop the services.
 Non-administrators can read logs when the channel or filesystem ACL permits it.
-The MSI keeps Users read access to the default ProgramData log folder and grants
-Modify access only to the BFD service SID, alongside SYSTEM/Administrator full
-control. A custom `LogFilePath` uses the permissions provisioned for that location.
-The Operational channel retains Windows Event Log access control; the manifest
-does not install a custom channel ACL.
-
-Authenticated users can also run `Get-Service` to query Windows lifecycle status.
-`Running` does not mean the BFD session is `Up`. An elevated Administrator is
-required to Start/Stop either installed service or change BFD settings; SYSTEM
-retains Windows lifecycle access. See [Monitor service status and BFD
-events](monitoring.md).
+The default log folder grants Users read access; a custom path uses its
+provisioned ACL. The Operational channel retains Windows Event Log access
+control. See the
+[object permission matrix](security/service-isolation.md#protected-object-permissions)
+for service, configuration, and log rights.
 
 ## Configure file logging
 
-Get the log destination ready before pizza time. Time to lock in: run the
-commands in **PowerShell as Administrator**. Install the bundle and provision the
-session using [Set up a BFD session](setup.md) first. The bundle installs the
-logging setup script. For a custom
-destination, review
+Run these commands in **PowerShell as Administrator**. Install the bundle and
+provision the session using [Set up a BFD session](setup.md) first. The bundle
+installs the logging setup script. For a custom destination, review
 [File paths, permissions, and timestamps](#file-paths-permissions-and-timestamps)
 before enabling output.
 
@@ -89,7 +73,7 @@ LogToFile (REG_DWORD): 0
 
 ### 2. Enable file output
 
-Dial in the output path and enable file logging:
+Set the output path and enable file logging:
 
 ```powershell
 $parameters = 'HKLM:\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters'
@@ -111,15 +95,13 @@ Start the service, or restart it if already running, to load the settings. Inspe
 Get-Content 'C:\ProgramData\BfdWinService\trace.log' -Tail 20
 ```
 
-Timestamp vibe check, turtle crew: each line needs a UTC timestamp ending in
-`Z`.
+Each line starts with a UTC timestamp ending in `Z`.
 
 To disable file output, set `LogToFile` to DWORD `0` and restart the service. See the [configuration reference](configuration.md#logging-and-bgp) for the setting types and defaults.
 
 ## File paths, permissions, and timestamps
 
-Give the log path the Donatello treatment: check access and timestamps. At
-startup, the process reads `LogFilePath` and `LogToFile` from the Parameters
+At startup, the process reads `LogFilePath` and `LogToFile` from the Parameters
 key. If `LogFilePath` is absent, it uses
 `C:\ProgramData\BfdWinService\trace.log`.
 
@@ -203,7 +185,7 @@ For exact polling, freshness, backoff, and reporting limits, see the
 
 ### Lifecycle, communication, and state events
 
-These events bring the receipts for execution, communication, and state changes:
+These events report lifecycle, communication, and state changes:
 
 | ID | Level | Meaning |
 | --- | --- | --- |

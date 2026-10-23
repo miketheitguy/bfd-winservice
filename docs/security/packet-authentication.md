@@ -1,11 +1,9 @@
 # BFD packet authentication
 
-Cowabunga, packet crew. Check the shared-key policy alongside the path. Windows
-admins and developers, let's check the packet receipts. This reference explains
-how Bidirectional Forwarding Detection (BFD) and Seamless BFD (S-BFD) validate
-remote packets, what each authentication mode proves, and how keys are
-protected. Private service RPC uses a separate
-[local authentication policy](local-rpc.md).
+Cowabunga, packet crew. This reference explains how Bidirectional Forwarding
+Detection (BFD) and Seamless BFD (S-BFD) validate remote packets, what each
+authentication mode proves, and how keys are protected. Private service RPC uses
+a separate [local authentication policy](local-rpc.md).
 
 See the [security overview](../security.md) for the full boundary map. On this
 page:
@@ -18,10 +16,8 @@ page:
 
 ## Packet and path validation
 
-Ninja discipline checks the packet before trusting its observations. Before a
-packet gets to influence peer state, dude, the firewall and packet validators
-check the configured path. Configured wire authentication adds the shared-key
-check.
+Path validation and configured wire authentication must pass before a packet
+changes accepted peer state.
 
 `[AUTH A-fw]` represents Windows kernel UDP filtering through the
 [installed program-specific firewall rules](../reference/installation.md#installed-firewall-rules). `[AUTH A]` represents the application's
@@ -35,13 +31,12 @@ role-specific rules. These path checks alone do not authenticate the peer.
 
 ## Authentication modes
 
-Turtle power starts with matching authentication settings on both peers. Like,
-hello, turtle crew: `Auth` defaults to `none`. When enabled, both peers must use
-the same authentication type, key ID, and secret. The receiver checks the
-authentication section and compares the password or computed keyed digest using
-constant-time equality. Authentication failures do not refresh detection or
-update accepted session state. The sender adds the configured authentication to
-outgoing packets.
+`Auth` defaults to `none`. When enabled, both peers must use the same
+authentication type, key ID, and secret. The receiver checks the authentication
+section and compares the password or computed keyed digest using constant-time
+equality. Authentication failures do not refresh detection or update accepted
+session state. The sender adds the configured authentication to outgoing
+packets.
 
 Classical multihop sessions that control BGP require `meticulous-sha1` or
 `meticulous-md5` and a valid key. Startup rejects other modes even when a minimum
@@ -67,40 +62,32 @@ encryption. BFD authentication does not hide packet contents. A valid shared-key
 check establishes possession of the configured secret, rather than a distinct
 Windows or certificate identity for each peer.
 
-For why meticulous MD5 is available, how SHA-1 and meticulous SHA-1 differ in
-cost, and when MD5 may fit a deployment, see
-[authentication performance and mode selection](authentication-performance.md).
-That reference separates protocol requirements, this service's implementation,
-and performance claims that require measurements.
-
 ## S-BFD replay checks
 
-Give replay correlation the Donatello treatment, dude. Replay vibe check: S-BFD
-initiators require keyed replies to match an unconsumed, unexpired outstanding
-probe. Reflectors verify the configured authentication and copy a keyed
-request's sequence into the response without maintaining a per-peer receive
-window. These behaviors differ from a classical BFD session's replay checks.
+S-BFD initiators require keyed replies to match an unconsumed, unexpired
+outstanding probe. Reflectors verify the configured authentication and copy a
+keyed request's sequence into the response without maintaining a per-peer
+receive window. These behaviors differ from a classical BFD session's replay
+checks.
 
 ## Key configuration and storage
 
-Keep the key setup totally tubular and the storage permissions explicit. Keep
-the key setup dialed in: provision `Parameters\Secrets\AuthKeyDpapi` with the
-installed `Set-BfdAuthenticationKey.ps1` script when authentication is enabled.
-Password and MD5 keys are 1-16 bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is
-0-255. One key is active at a time; restart after changing authentication
-settings. The script stores raw key bytes encrypted with machine-scope DPAPI,
-without optional entropy and verifies read-back decryption. The tool updates
-only `Secrets\AuthKeyDpapi`.
-The Secrets key has a protected ACL granting SYSTEM and Administrators full
-control and the BFD service SID read access. Machine-scope DPAPI permits any
-local account holding the ciphertext to decrypt it, so that ACL remains the
-service-specific access boundary. Logs and configuration errors omit key values.
-The service reads and decrypts the key only during startup when authentication is
-enabled. Live S-BFD updates retain that key without accessing the stored secret.
-The native DPAPI allocation is wiped before `LocalFree`, and temporary ciphertext
-buffers are zeroized. Validated authentication uses shared `secrecy::SecretSlice`
-storage; cloning authentication does not copy key bytes. Consumed input fields
-are released after validation, and the key is wiped when its last owner drops.
-Active packet authentication still requires key bytes in memory. See
-[Configure authentication](../configuration.md#authentication) for the settings
-and an example.
+Provision `Parameters\Secrets\AuthKeyDpapi` with the installed
+`Set-BfdAuthenticationKey.ps1` script when authentication is enabled. Password
+and MD5 keys are 1-16 bytes; SHA-1 keys are 1-20 bytes. `AuthKeyId` is 0-255.
+One key is active at a time; restart after changing authentication settings. The
+script stores raw key bytes encrypted with machine-scope DPAPI, without optional
+entropy and verifies read-back decryption. The tool updates only
+`Secrets\AuthKeyDpapi`. The Secrets key has a protected ACL granting SYSTEM and
+Administrators full control and the BFD service SID read access. Machine-scope
+DPAPI permits any local account holding the ciphertext to decrypt it, so that
+ACL remains the service-specific access boundary. Logs and configuration errors
+omit key values. The service reads and decrypts the key only during startup when
+authentication is enabled. Live S-BFD updates retain that key without accessing
+the stored secret. The native DPAPI allocation is wiped before `LocalFree`, and
+temporary ciphertext buffers are zeroized. Validated authentication uses shared
+`secrecy::SecretSlice` storage; cloning authentication does not copy key bytes.
+Consumed input fields are released after validation, and the key is wiped when
+its last owner drops. Active packet authentication still requires key bytes in
+memory. See [Configure authentication](../configuration.md#authentication) for
+the settings and an example.

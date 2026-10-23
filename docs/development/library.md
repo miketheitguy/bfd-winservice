@@ -22,12 +22,11 @@ for the startup and installer contracts.
 
 ## Use the Rust configuration and error APIs
 
-Keep ownership totally tubular and follow the validated API. `Options` contains
-mutable provisioning input. Call `Options::into_validated()` to produce an
-immutable `ValidatedOptions` snapshot. Sweet: validation gives startup settings
-a stable home. On Windows, `config::load_registry()` returns this snapshot
-directly. Clones share its storage, and `ProtocolRole` carries the required
-nonzero initiator or reflector discriminator.
+`Options` contains mutable provisioning input. Call `Options::into_validated()`
+to produce an immutable `ValidatedOptions` snapshot. On Windows,
+`config::load_registry()` returns this snapshot directly. Clones share its
+storage, and `ProtocolRole` carries the required nonzero initiator or reflector
+discriminator.
 
 Use `Engine::from_config`, `Session::from_config`, `Reflector::from_config`, and
 `Transport::from_config` to reuse a snapshot without repeating validation.
@@ -74,8 +73,9 @@ to suppress repeated state and diagnostic events. See the
 [Operational event reference](../logging.md#operational-events).
 
 For logger construction, shared-worker ownership, flush completion, and queue
-loss APIs, see [Logging internals](../reference/logging-internals.md#library-api).
-Keep blocking flushes out of the protocol timer loop, dude.
+loss APIs, see
+[Logging internals](../reference/logging-internals.md#library-api). Keep
+blocking flushes out of the protocol timer loop.
 
 ## Raw options, encoding, and registry loading
 
@@ -137,18 +137,16 @@ observers remain available to library users and UDP integration tests.
 
 ## Maintain the private local RPC interface
 
-Ninja discipline, dude: keep the service boundaries clear. `src/local_rpc.rs`
-hosts the private BFD interface. Its `GetSessionStatusV1` operation copies one
-published snapshot on an RPC worker. The broker queries it from one supervised
-worker inside its existing process; it launches no helper. Keep this path in its
-own lane, dude, separate from the BGP control RPC interface and COM/MI provider
-worker. The BGP interface in `src/bgp/ipc.rs` shares the telemetry interface's
-binding, registration, and Authz helpers, with server/caller identities
-reversed. Both channels also require their expected service SID in any nonempty
-caller restricting list, including for write-restricted tokens. Its bounded
-control queue sends work to the serialized provider worker; RPC callbacks never
-execute MI operations. The contracts are `rpc/bfd_local.idl` and
-`rpc/bgp_control.idl`.
+`src/local_rpc.rs` hosts the private BFD interface. Its `GetSessionStatusV1`
+operation copies one published snapshot on an RPC worker. The broker queries it
+from one supervised worker inside its existing process, separate from BGP
+control and the COM/MI provider worker. The BGP interface in `src/bgp/ipc.rs`
+shares the telemetry interface's binding, registration, and Authz helpers, with
+server/caller identities reversed. Both channels also require their expected
+service SID in any nonempty caller restricting list, including for
+write-restricted tokens. Its bounded control queue sends work to the serialized
+provider worker; RPC callbacks never execute MI operations. The contracts are
+`rpc/bfd_local.idl` and `rpc/bgp_control.idl`.
 
 Preserve the conditional server identity policy, exact caller account and
 service SID checks, Identify credentials, packet privacy, and management denial.

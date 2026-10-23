@@ -181,9 +181,8 @@ and validation limits, see the [fuzz harness security reference](fuzzing.md).
 
 ## Verification
 
-Pizza time follows artifact inspection and recorded checks. Cowabunga comes
-after the build receipts, for sure. Recorded reviews link successful checks to
-their revisions. Executable tests inspect what the build emits.
+Executable tests inspect emitted protections; record results against the tested
+revision.
 
 [tests/windows_hardening.rs](../../tests/windows_hardening.rs) checks both
 executable images for architecture, relocations, ASLR/NX/CFG flags, CFG tables,

@@ -1,17 +1,9 @@
 # RPC session-status query
 
-Cowabunga, status crew. Follow the observation from publication to receipt. Rust
-maintainers and Windows admins, here's the status-query playbook, buddy. This
-reference describes the implemented broker-to-BFD status call, its accepted data
-ranges, and the broker's response to invalid data. The client runs on a worker
-thread inside `bfd-bgp-broker.exe`. The authenticated local RPC connection
-carries the reply directly; there is no helper process, stdout transport, or
-additional named pipe. For Windows identity checks, see
-[RPC authentication](rpc-authentication.md).
-
-Cowabunga comes after the freshness check. A valid reply still needs freshness
-receipts, no cap: check `BrokerStatus::is_fresh()` before treating a cached
-observation as current.
+Cowabunga, status crew. This reference defines the broker-to-BFD status call,
+accepted data ranges, freshness, and failure handling for Rust maintainers. The
+client runs inside `bfd-bgp-broker.exe`. For service identities and caller
+authorization, see [RPC authentication](rpc-authentication.md).
 
 For operator commands, see [Monitor service status and BFD events](monitoring.md).
 To look up this contract, start with [Session fields](#session-fields) and
@@ -21,8 +13,7 @@ To look up this contract, start with [Session fields](#session-fields) and
 
 ## Function call and ownership
 
-For a bodacious observation, fetch inside a broker worker function returning
-`Result`:
+Fetch status from a broker worker function returning `Result`:
 
 ```rust
 let status = bfd_winservice::local_rpc::query_bfd_session_status()?;
@@ -58,22 +49,16 @@ Native layout tests check size, alignment, and field offsets against MIDL output
 
 ### Deploy matching binaries
 
-Keep the deployed turtle team in sync, dude: deploy the BFD service and broker
-together. Interface `BfdLocal` version `2.0` exposes only
-`GetSessionStatusV1` at operation number `0`. The `BFD_SESSION_STATUS_V1`
-record uses schema version `1`; the interface version is a separate contract.
-
-The BGP control interface uses `BgpControl` version `2.0` at
-`BfdWinService.Bgp.v2`, exposing only fixed-target `Get`, `Start`, and `Stop`.
-Its eight-byte result contains provider status and a Boolean value.
-Deploy both executables from
-the same build. The [BGP provider reference](reference/bgp-provider.md) describes
-state-driven calls and failed-action retries.
+Deploy both executables from the same build. The `BFD_SESSION_STATUS_V1`
+record's schema version `1` is separate from RPC interface version `2.0`. The
+[interface matrix](rpc-authentication.md#bgp-control-over-local-rpc) defines the
+separate BGP control channel; the
+[provider reference](reference/bgp-provider.md) owns its operations and retry
+behavior.
 
 ## Session fields
 
-Give the field definitions the Donatello treatment. Here's the observation
-lineup inside the typed `SessionStatus`:
+The typed `SessionStatus` contains these observations:
 
 | Field group | Meaning |
 | --- | --- |
@@ -97,14 +82,9 @@ The client preserves these observations instead of forcing them into agreement.
 
 ## Native and Rust bounds
 
-Ninja discipline checks the native ranges and Rust conversion. MIDL `/robust`
-stubs enforce the declared integer ranges. Rust constructs the typed result once
-through `TryFrom`, enum matches, `NonZero` types, address constructors, and
-checked time arithmetic. No validation crate or separate post-construction
-validation pass is used. Microsoft describes native range checks in
-[the MIDL range attribute](https://learn.microsoft.com/en-us/windows/win32/midl/range);
-Rust describes fallible conversion in
-[TryFrom](https://doc.rust-lang.org/std/convert/trait.TryFrom.html).
+MIDL `/robust` stubs enforce declared integer ranges. Rust constructs the typed
+result once through `TryFrom`, enum matches, `NonZero` types, address
+constructors, and checked time arithmetic.
 
 The successful V1 record accepts these values:
 
@@ -129,17 +109,15 @@ rather than clamped, transmuted, or mapped to a default state.
 
 ## Snapshot coherence and packet isolation
 
-Turtle power keeps observation separate from packet processing. One owner keeps
-the state story, like, totally mellow: BFD's engine exclusively owns mutable
-session state. It updates scalar telemetry and existing monotonic samples during
-packet processing. Changed publications have a 100-millisecond minimum spacing.
-Ordinary packet counters and activity timestamps publish on existing engine
-wakes after that spacing, with a one-second refresh target. They do not add a
-100-millisecond packet-loop wake. State, peer, communication, Poll, and
-configuration changes retain the shorter publication wake; new socket-error
-conditions also request it. Scheduling can delay any publication.
-The capture metadata, instance, sequence, and event instants belong to the same
-immutable publication as the protocol values.
+BFD's engine exclusively owns mutable session state. It updates scalar telemetry
+and existing monotonic samples during packet processing. Changed publications
+have a 100-millisecond minimum spacing. Ordinary packet counters and activity
+timestamps publish on existing engine wakes after that spacing, with a
+one-second refresh target. They do not add a 100-millisecond packet-loop wake.
+State, peer, communication, Poll, and configuration changes retain the shorter
+publication wake; new socket-error conditions also request it. Scheduling can
+delay any publication. The capture metadata, instance, sequence, and event
+instants belong to the same immutable publication as the protocol values.
 
 During startup, BFD gives RPC `Engine::status_observer()` before moving the engine
 to its worker. The RPC manager repeats authorization, obtains a nonblocking
@@ -161,10 +139,10 @@ therefore produce valid telemetry that fails the broker's freshness policy.
 
 ## Broker cache and freshness
 
-Keep the telemetry totally tubular by checking its age. The broker starts its
-supervisor and single RPC worker after reporting SCM Running, avoiding a
-dependency cycle with BFD. Successful queries repeat once per second,
-independently of the provider worker and packet publication interval.
+The broker starts its supervisor and single RPC worker after reporting SCM
+Running, avoiding a dependency cycle with BFD. Successful queries repeat once
+per second, independently of the provider worker and packet publication
+interval.
 
 ### Cache states
 
@@ -184,8 +162,7 @@ scheduling, not a maximum age. RPC success and SCM Running do not imply Up.
 
 ## Secure response to invalid data
 
-A bogus reply does not earn a Cowabunga, dude. When a query hits a rough patch,
-the broker applies these failure policies:
+The broker applies these failure policies:
 
 | Condition | Cache and recovery | Provider behavior |
 | --- | --- | --- |
@@ -198,12 +175,11 @@ the broker applies these failure policies:
 
 ### Retry and reporting policy
 
-Keep the retry rhythm under control, turtle crew. Consecutive failed queries
-wait 1, 2, 4, 8, 16, then 30 seconds, remaining at 30 seconds until a valid
-reply resets the delay. A valid reply, including stale telemetry, restores
-one-second polling. Stop interrupts every backoff wait. Rejected-data and
-ordinary failure reports have independent one-minute limits; successful replies
-do not reset those reporting limits.
+Consecutive failed queries wait 1, 2, 4, 8, 16, then 30 seconds, remaining at 30
+seconds until a valid reply resets the delay. A valid reply, including stale
+telemetry, restores one-second polling. Stop interrupts every backoff wait.
+Rejected-data and ordinary failure reports have independent one-minute limits;
+successful replies do not reset those reporting limits.
 
 Malformed telemetry is not converted into `Down`, partially salvaged, or used to
 select a provider target. Stopping or automatically restarting the broker would
@@ -213,41 +189,22 @@ memory has been corrupted and does not require permanent quarantine. Investigate
 repeated rejection categories, matching binaries, clock validity, and BFD/host
 errors; successful replies recover automatically.
 
-### Injection and Rust's safety boundary
+### Trust limits
 
-Know where the trust boundary ends before anyone gets to kick shell. An
-unrelated process cannot normally supply a reply: the client pins the BFD
-account and service SID, and local RPC protects the exchange against
-modification in transit. Authentication establishes the source, not the truth of
-its data. An authenticated reply still needs a data vibe check. A compromised
-authorized service can return invalid or valid-but-false values. A remote BFD
-peer influences protocol observations through accepted packets; it does not
-supply the RPC record directly. See
-[the Windows identity checks](rpc-authentication.md#server-identity-checks).
-
-Only integers and fixed arrays cross the Rust FFI boundary. Checked conversion
-constructs enums, Booleans, nonzero values, and times afterward. Rust does not
-automatically validate foreign memory; an invalid Rust enum or Boolean would
-itself violate [Rust's validity rules](https://doc.rust-lang.org/reference/behavior-considered-undefined.html).
-The native stubs and C wrapper execute outside safe Rust's guarantees. Neither
-quarantine nor range checks can contain actual corruption of their shared
-process memory or detect plausible lies from an authenticated service.
-
-The wrapper uses
-[RpcExceptionFilter](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-rpcexceptionfilter)
-to report recoverable RPC exceptions while leaving fatal native faults, including
-access violations and stack corruption, outside its error handler. Quarantine
-is reserved for a worker that cannot finish or release its native ownership;
-it prevents further calls and resource accumulation, not malicious-data injection.
+Authentication identifies the source; it doesn't prove telemetry is truthful. An
+authorized service can return valid-but-false data or withhold replies. Checked
+conversion validates values after unmarshaling; it cannot repair native memory
+corruption. See
+[RPC security limits](security/local-rpc.md#soundness-and-operational-limits)
+and the
+[native exception policy](security/build-hardening.md#native-c-exception-policy).
 
 ## Cancellation and shutdown
 
-Keep pending resources safe until the ninja mission is actually complete.
-Cancellation ownership gets gnarly, so keep the sequence straight. Asynchronous
-bind and call deadlines are two seconds each. Abortive cancellation still waits
-for native completion before releasing buffers, output, events, binding, or
-security allocations. `RPC_C_OPT_CALL_TIMEOUT` is ignored for LRPC; it is not
-the deadline mechanism.
+Asynchronous bind and call deadlines are two seconds each. Abortive cancellation
+still waits for native completion before releasing buffers, output, events,
+binding, or security allocations. `RPC_C_OPT_CALL_TIMEOUT` is ignored for LRPC;
+it is not the deadline mechanism.
 
 The supervisor waits at most eight seconds for a fetch. If native ownership
 cannot be resolved, the one worker retains its stack and native allocations
@@ -265,7 +222,7 @@ safe to read; its existence does not imply the engine is still running.
 
 ## Verification and source map
 
-Pizza time comes after the relevant test receipts. Follow
+Follow
 [native RPC validation](development/validation.md#verify-native-rpc-boundaries)
 for the suites, normal-token prerequisites, and explicit read-only MI
 coexistence checks.
@@ -283,7 +240,7 @@ calls. Installed SCM tokens still require the separate MSI first-start/repair te
 
 ### Implementation files
 
-Follow these files for the implementation receipts:
+Use these implementation files:
 
 - [Status conversion](../src/local_rpc/status.rs)
 - [RPC registration/client](../src/local_rpc.rs)

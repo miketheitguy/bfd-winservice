@@ -7,8 +7,7 @@ offline setup bundle provisions. For installation commands, follow
 
 ## Installed resources and security settings
 
-Donatello would inspect the full installation inventory, dude. The bundle installs
-the following resources for all users:
+The bundle installs these resources for all users:
 
 - Both executables, the manifest, `Initialize-Logging.ps1`, and
   `Set-BfdAuthenticationKey.ps1` in
@@ -71,11 +70,10 @@ the following resources for all users:
 
 ## Installed firewall rules
 
-Keep the network entrance totally tubular and check the actual rules. Five rules
-allow UDP for the installed executable on Domain, Private, and Public profiles.
-Remote addresses are unrestricted so multihop, anycast, and point-to-point
-configurations can use their configured peers. The rules have these protocol and
-port restrictions:
+Five rules allow UDP for the installed executable on Domain, Private, and Public
+profiles. Remote addresses are unrestricted so multihop, anycast, and
+point-to-point configurations can use their configured peers. The rules have
+these protocol and port restrictions:
 
 | Rule | Protocol / action | Direction | Local ports | Remote ports |
 | --- | --- | --- | --- | --- |
@@ -100,5 +98,5 @@ Get-NetFirewallRule |
     Select-Object DisplayName, Direction, Enabled, Profile
 ```
 
-Firewall vibe check: confirm that the five rules are enabled. To inspect ports,
-pipe the matching rules to `Get-NetFirewallPortFilter`.
+Confirm that the five rules are enabled. To inspect ports, pipe the matching
+rules to `Get-NetFirewallPortFilter`.

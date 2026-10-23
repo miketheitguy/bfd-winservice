@@ -9,11 +9,6 @@ BFD `Up` triggers a peer-status check. The worker requests Start only if the
 peer is stopped and the action is still current. Provider errors can leave BGP
 stopped even when BFD is Up, so verify both peer status and event logs.
 
-Use [Configure the peer](#configure-the-peer) and [Verify state changes and
-actions](#verify-state-changes-and-actions) for setup. For operational details,
-see [Worker retries and broker recovery](#worker-retries-and-broker-recovery)
-and [Service identities and authorization](#service-identities-and-authorization).
-
 ## Before you begin
 
 Before enabling control, confirm that the peer exists on a Windows Server
@@ -31,12 +26,6 @@ For classical multihop BFD, configure `Auth=meticulous-sha1` or
 control. Startup rejects other authentication modes even with `MinTtl` configured. See
 [Configure authentication](configuration.md#authentication). Single-hop BGP
 without authentication warns that it relies on a trusted link.
-
-The broker-to-BFD local RPC status query is a separate channel and runs
-even without a BGP target. It authenticates the two services and reads published
-session telemetry without performing a provider operation. See
-[RPC authentication](rpc-authentication.md) and the
-[runtime diagram](service-communication.md#runtime-flow) for both directions.
 
 ## Configure the peer
 
@@ -75,9 +64,7 @@ default. Both names must contain a non-whitespace character.
 
 ### 3. Restart both services
 
-Keep the turtle team in sync for the restart. After changing `BgpPeerName` or
-`BgpRoutingDomain`, restart **both** services. Apply the configuration with a
-coordinated restart:
+After changing either BGP setting, restart **both** services:
 
 ```powershell
 Stop-Service BfdWinService
@@ -97,8 +84,7 @@ the broker's identity and authorizes BFD.
 
 ## Verify state changes and actions
 
-Bodacious results need both state and provider receipts. Check the receipts in
-the BFD logs and BGP peer status. The worker applies these actions:
+Check both BFD events and BGP peer status against these actions:
 
 | BFD condition | BGP action |
 | --- | --- |
@@ -112,8 +98,7 @@ the BFD logs and BGP peer status. The worker applies these actions:
 
 A running BGP peer cruises through the initial BFD handshake. A stopped peer
 waits for BFD to reach Up. Failed or ambiguous status checks never trigger a
-speculative Start; guessing would be, like, majorly bogus. Init does not cancel
-a previously queued Stop.
+speculative Start. Init does not cancel a previously queued Stop.
 
 On the installed server, inspect BFD transitions and broker results:
 
@@ -140,11 +125,8 @@ Compare the actual peer state with the action table after each transition.
 
 ### Administrative disablement and failures
 
-Ninja discipline means keeping an administrative stop distinct from a path
-failure. Stopping BFD is administrative, not a path failure, so it never stops
-BGP. Local AdminDown, including engine cleanup after a fatal transport error,
-never stops the peer.
-Following
+Local AdminDown, including engine cleanup after a fatal transport error, never
+stops BGP. Following
 [RFC 5882 section 3.2](https://www.rfc-editor.org/rfc/rfc5882.html#section-3.2),
 a session that goes Down because the peer signalled AdminDown also leaves BGP
 running, so stopping BFD at either end of the session keeps BGP running. BGP

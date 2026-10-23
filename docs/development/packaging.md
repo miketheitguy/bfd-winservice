@@ -1,325 +1,165 @@
 # Package and release the Windows service
 
-Cowabunga, release crew. Build deployment files and publish the offline setup
-bundle from one tested checkout. Complete the [development checks](validation.md)
-and [production hardening check](../security/build-hardening.md#verification)
-before packaging. Commands run from the repository root on the
-[Windows build host](../../CONTRIBUTING.md#before-you-begin).
+Cowabunga, release crew. Use this guide to build and publish the offline setup
+bundle from a tested checkout. Run commands from the repository root on the
+[Windows build host](../../CONTRIBUTING.md#before-you-begin), after completing
+[development validation](validation.md) and
+[production hardening verification](../security/build-hardening.md#verification).
 
 ## Prepare installation files
 
-Give administrators the offline setup bundle and its SHA-256 file from the same
-tested checkout. The bundle contains both daemon executables, the Event Log
-manifest, the logging and DPAPI key provisioning scripts, and Microsoft's pinned
-native x64 runtime.
-
-The MSI provisions the LocalService BFD process, Automatic (Delayed Start)
-LocalSystem broker, service SIDs, privilege allowlists, and scoped ACLs. Both
-services validate their actual SCM-issued tokens before accepting work. Loose
-executables alone do not provision this boundary. Administrators don't need
-Rust, the MSVC toolchain, or the Windows SDK to install the bundle.
+Distribute the setup bundle and its matching SHA-256 file. It embeds both
+service executables, the Event Log manifest, administration scripts, and
+Microsoft's pinned x64 Visual C++ runtime. The MSI is a private bundle payload.
+For installed accounts, permissions, and firewall rules, see the
+[installation inventory](../reference/installation.md).
 
 ## Build the offline setup bundle
 
-Cowabunga, packaging crew. Check the prerequisites before building. Install the
-[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or a later SDK.
-WiX 7 requires explicit acceptance of its
-[Open Source Maintenance Fee EULA](https://docs.firegiant.com/wix/osmf/). Hold
-up, buddy: review the terms and any applicable maintenance fee before accepting
-them. The build script accepts the EULA by default. To build the bundle, run from
-the repository root:
+Install the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or a
+later SDK. The [.NET tool manifest](../../.config/dotnet-tools.json) pins WiX
+and its extensions. Review the
+[WiX OSMF EULA](https://docs.firegiant.com/wix/osmf/) and applicable maintenance
+fee before building: `Build-Bundle.ps1` accepts that EULA by default through
+`AcceptWixEula`.
+
+To build the hardened executables and setup bundle, run:
 
 ```powershell
 .\scripts\Build-Bundle.ps1
 ```
 
-The script builds both hardened x64 production executables with Cargo's locked
-dependencies, verifies the vendored Microsoft runtime's signature and checksum,
-checks both executables' embedded native MSVC toolset receipts against that
-runtime, and restores WiX and its extensions. It compiles one private MSI payload and validates its tables,
-including per-machine scope and required administrator privileges. It then builds
-the offline setup bundle, extracts it to verify the embedded packages and runtime
-detection policy, and writes the bundle's SHA-256 checksum. Successful output
-ends with the setup path. The internal MSI and WiX intermediate files stay in
-`target\bundle-build\VERSION` for validation; no standalone MSI or MSI checksum
-is generated in the distribution directory.
-For a local build, the package version comes from `Cargo.toml` and must contain
-three numeric fields within Windows Installer's `255.255.65535` version limits.
-To reproduce a tagged release locally, stamp its version before building:
+The script checks the runtime's signature/checksum, executable versions and
+native runtime compatibility, MSI tables, embedded payloads, and prerequisite
+detection. Successful output ends with the setup path. It writes:
 
-```powershell
-.\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0' `
-    -RepositoryRoot (Get-Location).Path
-.\scripts\Build-Bundle.ps1
-```
-
-The stamping script updates only the `bfd-winservice` version in `Cargo.toml`,
-`Cargo.lock`, and `fuzz/Cargo.lock`; dependency versions remain locked. It rejects malformed tags,
-prerelease or build metadata, leading zeros, and versions beyond MSI limits.
-Before packaging, the script reads Windows file and product versions without
-executing the service and checks them against the Cargo version. It also checks the
-MSI's `ProductVersion` and packaged executable version. `-SkipBuild` rejects an
-executable from another version; rebuild it before packaging.
-
-Both executables use the same Cargo version and receive separate filename and
-description resources. Tagged Actions builds stamp both from the GitHub tag.
-
-Output files appear in `target\installer`:
-
-| File | Purpose |
+| Output | Purpose |
 | --- | --- |
-| `BfdWinService-VERSION-x64-setup.exe` | Offline bundle: native Microsoft runtime installer, then BFD MSI |
-| `BfdWinService-VERSION-x64-setup.exe.sha256` | SHA-256 checksum of that setup bundle |
+| `target/installer/BfdWinService-VERSION-x64-setup.exe` | Offline setup bundle |
+| `target/installer/BfdWinService-VERSION-x64-setup.exe.sha256` | SHA-256 checksum |
+| `target/bundle-build/VERSION` | Internal MSI and WiX intermediate files |
 
-`VERSION` is the build's package version, such as `1.2.0`. Release builds
-disable Rust PDBs for both services and WiX symbols with `-pdbtype none`.
-Use `-SkipBuild` when changing installer authoring after already building the
-matching production executable. The normal command always rebuilds the executable.
+`VERSION` is the package version from `Cargo.toml`. Both service executables
+must match it. Use `-SkipBuild` only with already-built production executables
+of that version. Release builds omit Rust PDBs and WiX symbols. The BFD MSI and
+setup bundle are unsigned; the embedded Microsoft installer retains its
+signature.
 
-The script's `AcceptWixEula` switch defaults to true and passes
-`-acceptEula wix7` to extension restore and package build commands. Acceptance applies to these commands
-without recording per-user acceptance.
+To reproduce a tag's version locally before building, run:
 
-The [.NET tool manifest](../../.config/dotnet-tools.json) pins WiX `7.0.0`; the script
-restores `WixToolset.Util.wixext`, `WixToolset.Firewall.wixext`, and
-`WixToolset.BootstrapperApplications.wixext` at the same
-version into the ignored `.wix` cache and loads those exact versions for the
-build. Administrators don't need .NET or WiX
-to install the setup bundle. The internal BFD MSI and outer setup executable
-are unsigned; signing isn't configured in this workflow. The embedded Microsoft
-installer retains its valid Microsoft Authenticode signature.
+```powershell
+.\scripts\Set-ReleaseVersion.ps1 -Tag 'v1.2.0'
+.\scripts\Build-Bundle.ps1
+```
 
-The [bundle definition](../../installer/Bundle.wxs) embeds the unmodified x64
-Visual C++ Redistributable from [installer/redist](../../installer/redist/README.md)
-before the MSI. Registry detection skips an installed runtime of the pinned
-version or newer. The native installer runs with `/install /quiet /norestart`;
-failures stop the chain, and exit code `3010` requests a restart without forcing
-one. The shared runtime remains installed after BFD removal or rollback.
-Update the binary, provenance metadata, checksum, and documented runtime version
-together when refreshing the prerequisite. `scripts/Test-VcRedist.ps1` verifies
-the pin, and `scripts/Test-Bundle.ps1` verifies that the final bundle contains
-the exact verified Microsoft installer and validated internal MSI.
-The native build records the `vcvars64.bat` environment's `VCToolsVersion` in
-each executable's Windows Comments field, together with the CRT version from
-that toolset's `include/crtversion.h`. Servicing can change CRT revisions without
-changing the toolset directory name. `Test-NativeRuntime.ps1` rejects missing
-receipts or either version newer than the bundled runtime, including with
-`-SkipBuild`. Refresh the runtime pin or select a compatible Visual Studio
-installation when that guard fails. `Test-NativeRuntimePolicy.ps1` checks version
-comparison boundaries. The build fingerprints the default-toolset selection file
-and the CRT header so a Visual Studio update triggers a fresh receipt and native
-compilation. The embedded runtime must cover both versions under Microsoft's
-[redistributable compatibility policy](https://learn.microsoft.com/en-us/cpp/porting/binary-compat-2015-2017).
+Replace `v1.2.0` with the intended tag. Stamping updates the service package in
+`Cargo.toml`, `Cargo.lock`, and `fuzz/Cargo.lock`, preserving dependency
+versions. Accepted tags use `vMAJOR.MINOR.PATCH`, without leading zeros,
+prerelease identifiers, or build metadata. MSI limits are `255.255.65535`.
+Windows numeric file versions append a fourth zero; MSI and installed-app
+versions use three components.
 
-The [package definition](../../installer/Package.wxs) uses the `v4` XML schema
-namespace, which WiX 7 retains, and uses
-[ServiceInstall](https://docs.firegiant.com/wix/schema/wxs/serviceinstall/),
-[ServiceControl](https://docs.firegiant.com/wix/schema/wxs/servicecontrol/),
-[EventManifest](https://docs.firegiant.com/wix/schema/util/eventmanifest/), and
-[FirewallException](https://docs.firegiant.com/wix/schema/firewall/firewallexception/).
-WiX handles manifest/firewall installation, rollback, and removal through its
-native extension actions. Resource paths resolve to the installed executable.
-Core [PermissionEx](https://docs.firegiant.com/wix/schema/wxs/permissionex/)
-elements apply protected SCM ACLs through `MsiLockPermissionsEx`. SYSTEM and
-Administrators receive service full access (`0xf01ff`). Authenticated Users receive
-only query config/status, enumerate dependents, interrogate, and read-control
-rights (`0x2008d`); Start/Stop and configuration changes require elevation.
-See [Windows service access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights).
-File-log and Event Log access follow the
-[logging permissions](../security/service-isolation.md#protected-object-permissions).
-Separate registry-value components preserve administrator values during repair.
-Fixed-target native SCM custom actions provision accounts, service SID types,
-delayed automatic start for both services, and recovery after a nonzero BFD exit.
-They snapshot the previous settings in the protected installation directory,
-restore them during MSI rollback, and remove the snapshot on commit.
-WiX documents limitations in the native MSI service-configuration action; these
-settings therefore use explicit SCM calls instead of `MsiServiceConfig` authoring.
-See [WiX ServiceConfig](https://docs.firegiant.com/wix/schema/wxs/serviceconfig/).
-The installed service is Automatic (Delayed Start) and remains stopped for address configuration.
-See [bundle installation](../setup.md#install-with-the-offline-setup-bundle).
+### Runtime prerequisite
+
+Follow [runtime provenance and updates](../../installer/redist/README.md) to
+refresh the pinned redistributable. Update its binary, metadata, and checksum
+together. The build records both the MSVC toolset version and `crtversion.h`
+version in each executable's Comments field. `Test-NativeRuntime.ps1` rejects
+missing receipts or either version newer than the bundled runtime, including
+with `-SkipBuild`. If that check fails, update the runtime pin or select a
+compatible Visual Studio installation.
+
+The bundle skips an equal or newer installed runtime, retains the shared runtime
+after BFD removal or rollback, and accepts exit code `3010` without forcing a
+restart. See [installation](../setup.md#install-with-the-offline-setup-bundle)
+for checksum verification, setup switches, and repair.
+
+### Inspect the MSI without installing it
+
+To validate MSI metadata without changing installed services, run:
+
+```powershell
+.\scripts\Test-Msi.ps1 -Path 'MSI_PATH'
+```
+
+Replace `MSI_PATH` with the internal MSI under `target/bundle-build/VERSION`.
+The check reports x64/elevation requirements, services, payload, defaults,
+firewall rules, and manifest lifecycle.
 
 ## Build with GitHub Actions
 
-Send the build through its training session before calling it bodacious. The
-[Build Windows bundle workflow](../../.github/workflows/build-msi.yml) runs on pull
-requests targeting `main` and release-tag pushes matching `v*`. Ordinary branch
-pushes, including pushes to `main` after a merge, don't trigger the workflow.
-There is no manual-dispatch trigger. It audits `Cargo.lock` against the RustSec
-advisory database with `cargo audit`, then checks version stamping, Rust
-formatting, Clippy, and optimized tests on an x64 `windows-2025` runner using
-`rust-toolchain.toml`. The auditor is built with stable Rust outside the
-repository, so the repository's build-std configuration doesn't apply to it.
-In parallel, the `asan` job runs `scripts/Test-Asan.ps1` on a separate Windows
-runner, including native instrumentation verification and the default sanitized
-test suite. It retains diagnostic logs and build records without uploading
-instrumented executables.
+The [Build Windows bundle workflow](../../.github/workflows/build-msi.yml) runs
+on pull requests targeting `main` and tag pushes matching `v*`. Ordinary branch
+pushes and manual dispatch don't trigger it. Open or update a pull request to
+validate a branch; require these jobs through branch protection:
 
-The parallel `fuzz` job audits `fuzz/Cargo.lock`, checks harness formatting and
-Clippy, runs the harness regression tests, and invokes `scripts/Test-Fuzz.ps1`.
-Each of its four ASan campaigns stops after 15 seconds or 10,000 inputs,
-whichever comes first; compilation is outside the campaign time budget. The job
-uses the pinned cargo-fuzz driver and the repository's Rust toolchain on its own
-`windows-2025` runner. See the [fuzz harness guide](../../fuzz/README.md#github-actions)
-for the target scope and diagnostic artifact contents.
+| Job | Validation |
+| --- | --- |
+| `asan` | Rust/native ASan tests with native instrumentation verification |
+| `fuzz` | Fuzz dependency audit, formatting, linting, regression tests, and four bounded ASan campaigns |
+| `build-msi` | Dependency audit, version/ACL/key/recovery fixtures, formatting, release Clippy/tests, RPC/MI coexistence, production hardening, and installer lifecycle tests |
 
-Every run builds and tests the offline setup bundle and its internal MSI. For a tag, the workflow
-removes the leading `v` from a tag such as `v1.2.0` and writes `1.2.0` into the
-service package entries in `Cargo.toml`, `Cargo.lock`, and `fuzz/Cargo.lock` in
-the runner's checkout. The separate fuzz package keeps its own version.
-The executables, MSI, setup bundle, artifact filenames, and installation checks use that
-stamped version. Pull-request builds use the version in `Cargo.toml`.
-The workflow validates production executable hardening before
-testing installation. Pull-request runs upload validated artifacts
-and installer logs with a read-only repository token. Release publication
-requires a version tag, successful `asan`, `fuzz`, and `build-msi` jobs, and runs
-in a separate job with `contents: write`.
-No signing or release credentials are available to pull-request validation.
-To enforce validation before merging, configure branch protection to require
-`asan`, `fuzz`, and `build-msi`. Open or update a pull request targeting `main`
-to validate a branch. Retry an existing run through GitHub Actions.
+Each job uses the pinned Rust toolchain on a separate `windows-2025` runner. Tag
+builds stamp their version before validation; pull requests use `Cargo.toml`.
+ASan output is separate from production payloads. Test harnesses use unwinding;
+production executables use `panic = "abort"`.
 
-The workflow explicitly passes `-AcceptWixEula` for bundle builds, accepting
-the WiX 7 OSMF EULA for extension restore and package compilation.
+### Installer lifecycle coverage
 
-In `build-msi`, linting, optimized tests, and production builds use the release
-profile. Linting and tests enable unwinding for the test harness; the production
-build uses
-`panic = "abort"`. The final hardening check reuses the compiled release test
-executable so it doesn't rebuild or replace the packaged production images.
-The separate ASan job uses its development-derived profile and isolated output
-directory; its artifacts never supply the MSI payload.
+Run installation tests only on a hosted runner or the explicitly selected
+disposable `BFD-WS2025` VM. They install/remove services and change SCM,
+registry, Event Log, and firewall state. Preserve the lab configuration and
+checkpoint first; see
+[disposable-host validation](validation.md#validate-installed-service-security-in-a-disposable-vm).
 
-The installation test runs on a GitHub-hosted runner or, with `-DisposableVm`,
-the provisioned disposable `BFD-WS2025` Hyper-V guest. It checks fresh
-installation, actual service configuration, registry types, firewall rules,
-rendered Operational events, disabled/enabled file output, repair without
-resetting settings, administrator service start/stop, installed service ACLs,
-and uninstall while retaining generated logs.
-`scripts/Assert-ServiceAccess.ps1` uses Windows `AccessCheck` with a temporary
-Authenticated Users restricted token to verify query rights and reject Start/Stop,
-pause, configuration changes, deletion, ACL changes, and custom controls. These
-checks run on descriptor fixtures locally and the actual service descriptors in
-the installation test. Rollback checks require restoration of service security
-descriptors and dependency lists. The protected, bounded rollback snapshot
-preserves dependency names, groups, order, and UTF-16. The test provisions
-loopback addresses before starting the service. Its guard rejects ordinary
-developer hosts. It also checks the installed executable's versions and the
-version shown in Windows installed-app settings. Build-time table validation is
-read-only and can run locally.
+The workflow runs these suites in order:
 
-The tests check both service accounts, SIDs, SCM privilege lists, actual
-running token privileges, and mutual telemetry authorization
-using the actual service tokens, denial of authenticated unrelated clients
-on both private RPC interfaces after install, broker recovery, and repair, both
-executable versions, delayed start and recovery settings, SCM recovery after a
-broker crash, and log writes through the BFD service SID.
-`Test-ServicePrivilegePolicy.ps1` runs before the independent-start checks. It
-temporarily broadens each stopped service's SCM allowlist, requires startup
-rejection and the token-policy diagnostic, then restores the minimum and checks
-recovery. Executable version checks read PE metadata without launching a daemon.
-Startup fixtures start BFD with BGP configured while the broker is stopped,
-stop the broker without stopping BFD, and start the broker while BFD is stopped.
-Repair fixtures verify that BFD remains independent of the broker in SCM.
-Failed installation transactions must restore the original dependency list;
-successful installation and repair leave BFD independent. Broker dependencies
-and the remaining service policy retain exact comparisons.
-`Test-MsiRollback.ps1` first injects an intentional failure into a temporary MSI
-copy to exercise fresh-install and existing LocalSystem-account rollback, including
-the delayed-start and non-crash recovery flags. Separate fixtures cover an absent
-privilege policy, an empty request through SCM, a pre-existing empty registry
-value, an explicit privilege list, and a restricted service SID. The empty registry
-value is seeded only on a stopped test service on the disposable runner; the test
-never starts that fixture. It
-runs only on a GitHub-hosted runner or the explicitly selected disposable VM.
+| Suite | Checks |
+| --- | --- |
+| [Test-MsiRollback.ps1](../../scripts/Test-MsiRollback.ps1) | Fresh/existing-service rollback; exact restoration of dependency lists, security descriptors, SID and recovery policy, and distinct absent/empty/explicit privilege fixtures |
+| [Test-MsiInstall.ps1](../../scripts/Test-MsiInstall.ps1) | Fresh installation, independent service lifecycle, actual tokens, expected startup rejection, mutual RPC authentication, unrelated-caller denial, broker recovery, ETW, file logging/rotation, repair, and removal |
+| [Test-BundleInstall.ps1](../../scripts/Test-BundleInstall.ps1) | Runtime detection, repeated installation, repair, removal, and shared runtime retention |
+| [Test-MsiUpgrade.ps1](../../scripts/Test-MsiUpgrade.ps1) | Published-baseline upgrade and injected failed-upgrade rollback preserving bytes, registration, configuration, service policy, ACLs, and logs |
 
-After MSI validation and removal, `Test-BundleInstall.ps1` installs the setup
-bundle and checks runtime availability, both service accounts and executable
-versions, repeated installation, repair, and removal that retains the shared
-runtime. It verifies that maintenance skips an equal or newer runtime. On hosted
-runners, the preinstalled runtime might already satisfy the prerequisite. The
-script also supports explicit `-DisposableVm` testing on the provisioned
-`BFD-WS2025` Hyper-V guest. Use a guest without the runtime to exercise prerequisite installation.
+The workflow downloads and verifies its upgrade baseline. That fixture covers
+the named baseline, not every release. Use a VM without the runtime to test its
+actual installation; hosted runners can already satisfy that prerequisite.
+Loopback reflector tests and firewall-rule inspection establish separate checks.
+They don't prove external firewall enforcement or peer interoperability.
 
-`Test-MsiUpgrade.ps1` exercises transactional preservation for an existing
-installation, including an injected deferred failure after service-policy
-mutation. It checks executable bytes, MSI registration, typed registry values,
-service accounts/SIDs/privileges/recovery/ACLs, and generated logs. The workflow
-verifies its downloaded fixture checksum and retains `upgrade-validation.json`
-with installer logs. This fixture does not establish compatibility with every
-installed version.
-The installed-reflector loopback test separately covers legal source-port
-boundaries and rejection of 7784; the installed firewall filters are inspected
-independently because loopback traffic alone does not prove firewall enforcement.
-
-To inspect the package without installing it, run:
-
-```powershell
-.\scripts\Test-Msi.ps1 `
-    -Path '.\target\bundle-build\1.2.0\BfdWinService-1.2.0-x64.msi'
-```
-
-Adjust the filename for the package version. Confirm that validation reports
-the x64 package's elevation requirement, service, payload, registry defaults,
-firewall rules, and manifest lifecycle.
-
-After a successful tag build, download the `BfdWinService-x64-COMMIT_SHA`
-artifact. It contains only the offline setup bundle and its checksum.
-`COMMIT_SHA` is the source commit. Installer test logs are uploaded separately,
-including when a test fails.
+After a successful build, `BfdWinService-x64-COMMIT_SHA` contains the setup
+bundle and checksum. Installer logs, including bounded service diagnostics on
+failure, are uploaded separately. `COMMIT_SHA` identifies the source commit.
 
 ## Publish a GitHub release
 
-Pizza time comes after the release checks, dude. Pushing a version tag publishes a
-[GitHub release](https://github.com/miketheitguy/bfd-winservice/releases) after
-the sanitizer, fuzz, build, hardening, and installation checks pass. The release
-attaches the offline setup bundle and its SHA-256 checksum, using
-`docs/releases/VERSION.md` as the release notes. Add that file before tagging and
-explain the version choice and compatibility impact. Missing notes block a new
-release publication.
-The release title
-includes the version tag, such as `BFD Windows Service v1.2.0`.
+Publication requires successful `asan`, `fuzz`, and `build-msi` jobs for a
+version tag. Only the separate publication job receives `contents: write`;
+pull-request validation has read-only repository access. The release uses
+`docs/releases/VERSION.md` as its notes and attaches only the setup bundle and
+SHA-256 file. Missing notes block publication.
 
 ### Tag and publish the release
 
-Use a GitHub tag in the form `vMAJOR.MINOR.PATCH` as the release version source.
-The MSI workflow accepts three numeric components without leading zeros,
-prerelease identifiers, or build metadata. MSI limits the major and minor
-components to 255 and the patch component to 65535.
-Windows file and product version strings, MSI `ProductVersion`, and
-installed-app `DisplayVersion` use the numeric part
-of the tag, such as `1.2.0`.
-Windows numeric file and product versions
-append a fourth field of `0`, such as `1.2.0.0`. You do not need to commit a
-matching Cargo version before releasing: the workflow stamps all three Cargo files
-from the tag before running the build checks. Invalid release tags fail before
-compilation.
-
 To release a tested commit:
 
-1. Choose the next version tag using [Choose a release version](../../CONTRIBUTING.md#choose-a-release-version).
-   The commands use `v1.2.0` as an example. Keep the existing tag when retrying
-   a release from the same commit.
-2. Add `docs/releases/VERSION.md` with the version rationale, functionality,
-   compatibility impact, and validation limits. Update the canonical guides
-   for the resulting supported contract. Commit the tested changes
-   and confirm that the commit contains the release workflow and notes.
-3. Create the version tag from that commit, for example:
+1. Choose an unused version under the
+   [release version policy](../../CONTRIBUTING.md#choose-a-release-version).
+2. Add `docs/releases/VERSION.md` with functionality, compatibility, version
+   rationale, and validation limits. Update the canonical guides and commit the
+   tested changes. The tag workflow stamps Cargo versions from the tag.
+3. Create and push an annotated tag, replacing `1.2.0` with the chosen version:
 
    ```powershell
    git tag -a v1.2.0 -m "BFD Windows Service v1.2.0"
-   ```
-
-4. Push that tag:
-
-   ```powershell
    git push origin v1.2.0
    ```
 
-5. Wait for **Build Windows bundle** to succeed, then open the repository's
-   **Releases** page. Confirm that the version's **Assets** include
-   only `BfdWinService-1.2.0-x64-setup.exe` and its `.sha256` file.
+4. Wait for **Build Windows bundle** to succeed. On the
+   [Releases page](https://github.com/miketheitguy/bfd-winservice/releases),
+   verify the setup/checksum assets and check the downloaded setup's SHA-256.
 
-Replace `1.2.0` with the chosen tag version. Only the release job receives
-`contents: write`; the build job retains read-only repository access. Rerunning
-the release job completes a draft or adds missing assets to an existing release.
-It preserves assets already attached to a published release.
+Keep published tags and assets unchanged. Diagnose a failed check before
+retrying the same commit. If source changes, validate it and select the next
+version. The publication job can complete a draft or add missing assets without
+replacing assets already attached to a published release.

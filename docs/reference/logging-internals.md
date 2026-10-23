@@ -17,12 +17,11 @@ log. This diagnostic does not produce an Operational event.
 
 ## File rotation and buffering
 
-Keep the log stash totally tubular and check rotation behavior. File output
-rotates before a complete line would exceed 64 MiB. The writer renames the
-active file to `LogFilePath` with `.1` appended, replacing the earlier backup,
-and creates a new file. Each file stays within 64 MiB, including buffered bytes
-and timestamps. Existing oversized files are rotated without extending them; the
-logger does not shrink their existing contents.
+File output rotates before a complete line would exceed 64 MiB. The writer
+renames the active file to `LogFilePath` with `.1` appended, replacing the
+earlier backup, and creates a new file. Each file stays within 64 MiB, including
+buffered bytes and timestamps. Existing oversized files are rotated without
+extending them; the logger does not shrink their existing contents.
 
 If a reader denies delete sharing, rotation can fail. Lines that need rotation
 are dropped from file output until rotation succeeds, with retries at most once

@@ -222,29 +222,12 @@ This checks optimized code. For the production abort-on-panic executable, follow
 
 ## Run AddressSanitizer checks
 
-Channel Donatello: look for memory errors before the pizza celebration. For the
-memory-error vibe check, AddressSanitizer (ASan) detects memory errors during
-testing. The repository's `cargo asan` alias enables `-Z sanitizer=address`,
-preserves the Windows hardening flags, rebuilds the standard library, and writes
-to `target/asan`. It also passes the sanitizer flag to `rustdoc` for
-documentation tests. Its dedicated profile uses unwinding for the test harness.
-The native build detects the target's `CARGO_CFG_SANITIZE=address` setting and
-adds `/fsanitize=address /Zi` to maintained RPC C files and generated MIDL stubs.
-
-The sanitizer is enabled only by this alias. Rust documents ASan for testing
-and fuzzing because its instrumentation adds runtime overhead. Cargo uses
-target `rustflags` before `[build].rustflags`, so placing the sanitizer in the
-build table would be ignored while the Windows target flags are configured.
-The alias's `--config` arrays append the sanitizer flags to the target settings.
-See [Cargo compiler flag precedence](https://doc.rust-lang.org/cargo/reference/config.html#buildrustflags).
-
-The `[unstable]` table already sets `build-std = ["std", "panic_unwind"]`.
-This enables Cargo's `-Z build-std=std,panic_unwind` for every invocation and
-rebuilds the standard library with ASan during sanitized tests. The repository
-also sets the explicit Windows target and installs `rust-src` through
-`rust-toolchain.toml`. Rebuilding the standard library extends ASan coverage to
-its Rust code; ASan can work with an uninstrumented standard library, but that
-reduces coverage. See [Cargo's build-std configuration](https://doc.rust-lang.org/cargo/reference/unstable.html#build-std).
+AddressSanitizer (ASan) checks memory errors in the Rust test graph, rebuilt
+standard library, maintained RPC C, and generated MIDL stubs. The wrapper uses
+an isolated `target/asan` directory and verifies native instrumentation before
+running tests. See
+[test-profile differences](../security/build-hardening.md#test-profile-differences)
+for compiler flags and coverage limits.
 
 Install the Visual Studio C++ Build Tools with the AddressSanitizer component.
 Use PowerShell 7 (`pwsh`) for the ASan and fuzz build wrappers. From the
@@ -279,11 +262,11 @@ custom installation; otherwise it locates the latest x64 C++ toolset with
 must support `address` for `x86_64-pc-windows-msvc`; check target support
 again after a toolchain update.
 
-ASan is a [testing tool](https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/sanitizer.html#addresssanitizer).
+ASan is a
+[testing tool](https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/sanitizer.html#addresssanitizer).
 Distribute the normal release executable. ASan tests don't instrument Windows
 system DLLs or the prebuilt MSVC runtime. The separate `asan` CI job tests the
 same source revision and tag version as `build-msi`; it uploads diagnostics
-only. Release publication requires `asan`, `fuzz`, and `build-msi` to succeed. The production job
-builds its own ordinary release executables, checks that they import no ASan
-runtime, and validates the MSI independently. Sanitizer flags and binaries do
-not pass between these jobs.
+only. The production job builds and validates ordinary release executables;
+sanitized binaries never supply the MSI payload. See the
+[release gates](packaging.md#build-with-github-actions).

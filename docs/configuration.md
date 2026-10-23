@@ -1,12 +1,9 @@
 # Registry configuration reference
 
-Cowabunga, configuration crew. Check every setting before rolling out. Windows
-network admins, this is your settings playbook for one Bidirectional Forwarding
-Detection (BFD) session. Let's get it, like, totally dialed in, dude. For
-initial provisioning, see [Set up a BFD session](setup.md).
-
-Configuration vibe check, no cap: the registry is the source of truth. BFD
-accepts no command-line arguments. The installed Windows service reads this key:
+Cowabunga, configuration crew. Use this reference for registry names, types,
+defaults, and reload rules. For initial provisioning, follow
+[Set up a BFD session](setup.md). BFD accepts no command-line arguments and
+reads configuration from:
 
 ```text
 HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters
@@ -14,8 +11,8 @@ HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters
 
 The program reads this key without creating or modifying it. Omit an optional
 value and its default takes over. A missing required value, wrong type, or
-invalid combination stops startup and names the affected setting. Keep it
-tubular and check the types: registry values use these types:
+invalid combination stops startup and names the affected setting. Values use
+these types:
 
 - **Strings:** `REG_SZ`. `REG_EXPAND_SZ` and environment-variable expansion are unsupported.
 - **Numbers and flags:** `REG_DWORD`. Boolean flags must be `0` or `1`.
@@ -25,9 +22,8 @@ Types are enforced through [RegGetValueW](https://learn.microsoft.com/en-us/wind
 
 ## Apply changes and access settings
 
-Turtle power still follows the reload and permission rules. Restart to reload
-startup settings. S-BFD timing and maintenance settings reload when the
-Parameters key changes; see
+Restart to reload startup settings. S-BFD timing and maintenance settings reload
+when the Parameters key changes; see
 [Change timing and entity availability](seamless.md#change-timing-and-entity-availability).
 
 The MSI protects this key: SYSTEM and administrators have full control, and the
@@ -41,9 +37,8 @@ Event Log and filesystem permissions; see
 
 ## Addresses and transport
 
-Get the packet route totally tubular before tuning anything else. Control
-traffic uses User Datagram Protocol (UDP). Receive validation checks the IPv4
-time-to-live (TTL) or IPv6 hop limit.
+Control traffic uses User Datagram Protocol (UDP). Receive validation checks the
+IPv4 time-to-live (TTL) or IPv6 hop limit.
 
 For classical BFD, use `Multihop` to select the transport. If you omit this value or set it to `0`,
 the service uses single-hop. Set it to `1` for multihop. The following values
@@ -61,9 +56,6 @@ configure the addresses and transport:
 | `Passive` | `REG_DWORD` | `0` | Classical multihop only: wait for a valid peer packet before sending |
 | `MinTtl` | `REG_DWORD` | No threshold | Multihop or S-BFD minimum received TTL/hop limit, 1–255 |
 
-`Multihop` must be a `REG_DWORD` with value `0` or `1`. Any other value or
-registry type fails startup.
-
 Single-hop always requires a received
 TTL/hop limit of 255 and rejects `MinTtl` and `Passive=1`. An optional
 `InterfaceIndex` on another role still constrains incoming traffic to that
@@ -71,9 +63,8 @@ interface.
 
 ### Address validation
 
-Give address syntax the Donatello treatment, dude. IPv6 addresses must be
-literals such as `2001:db8::10`. Link-local addresses require `InterfaceIndex`;
-do not add a `%scope` suffix.
+IPv6 addresses must be literals such as `2001:db8::10`. Link-local addresses
+require `InterfaceIndex`; do not add a `%scope` suffix.
 
 For S-BFD, `Local`, `Peer`, and `AllowedPeers` must be usable unicast addresses.
 IPv4 `0.0.0.0/8`, IPv4 `240.0.0.0/4`, and IPv4-mapped IPv6 addresses are
@@ -86,8 +77,7 @@ With `PointToPoint=1`, outgoing packets still go to the configured `Peer`. Incom
 
 ## Seamless BFD
 
-Pick the S-BFD role for this ninja mission. Use these values to select an S-BFD
-role and its target or source policy:
+Use these values to select an S-BFD role and its target or source policy:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -109,9 +99,9 @@ Reflectors reject `BgpPeerName`, `SourcePort`, and `RemoteDiscriminator`.
 
 ## Timing
 
-Bodacious timers need the right units, crew. Transmit (TX) and receive (RX)
-intervals use microseconds. For S-BFD initiators, `MinRxUs` is a round-trip time
-(RTT) allowance. These values control session timing:
+Transmit (TX) and receive (RX) intervals use microseconds. For S-BFD initiators,
+`MinRxUs` is a round-trip time (RTT) allowance. These values control session
+timing:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -130,8 +120,8 @@ Detection time    = peer multiplier × max(local required RX, peer desired TX)
 
 Periodic transmit intervals are randomly reduced by 0–25%, or 10–25% when the
 local multiplier is 1. With matching 300000-microsecond intervals and multiplier
-3, detection time is 900 ms. Gnarly scheduling reality: Windows adds latency;
-the service does not guarantee microsecond timing.
+3, detection time is 900 ms. Windows scheduling adds latency; the service does
+not guarantee microsecond timing.
 
 For S-BFD, see [timing and live updates](seamless.md#change-timing-and-entity-availability).
 For multihop timeout backoff and expired peer RX limits, see
@@ -273,8 +263,7 @@ control text logging and integration with a Windows Border Gateway Protocol
 
 ### Text logging
 
-Keep the log receipts ready before pizza time. These values control text
-logging:
+These values control text logging:
 
 | Value | Type | Default | Meaning |
 | --- | --- | --- | --- |

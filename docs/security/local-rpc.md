@@ -332,30 +332,14 @@ success and rejection, rather than `AuthzFreeContext`. See Microsoft's [RPC
 context
 release](https://learn.microsoft.com/en-us/windows/win32/api/rpcasync/nf-rpcasync-rpcfreeauthorizationcontext).
 
-### Authz responsibilities
-
-Bodacious authorization needs correct native ownership and cleanup. The
-implemented Authz path fits the requirement to compare the exact account SID and
-enabled service SID directly. Rejection tests cover that policy. The Authz
-wrapper owns native buffer parsing, context lifetime, and cleanup. The
-authorization policy, transport/authentication checks, correct API use, and
-reviewed FFI boundary determine whether the implementation enforces its intended
-trust boundary. Even, like, totally tubular API choices still need correct
-ownership and policy.
-
 ### Soundness and operational limits
 
-The layered design is sound for the stated local-service identity boundary, and
-the recorded regression tests support that assessment. Windows checks the
-expected server, the interface ACL gates callers, the callback and manager
-require the exact broker identity, and BFD never adopts the broker's token for
-resource access. The network-facing process keeps its reduced identity
-throughout the exchange. This is a design assessment, not a proof of Rust memory
-soundness or the absence of vulnerabilities. It assumes trustworthy Windows
-authentication, SCM service-token construction, protected configuration and
-binaries, and the native RPC/Authz implementation. Administrators and SYSTEM
-that can replace code or change service policy remain trusted; a matching SID
-does not attest which executable is running.
+Windows checks the expected server, the interface ACL gates callers, and the
+callback and manager require the exact caller identity. BFD retains its reduced
+identity throughout the exchange. These checks assume trustworthy Windows
+authentication, SCM token construction, protected configuration/binaries, and
+correct native RPC/Authz behavior. Administrators and SYSTEM remain trusted; a
+matching SID does not attest which executable is running.
 
 The status and availability boundaries apply these additional checks:
 
@@ -368,11 +352,10 @@ The status and availability boundaries apply these additional checks:
 
 ### Deadlines and recovery
 
-Keep pending native storage safe before the pizza break. Bind and call
-cancellation retain their output, async state, events, binding, SID, and
-descriptor allocations until native completion. A successful bind that races
-with cancellation is unbound before returning failure. Timeout does not prove
-that the server stopped executing. See the
+Bind and call cancellation retain their output, async state, events, binding,
+SID, and descriptor allocations until native completion. A successful bind that
+races with cancellation is unbound before returning failure. Timeout does not
+prove that the server stopped executing. See the
 [cancellation contract](../rpc-session-status-design.md#cancellation-and-shutdown)
 for exact deadlines, supervision, quarantine, and shutdown behavior.
 
@@ -383,31 +366,29 @@ Fatal native faults remain outside recoverable RPC exception handling.
 
 ### Concurrency and availability
 
-A totally tubular design still has availability limits. `MaxRpcSize` does not
-constrain LRPC, and `MaxCalls` is best effort; a separate nonblocking permit
-caps status managers at four. RPC workers read snapshots without taking a lock
-on the packet engine. These bounds reduce contention but do not guarantee
-availability under gnarly host resource exhaustion or an authorized client's
-repeated requests. Status fetches, invalid replies, timeouts, and quarantine
-never fabricate a BFD Down state or issue BGP actions. The existing BGP control
-RPC interface and COM/MI provider policy remain separate.
+`MaxRpcSize` does not constrain LRPC, and `MaxCalls` is best effort; a separate
+nonblocking permit caps status managers at four. RPC workers read snapshots
+without taking a lock on the packet engine. These bounds reduce contention but
+do not guarantee availability under host resource exhaustion or an authorized
+client's repeated requests. Status fetches, invalid replies, timeouts, and
+quarantine never fabricate a BFD Down state or issue BGP actions. The existing
+BGP control RPC interface and COM/MI provider policy remain separate.
 
 Native tests cover malformed replies, identity rejection, cancellation, and
 same-process coexistence with real read-only MI provider traffic. Installed
 SCM-issued identities still require the separate MSI first-start/repair check.
-For API settings and primary references, see [RPC
-authentication](../rpc-authentication.md). For payload bounds and failure
+For the identity matrix and diagram, see
+[RPC authentication](../rpc-authentication.md). For payload bounds and failure
 policy, see [RPC session-status query](../rpc-session-status-design.md). For
-native exception handling and cross-language unwinding rules, see the [native C
-exception policy](build-hardening.md#native-c-exception-policy).
+native exception handling and cross-language unwinding rules, see the
+[native C exception policy](build-hardening.md#native-c-exception-policy).
 
 ## Runtime management operations
 
-Keep the management surface in its own shell, dude. RPC runtime management is a
-separate interface. BFD installs a process-wide `RpcMgmtSetAuthorizationFn`
-callback before opening its endpoint and denies every management operation. This
-policy remains installed until process exit. It does not change the broker
-provider host's COM/MI process security.
+RPC runtime management is a separate interface. BFD installs a process-wide
+`RpcMgmtSetAuthorizationFn` callback before opening its endpoint and denies
+every management operation. This policy remains installed until process exit. It
+does not change the broker provider host's COM/MI process security.
 
 The runtime defaults and BFD's policy are:
 
@@ -425,7 +406,7 @@ ACL does not replace runtime-management authorization. See Microsoft's
 
 ## Verify the implementation
 
-Save the pizza celebration for the test receipts. Follow
+Follow
 [native RPC validation](../development/validation.md#verify-native-rpc-boundaries)
 for the default suites and opt-in MI/RPC coexistence commands.
 

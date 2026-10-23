@@ -8,18 +8,9 @@ runtime, and their security settings. The service monitors one local/peer pair.
 This procedure configures classical BFD. For initiation without a handshake or
 a stateless responder, use [Configure Seamless BFD](seamless.md).
 
-The startup vibe check has two parts, dude: Windows reports `Running`, then BFD
-reports `Up` after it establishes peer communication.
-
-Choose the path for your deployment:
-
-- For Windows services, [install the setup bundle](#install-with-the-offline-setup-bundle), then
-  [configure and verify the service](#configure-and-verify-the-windows-service).
-- For removal, use the [setup bundle uninstall procedure](#remove-a-setup-bundle-installation).
-
 ## Before you begin
 
-Gather the gear before the ninja mission starts:
+Before installing:
 
 - Obtain the x64 setup bundle and its `.sha256` file from
   [GitHub Releases](https://github.com/miketheitguy/bfd-winservice/releases).
@@ -33,7 +24,7 @@ Gather the gear before the ninja mission starts:
   firewall rules or discover peers. The bundle installs the rules described in
   [installed firewall rules](reference/installation.md#installed-firewall-rules).
 
-Get your bearings: find the interface that owns your local address:
+Find the interface that owns your local address:
 
 ```powershell
 Get-NetIPAddress |
@@ -102,8 +93,7 @@ permissions, defaults, and recovery settings, see the
 
 ### 2. Configure the session
 
-Bodacious sessions start with the right configuration. Dial in the required
-session values:
+Set the required session values:
 
 ```powershell
 $localIp = 'LOCAL_IP'
@@ -133,9 +123,8 @@ multihop, or other settings, use the [configuration reference](configuration.md)
 
 ### 3. Verify the Operational log
 
-Check the log receipts before shouting Cowabunga. The bundle registers the Event
-Tracing for Windows (ETW) manifest. Confirm that the provider and channel are
-available:
+The bundle registers the Event Tracing for Windows (ETW) manifest. Confirm the
+provider and channel are available:
 
 ```powershell
 Get-WinEvent -ListProvider 'BFD-Service'
@@ -143,13 +132,12 @@ Get-WinEvent -ListLog 'BFD-Service/Operational'
 ```
 
 The queries display the `BFD-Service` provider and its Operational channel. If
-either is missing, that's a setup bummer: repair the bundle installation before
-starting BFD. Starting the executable doesn't install the manifest.
+either is missing, repair the bundle before starting BFD. Starting the
+executable doesn't install the manifest.
 
 ### 4. Start the service
 
-Roll out, ninja crew, after the configuration steps are complete. Start the
-provisioned service:
+Start the configured service:
 
 ```powershell
 Start-Service BfdWinService
@@ -166,7 +154,7 @@ Start-Service BfdBgpBroker
 
 ### 5. Verify startup
 
-Cowabunga, verification crew. Check the Windows Service Control Manager (SCM) status:
+Check Windows Service Control Manager (SCM) status:
 
 ```powershell
 Get-Service BfdWinService | Select-Object Name, Status, StartType
@@ -186,21 +174,15 @@ sockets are open, and any configured
 Border Gateway Protocol (BGP) worker has started. BFD reaches `Up` separately;
 that transition triggers the first BGP status query when control is configured.
 
-Configuration, file-log, and engine failures that end the service without a
-Stop request produce a nonzero SCM service-specific exit status, and SCM restarts
-the service after 10 seconds. A requested Stop always reports exit code `0`; a
-failed cleanup is still recorded as event 3. For failure details, see
-[Operational events](logging.md#operational-events).
-
-The broker queries BFD session telemetry over private RPC in the background. To inspect
-the authentication event independently of BFD session readiness, see
+For startup failures, inspect the
+[Operational events](logging.md#operational-events). The
+[installation inventory](reference/installation.md) describes SCM recovery. For
+broker telemetry checks, see
 [Verify broker-to-BFD authentication](monitoring.md#verify-broker-to-bfd-authentication).
-The RPC interface has no administrator-facing configuration or public query client.
 
 ### 6. Verify peer communication
 
-Save the pizza celebration for the peer-communication receipts. After
-configuring the remote peer, check the startup and handshake receipts:
+After configuring the remote peer, check startup and handshake events:
 
 ```powershell
 $eventFilter = @{
@@ -228,7 +210,7 @@ For monitoring scripts, see [Monitor service status and BFD events](monitoring.m
 
 ### 7. Optional: Stop the service
 
-A turtle knows when to exit with cleanup, dude. To stop the session, run:
+To stop the session, run:
 
 ```powershell
 Stop-Service BfdWinService

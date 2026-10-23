@@ -1,13 +1,8 @@
 # Network and protocol behavior
 
-Cowabunga, packet crew. Know the wire rules before rolling out. Network admins,
-here's the playbook for Bidirectional Forwarding Detection (BFD)
-interoperability, firewall requirements, and session limits. Get the network
-details dialed in before you paddle out. For a fresh installation, see
+Cowabunga, packet crew. Use this reference for BFD interoperability, firewall
+requirements, and session behavior. For installation, follow
 [Set up a BFD session](setup.md).
-
-The TL;DR, turtle crew: choose one protocol role per process, match the peer's
-authentication, and allow the role's actual UDP traffic through your firewall.
 
 Use [transport profiles](#transport-profiles-and-firewall-rules) to check the
 network path, [classical session behavior](#classical-session-behavior) to check
@@ -16,8 +11,8 @@ to check stop behavior.
 
 ## Protocol scope
 
-Pick the supported mission before you kick shell. The implementation supports
-asynchronous [RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) sessions,
+The implementation supports asynchronous
+[RFC 5880](https://www.rfc-editor.org/rfc/rfc5880.html) sessions,
 [RFC 5881](https://www.rfc-editor.org/rfc/rfc5881.html) single-hop User Datagram
 Protocol (UDP), and [RFC 5883](https://www.rfc-editor.org/rfc/rfc5883.html)
 multihop. For the requirement mapping, regression evidence, and optional
@@ -30,9 +25,8 @@ in [Configure Seamless BFD](seamless.md).
 
 ## Transport profiles and firewall rules
 
-Channel Donatello and match the path to the port rules. The transport profiles
-use these destination ports and received time-to-live (TTL) or IPv6 hop-limit
-checks:
+The transport profiles use these destination ports and received time-to-live
+(TTL) or IPv6 hop-limit checks:
 
 | Mode | Control destination port | Received TTL/hop limit |
 | --- | --- | --- |
@@ -47,19 +41,18 @@ control port through a separate receive socket; an S-BFD initiator receives
 replies on its own source socket. Configure firewall rules for the chosen
 transport. The service doesn't create them; the
 [bundle installs executable-specific rules](reference/installation.md#installed-firewall-rules) for all
-supported roles. Manual installations need equivalent firewall provisioning.
+supported roles. Permit the same traffic through other host or network firewalls.
 
 ## Control packet format
 
-A bodacious packet still needs the exact header layout. Packets use the version
-1, 24-byte mandatory header from
+Packets use the version 1, 24-byte mandatory header from
 [RFC 5880 section 4.1](https://www.rfc-editor.org/rfc/rfc5880.html#section-4.1).
 The five 32-bit discriminator and interval fields use network byte order.
 `Length` includes authentication: 24 bytes without authentication, 28–43 bytes
-with a simple password, 48 bytes with meticulous MD5, or 52 bytes with SHA-1. Intervals are
-in microseconds; the advertised multiplier is nonzero.
+with a simple password, 48 bytes with meticulous MD5, or 52 bytes with SHA-1.
+Intervals are in microseconds; the advertised multiplier is nonzero.
 
-Header flag vibe check, for sure: the service sets them as follows:
+The service sets header flags as follows:
 
 | Flag | Transmit behavior |
 | --- | --- |
@@ -84,8 +77,7 @@ outside the declared BFD `Length` doesn't participate in authentication.
 
 ## States and diagnostics
 
-Turtle power includes knowing what the state actually means. Classical BFD
-starts in Down. The state machine follows
+Classical BFD starts in Down. The state machine follows
 [RFC 5880 section 6.2](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.2).
 Valid packets produce these local states:
 
@@ -123,8 +115,7 @@ event. See the [event IDs and diagnostic levels](logging.md#operational-events).
 
 ## Classical session behavior
 
-Keep the session rules totally tubular and explicit. Here's how classical
-transmit (TX) and receive (RX) roll, buddy.
+Classical sessions apply these transmission and reception rules.
 
 ### Session ownership and packet acceptance
 
@@ -135,8 +126,7 @@ Sessions use these ownership and acceptance rules:
 
 ### Intervals and expiry
 
-Ninja timing discipline starts with the negotiated intervals. The session
-applies these timing rules:
+The session applies these timing rules:
 
 - Outside Up, the base desired TX is `max(StartupTxUs, MinTxUs)`. Classical multihop doubles the greater of this base and its preceding negotiated interval after an unanswered discovery window or detection timeout. Backoff stops at the greater of 30 seconds and twice that base, bounded by the wire format's maximum interval. This allows even a slow peer's rate to decrease after loss. A valid peer packet clears backoff. Single-hop keeps the base interval.
 - Learned remote discriminators expire after one detection time; keyed sequence tracking can resynchronize after two. Both clocks use accepted, authenticated packets, including reception in AdminDown. Passive transmission stops when the learned discriminator expires.
@@ -153,8 +143,7 @@ The session handles interval changes and state notifications as follows:
 
 ### Socket recovery
 
-A rough network day is a bummer, turtle crew; check the recovery policy. A
-transient receive or readiness-wait fault, such as an adapter reset or removed
+A transient receive or readiness-wait fault, such as an adapter reset or removed
 route, pauses socket use with a 10–250 millisecond backoff while protocol timers
 continue. An unusable path still expires detection. Event 4 warns about this
 recovery at most once a minute. Other receive/wait errors end the engine; SCM
@@ -169,10 +158,9 @@ without valid replies.
 
 ## Supported modes and limits
 
-Save the pizza celebration until the feature scope matches your deployment.
-Scope check, no cap: classical sessions originate **asynchronous BFD mode**.
-Classical Demand initiation, Echo, multipoint BFD, and out-of-band discriminator
-signaling aren't implemented. This also excludes
+Classical sessions originate **asynchronous BFD mode**. Classical Demand
+initiation, Echo, multipoint BFD, and out-of-band discriminator signaling aren't
+implemented. This also excludes
 [RFC 9747 Unaffiliated BFD Echo](https://www.rfc-editor.org/rfc/rfc9747.html).
 S-BFD provides live timing updates and uses the Demand bit to identify
 initiators.
@@ -191,11 +179,9 @@ probing; reflectors answer requests and send no periodic packets.
 
 ## Administrative shutdown
 
-Cowabunga, shutdown crew. Read the announcement and cleanup limits. For a mellow
-exit, the service sends an immediate AdminDown notification and continues
-permitted periodic announcements on normal classical shutdown with a
-communicating peer for one Detection Time, up to `MaxShutdownAnnounceMs`, as
-recommended by
+The service sends an immediate AdminDown notification and continues permitted
+periodic announcements on normal classical shutdown with a communicating peer
+for one Detection Time, up to `MaxShutdownAnnounceMs`, as recommended by
 [RFC 5880 section 6.8.16](https://www.rfc-editor.org/rfc/rfc5880.html#section-6.8.16)
 and [RFC 5882 section 8](https://www.rfc-editor.org/rfc/rfc5882.html#section-8).
 The period is the longer of the local Detection Time and the peer's Detection

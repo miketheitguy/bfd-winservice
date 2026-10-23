@@ -6,12 +6,11 @@ the state-to-action rules, use [Control a Windows BGP peer](../bgp.md).
 
 ## Worker retries and broker recovery
 
-Keep the retry story totally tubular, including its limits. A dedicated worker
-handles provider calls while BFD continues running. Failed actions retry after
-one second unless replaced by a newer action or shutdown. At most a Stop/Start
-pair remains queued; Down discards queued Starts. An already issued call
-finishes before the next action runs, unless shutdown queues a newer final
-action, which cancels it.
+A dedicated worker handles provider calls while BFD continues running. Failed
+actions retry after one second unless replaced by a newer action or shutdown. At
+most a Stop/Start pair remains queued; Down discards queued Starts. An already
+issued call finishes before the next action runs, unless shutdown queues a newer
+final action, which cancels it.
 
 SCM restarts a crashed broker after five seconds. An outstanding failed action
 continues its normal retries; a completed action isn't replayed. A normal broker

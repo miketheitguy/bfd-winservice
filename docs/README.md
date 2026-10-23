@@ -49,12 +49,11 @@ Choose a development task:
 | Map RFC requirements to implementation and tests | [RFC conformance tests](rfc-conformance.md) and [RFC 5880 review](rfc5880-conformance.md) |
 | Review correctness, ownership, and security boundaries | [Code review checklist](../CODE_REVIEW.md) |
 | Select validation scope and record evidence | [Rust validation guide](../RUST_SKILLS_VALIDATION.md) |
-| Check documentation coverage and verification | [Documentation audit](documentation-audit.md) |
 
 ## Review performance and release evidence
 
-Choose a record by its tested build. Performance captures describe the named
-development binaries; combined-build validation covers 6.0.0 separately:
+Choose a record by its tested build. Performance captures and release validation
+have separate scopes:
 
 | Record | Scope |
 | --- | --- |
