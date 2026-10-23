@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Assert-RestrictedAcl.ps1')
 . (Join-Path $PSScriptRoot 'Assert-ServiceAccess.ps1')
+. (Join-Path $PSScriptRoot 'Service-TestRecovery.ps1')
 # Installation changes SCM, HKLM, Event Log, and firewall state. Exercise it only
 # on a hosted runner or the explicitly provisioned disposable BFD test VM.
 $hostedRunner = $env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
@@ -313,19 +314,25 @@ try {
     finally { $parameterKey.Dispose() }
     $secretKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Services\BfdWinService\Parameters\Secrets', $true)
     try {
-        foreach ($missing in @($false, $true)) {
-            if ($missing) {
-                $secretKey.DeleteValue('AuthKeyDpapi')
-            } else { $secretKey.SetValue('AuthKeyDpapi', [byte[]]@(1,2,3), [Microsoft.Win32.RegistryValueKind]::Binary) }
-            $rejected = $false
-            try { Start-Service BfdWinService -ErrorAction Stop } catch { $rejected = $true }
-            Assert-Installed ($rejected -and (Get-Service BfdWinService).Status -eq 'Stopped') 'Missing/corrupt DPAPI key did not fail startup or used legacy plaintext.'
+        Invoke-WithoutNonCrashRecovery -Name BfdWinService -DisposableVm:$DisposableVm -Action {
+            try {
+                foreach ($missing in @($false, $true)) {
+                    if ($missing) {
+                        $secretKey.DeleteValue('AuthKeyDpapi')
+                    } else { $secretKey.SetValue('AuthKeyDpapi', [byte[]]@(1,2,3), [Microsoft.Win32.RegistryValueKind]::Binary) }
+                    $rejected = $false
+                    try { Start-Service BfdWinService -ErrorAction Stop } catch { $rejected = $true }
+                    Assert-Installed ($rejected -and (Get-Service BfdWinService).Status -eq 'Stopped') 'Missing/corrupt DPAPI key did not fail startup or used legacy plaintext.'
+                }
+            } finally {
+                Stop-Service BfdWinService -ErrorAction SilentlyContinue
+                $secretKey.SetValue('AuthKeyDpapi', [Convert]::FromBase64String($protectedKey), [Microsoft.Win32.RegistryValueKind]::Binary)
+            }
         }
     } finally {
-        Stop-Service BfdWinService -ErrorAction SilentlyContinue
-        $secretKey.SetValue('AuthKeyDpapi', [Convert]::FromBase64String($protectedKey), [Microsoft.Win32.RegistryValueKind]::Binary)
         $secretKey.Dispose()
     }
+    Assert-ServicePolicy
     $probeStarted = Get-Date
     Start-Service BfdWinService
     Assert-Installed ((Get-CimInstance Win32_Service -Filter "Name='BfdWinService'").State -eq 'Running') 'Configured service failed to start.'
@@ -435,8 +442,10 @@ try {
     Assert-Installed ((Get-Item -LiteralPath "$customLog.1").Length -eq $rotationLimit -and
         (Get-Item -LiteralPath $customLog).Length -lt $rotationLimit) 'The installed reduced token could not rotate the full file log.'
     Write-Output 'Installation, independent startup/stop, service accounts/SIDs, live token privileges, mutual local RPC authentication, broker authorization/recovery, protected ACLs, versions, firewall, rendered ETW, file logging/rotation, and legacy-dependency repair checks passed.'
-}
-finally {
+} catch {
+    Write-ServiceTestDiagnostics -Since $startedAt -OutputDirectory $outputDirectory -Failure $_
+    throw
+} finally {
     if ($installed) { Invoke-Msi '/x' 'uninstall.log' }
 }
 Assert-Installed ($null -eq (Get-CimInstance Win32_Service -Filter "Name='BfdWinService'")) 'Service remained after uninstall.'

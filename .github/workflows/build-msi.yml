@@ -163,6 +163,8 @@ jobs:
         run: ./scripts/Test-BfdAuthenticationKey.ps1
       - name: Check rollback privilege fixtures
         run: ./scripts/Test-RollbackPrivileges.ps1
+      - name: Check service recovery isolation fixtures
+        run: ./scripts/Test-ServiceTestRecovery.ps1
       - name: Check native compiler and runtime compatibility policy
         run: ./scripts/Test-NativeRuntimePolicy.ps1
       - name: Check Rust formatting
@@ -262,6 +264,7 @@ jobs:
             target/installer/upgrade-validation.json
             target/installer/upgrade-policy-mismatch.json
             target/bundle-build/**/*.log
+            target/bundle-build/**/service-test-diagnostics.json
 
   publish-release:
     needs: [asan, fuzz, build-msi]

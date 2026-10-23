@@ -175,8 +175,8 @@ fn run_service() -> Result<(), Box<dyn Error>> {
 
 /// SCM recovery restarts the service after an unrequested failure, including a
 /// nonzero exit code. A Stop, Shutdown, or Preshutdown request is final even when
-/// cleanup failed: events record the failure, and the exit code stays zero so an
-/// administrator's Stop is never followed by an automatic restart.
+/// cleanup failed: events record the failure; exit zero does not queue recovery.
+/// An earlier queued SCM restart can still run after a manual start and stop.
 fn final_exit_code(succeeded: bool, state: ServiceState) -> ServiceExitCode {
     if succeeded || state == ServiceState::StopPending {
         ServiceExitCode::Win32(0)

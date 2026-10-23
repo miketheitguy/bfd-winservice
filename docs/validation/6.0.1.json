@@ -1,0 +1,118 @@
+{
+  "version": "6.0.1",
+  "validated_utc": "2026-10-23T10:12:33.783090+00:00",
+  "scope": "Installer-test recovery isolation, failure diagnostics, patch-version packaging; application logic unchanged.",
+  "validated_source_sha256": {
+    "scripts/Service-TestRecovery.ps1": "ddd17be4fb4c8f3053f3271606e4d540bc46487575ddd90f5428f02f3702a06a",
+    "scripts/Test-ServiceTestRecovery.ps1": "df2f0b46422587e22eef23ff56e2a649d0c09719ad86fcdaa60887aa6066cf50",
+    "scripts/Test-ServicePrivilegePolicy.ps1": "e0576795a34c20cc85239867d81793fb11d29841f5c0a31e46f683fbafbee185",
+    "scripts/Test-MsiInstall.ps1": "b95dd68ab9b8db72a38da42d8ee8cb0965bd2bd777f131f5e1a2f083258c75d4",
+    "src/service.rs": "9c14c5ec2bbaed791a3a8e15ef32b69e59276225b82fec133e91a24c62e34003",
+    ".github/workflows/build-msi.yml": "4e75aabf024d8d260269f6b7718af54dadbd72c2a340bfad27066bf4d05b7e78"
+  },
+  "host": {
+    "debug_tests_passed": 303,
+    "optimized_tests_passed": 303,
+    "includes_doctests": 3,
+    "rpc_child_fixture_results_excluded_from_duplicate_count": 3,
+    "powershell_fixture_suites_passed": 7,
+    "recovery_state_model_cases_passed": 7,
+    "recovery_fixture_powershell_versions": [
+      "Windows PowerShell 5.1",
+      "PowerShell 7"
+    ],
+    "production_build": "Pinned Rust/MSVC hardening and WiX bundle validation passed.",
+    "strict_clippy_formatting_and_api_documentation": "passed",
+    "documentation": {
+      "markdown_files": 43,
+      "local_links": 579,
+      "code_fences": 80,
+      "errors": 0
+    },
+    "native_token_scope": "ACL fixtures passed under the normal Windows token; the restricted execution token rejected the unchanged AccessCheck fixture."
+  },
+  "vm": {
+    "name": "BFD-WS2025",
+    "id": "575400bf-2593-400c-bed8-4bede6212cfb",
+    "powershell": "Windows PowerShell 5.1",
+    "installer_checks_passed": [
+      "six MSI rollback fixtures",
+      "fresh installation",
+      "privilege-policy and DPAPI startup rejection with recovery isolation",
+      "independent service startup and stop",
+      "actual installed token policy",
+      "mutual RPC authentication and unrelated-caller denial",
+      "broker crash recovery",
+      "repair and log rotation",
+      "uninstallation",
+      "setup bundle runtime/repeat/repair/removal",
+      "2.0.0 to 6.0.1 upgrade and failed-upgrade byte/policy rollback"
+    ],
+    "timing_regression": {
+      "helper": "Invoke-WithoutNonCrashRecovery",
+      "offsets_milliseconds": [
+        7300,
+        7400,
+        7500,
+        7600
+      ],
+      "passed": 4,
+      "failed": 0,
+      "observation_seconds_after_each_stop": 12,
+      "production_non_crash_recovery_enabled_before_healthy_start": true,
+      "cases": [
+        {
+          "offset_milliseconds": 7300,
+          "stop_succeeded": true,
+          "state_after_recovery_window": "Stopped"
+        },
+        {
+          "offset_milliseconds": 7400,
+          "stop_succeeded": true,
+          "state_after_recovery_window": "Stopped"
+        },
+        {
+          "offset_milliseconds": 7500,
+          "stop_succeeded": true,
+          "state_after_recovery_window": "Stopped"
+        },
+        {
+          "offset_milliseconds": 7600,
+          "stop_succeeded": true,
+          "state_after_recovery_window": "Stopped"
+        }
+      ]
+    },
+    "lab_upgrade": {
+      "ParametersPreserved": true,
+      "ProtectedKeyPreserved": true,
+      "RegistryAclsPreserved": true,
+      "DiagnosticCollectorPassed": true
+    },
+    "installed_executables": [
+      {
+        "Name": "bfd-bgp-broker.exe",
+        "Version": "6.0.1",
+        "SHA256": "C9936A993DB9D148AE8BC9318CD483816E1F33CF94FA1FF52DF2A7EE65990156"
+      },
+      {
+        "Name": "bfd-winservice.exe",
+        "Version": "6.0.1",
+        "SHA256": "A718EE5106360A21C6661BC94E91AFE419FF6048C9F805A66F1DE3F94839D0E4"
+      }
+    ],
+    "restoration": {
+      "ProtectedKeyRestored": true,
+      "ParametersRestored": true,
+      "RecoveryFlagRestored": 1
+    },
+    "bfd_up_both_sides": true,
+    "bgp_established_both_sides": true,
+    "both_routes_present": true,
+    "left_running": true
+  },
+  "limits": [
+    "The original 6.0.0 failed CI runner did not capture its service-state timeline; diagnosis relies on matching VM reproduction.",
+    "The complete local VM debug/ASan/fuzz matrix from 6.0.0 was not repeated for this test-only fix. The tag workflow gates publication on ASan, fuzz, optimized tests, hardening, and full installer validation."
+  ]
+}

@@ -40,7 +40,9 @@ the following resources for all users:
 - SCM recovery: the broker restarts five seconds after a crash. BFD restarts
   10 seconds after a crash or an unrequested failure exit, such as a local address
   that isn't assigned yet. A Stop request always ends BFD with exit code `0`, so
-  recovery never restarts a service that an administrator stopped.
+  those requests do not queue another recovery restart. A restart queued by an
+  earlier failure can still occur after a manual start and stop; see
+  [SCM queued restart behavior](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-changeserviceconfig2w).
 - The `BFD-Service` provider and enabled `BFD-Service/Operational` channel,
   with message and resource paths pointing to the installed executable.
 - The Parameters key with `Multihop` DWORD `0`, `LogToFile` DWORD `0`, and

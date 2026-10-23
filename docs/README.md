@@ -58,6 +58,8 @@ development binaries; combined-build validation covers 6.0.0 separately:
 
 | Record | Scope |
 | --- | --- |
+| [6.0.1 release notes](releases/6.0.1.md) | Expected startup-failure recovery isolation, failure diagnostics, and installer validation |
+| [6.0.1 numeric validation record](validation/6.0.1.json) | Timing regression cases, installer checks, deployed hashes, and lab restoration |
 | [Coalesced telemetry performance](performance-telemetry-coalescing.md) | CPU, memory, context switches, and thread-ready distributions with both scheduling changes, before the secrecy changes |
 | [Event-driven dispatcher performance](performance.md) | Earlier capture of the broker dispatcher change, before telemetry coalescing and secrecy changes |
 | [6.0.0 release and validation notes](releases/6.0.0.md) | Public Rust API migration, functionality, compatibility, and combined-build host/VM testing |

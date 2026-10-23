@@ -145,6 +145,18 @@ See the [validation guide](../../RUST_SKILLS_VALIDATION.md) and
 
 ## Validate installed-service security in a disposable VM
 
+Run `scripts/Test-ServiceTestRecovery.ps1` to check recovery-isolation cleanup
+with a state model. The guarded installation tests exercise the helper with
+actual SCM policy. Expected privilege/key startup failures suppress non-crash
+recovery in a bounded scope and restore the original flag before healthy
+startup. This prevents queued restarts from racing with later stop checks.
+Crash-recovery configuration and the broker recovery test retain their installed
+behavior.
+
+On an installation-test failure, inspect `service-test-diagnostics.json` beside
+the tested MSI. CI includes it in the installer-log artifact. It records bounded
+service state and event data before uninstall removes the service/provider.
+
 Use a GitHub-hosted runner or the provisioned disposable `BFD-WS2025` Hyper-V
 guest for tests that change services, HKLM, Event Log, firewall, or provider
 state. The installer scripts reject ordinary developer hosts. Run the complete
