@@ -169,6 +169,14 @@ jobs:
         run: ./scripts/Test-NativeRuntimePolicy.ps1
       - name: Check Rust formatting
         run: cargo fmt --check
+      - name: Check documentation links
+        run: |
+          ./scripts/Test-DocumentationLinkPolicy.ps1
+          ./scripts/Test-DocumentationLinks.ps1
+      - name: Check public API documentation
+        env:
+          RUSTDOCFLAGS: '-D warnings -D missing-docs'
+        run: cargo doc --locked --no-deps
       - name: Check Rust lints in release mode
         env:
           # Match the optimized test harness when checking all targets.

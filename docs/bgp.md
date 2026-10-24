@@ -91,9 +91,9 @@ Check both BFD events and BGP peer status against these actions:
 | Startup and handshake before the first Up | No BGP control calls; leave BGP unchanged |
 | Enter Up, including recovery | Check status; Start if the peer is stopped and the action is still current |
 | Enter Down after BFD has been Up | Stop |
-| Peer signals AdminDown, for example because its BFD service stopped | Never Stop; if BFD's latest action was a Stop, Start the peer |
-| BFD service stop or OS shutdown | Never Stop; if BFD's latest action was a Stop, Start the peer; announce AdminDown for a Detection Time |
-| Fatal (non-transient) receive/wait error that returns through engine cleanup | Enter local AdminDown; if BFD's latest action was a Stop, attempt a Start; no negotiated announcement grace |
+| Peer signals AdminDown, for example because its BFD service stopped | Never Stop; if BFD's latest requested action was Stop, check status and Start if stopped |
+| BFD service stop or OS shutdown | Never Stop; if BFD's latest requested action was Stop, check status and Start if stopped; announce AdminDown for a Detection Time |
+| Fatal (non-transient) receive/wait error that returns through engine cleanup | Enter local AdminDown; if BFD's latest requested action was Stop, check status and attempt Start if stopped; no negotiated announcement grace |
 | Crash or abrupt process termination | No cleanup action; the broker leaves BGP unchanged on disconnection |
 
 A running BGP peer cruises through the initial BFD handshake. A stopped peer
@@ -138,12 +138,16 @@ the same way.
 requires that BGP adjacencies be allowed while BFD is administratively disabled
 at either end. This service blocks an adjacency by stopping the peer after a
 detected failure. So when the local service stops, or the peer reports AdminDown,
-the worker withdraws its own Stop: if its latest action was a Stop, it starts the
-peer. A peer that BFD never stopped, for example one an operator stopped, is left
-unchanged. A fatal receive/wait error that returns through engine cleanup also
-sets local AdminDown and attempts this release, with no negotiated announcement
-grace. A crash or abrupt termination skips that cleanup. The broker never
-changes the peer merely because the RPC caller disconnects or because the broker stops.
+the controller replaces its latest requested Stop with Start, even if that Stop
+is still queued or its outcome is unknown. It queries the peer and starts it if
+stopped. If Stop is not its latest requested action, administrative release
+queues no action. The controller does not track who actually stopped the peer;
+an operator-issued Stop is not a persistent maintenance hold.
+
+A fatal receive/wait error that returns through engine cleanup also sets local
+AdminDown and attempts this release, with no negotiated announcement grace.
+A crash or abrupt termination skips that cleanup. The broker never changes the
+peer merely because the RPC caller disconnects or because the broker stops.
 
 ## Worker retries and broker recovery
 
@@ -160,9 +164,9 @@ see the [BGP provider reference](reference/bgp-provider.md).
 
 ### Provider timeouts and final cleanup
 
-Shutdown releases BFD's own Stop with Start when needed and finishes its latest
-queued action. Final actions have bounded calls; a failure is recorded as
-event 3. Provider work can outlive an RPC cancellation. See
+Shutdown replaces BFD's latest requested Stop with Start when needed and finishes
+its latest queued action. Final actions have bounded calls; a failure is recorded
+as event 3. Provider work can outlive an RPC cancellation. See
 [provider timeouts and final cleanup](reference/bgp-provider.md#provider-timeouts-and-final-cleanup)
 for the budgets and ownership rules.
 

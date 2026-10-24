@@ -184,25 +184,20 @@ New-ItemProperty -Path $parameters -Name Auth `
     -PropertyType String -Value 'meticulous-sha1' -Force
 New-ItemProperty -Path $parameters -Name AuthKeyId `
     -PropertyType DWord -Value 1 -Force
-& "$env:ProgramFiles\BfdWinService\Set-BfdAuthenticationKey.ps1"
-Start-Service BfdWinService
 ```
 
-At the hidden prompt, enter the peer's matching 1–20-byte ASCII key. For a binary
-key, invoke the script with `-Hex` and enter pairs of hexadecimal digits without
-separators. `-Key` accepts a `SecureString` for automation; never pass a plaintext
-key in a command line. The script requires a stopped service and checks both
-registry ACLs before writing. It encrypts on this server and verifies the stored
-key by decrypting it. Configure the same key, ID, and algorithm on the remote
-peer, then [verify peer communication](setup.md#6-verify-peer-communication).
+The commands display the configured values and leave the service stopped.
+Next, [provision the matching key and restart](#authentication-key-administration).
+Configure the same key, ID, and algorithm on the remote peer.
 
 ### Authentication key administration
 
 The bundle installs `Set-BfdAuthenticationKey.ps1` in its Program Files
 directory. Use it to set or replace the key in PowerShell as Administrator on
 the BFD server. Configure `Auth` and `AuthKeyId` first, and coordinate the same
-key and authentication settings on the peer. Stop the service, provision the
-key at the hidden prompt, and start the service:
+key and authentication settings on the peer. The tool requires a stopped
+service and checks the protected Parameters and Secrets ACLs before writing.
+Stop the service, provision the key at the hidden prompt, and start the service:
 
 ```powershell
 Stop-Service BfdWinService
@@ -210,13 +205,17 @@ Stop-Service BfdWinService
 Start-Service BfdWinService
 ```
 
-The default hidden prompt accepts ASCII. To enter a binary key, add `-Hex` and
-enter hexadecimal byte pairs without separators. `-Key` accepts a `SecureString`
-from an automation caller. The tool checks the mode's key-length limit, writes
-only `Secrets\AuthKeyDpapi`, and verifies the stored value by decrypting it. A
-failed read-back check restores the previous encrypted value. Verify peer
-communication after restarting; successful local decryption alone does not
-establish a matching remote key.
+The default hidden prompt accepts ASCII: 1–16 bytes for password or MD5 keys,
+or 1–20 bytes for SHA-1 keys. To enter a binary key, add `-Hex` and enter
+hexadecimal byte pairs without separators. `-Key` accepts a `SecureString`
+from an automation caller; never pass a plaintext key in a command line.
+
+The tool checks the mode's key-length limit, encrypts the key on this server,
+writes only `Secrets\AuthKeyDpapi`, and verifies the stored value by decrypting
+it. A failed read-back check restores the previous encrypted value.
+[Verify peer communication](setup.md#6-verify-peer-communication) after
+restarting; successful local decryption alone does not establish a matching
+remote key.
 
 To inspect the Secrets key permissions without reading the stored value, run
 in PowerShell as Administrator:

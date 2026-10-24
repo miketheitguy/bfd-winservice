@@ -1,31 +1,31 @@
 # BFD Windows service
 
-## What is BFD?
-
-Bidirectional Forwarding Detection (BFD) uses frequent, lightweight probes to
-detect failures in the forwarding path between two systems. It can detect
-failures in less than a second, including failures that leave the network
-interface up. This lets routing protocols react sooner than their own failure
-timers, reducing the time traffic follows an unusable path.
-
-When integrated with Border Gateway Protocol (BGP), BFD can trigger a peer
-session shutdown so BGP removes the affected routes and selects an available
-alternative. In this anycast DNS example, Server A and Server B advertise the
-same address, `203.0.113.53/32`. After Server A becomes unreachable, Router C
-redirects Client D's DNS queries to Server B without changing the DNS address:
-
-![Anycast DNS failover: Router C detects Server A's failure with BFD, notifies BGP, and reroutes Client D's queries for 203.0.113.53 to Server B.](docs/images/anycast-dns-bfd-bgp.gif)
-
-## BFD on Windows
-
-Cowabunga, Windows network crew. This service runs one IPv4 or IPv6 BFD session,
-or a stateless Seamless BFD (S-BFD) reflector for multiple initiators. Optional
-BGP control starts and stops a configured Windows BGP peer as BFD state changes.
+Cowabunga, Windows network crew. Run one IPv4 or IPv6 Bidirectional Forwarding
+Detection (BFD) session, or a stateless Seamless BFD (S-BFD) reflector for
+multiple initiators, as a Windows service. Optional Border Gateway Protocol
+(BGP) control starts and stops one configured Windows BGP peer as BFD state
+changes.
 
 The packet engine runs as LocalService in `BfdWinService`. The separate
 LocalSystem service, `BfdBgpBroker`, manages BGP through authenticated local
 RPC. See [service communication](docs/service-communication.md) for the
 architecture.
+
+## How BFD helps
+
+BFD uses frequent, lightweight probes to detect failures in the forwarding
+path between two systems. It can detect
+failures in less than a second, including failures that leave the network
+interface up. This lets routing protocols react sooner than their own failure
+timers, reducing the time traffic follows an unusable path.
+
+When integrated with BGP, BFD can trigger a peer session shutdown so BGP
+removes the affected routes and selects an available
+alternative. In this anycast DNS example, Server A and Server B advertise the
+same address, `203.0.113.53/32`. After Server A becomes unreachable, Router C
+redirects Client D's DNS queries to Server B without changing the DNS address:
+
+![Anycast DNS failover: Router C detects Server A's failure with BFD, notifies BGP, and reroutes Client D's queries for 203.0.113.53 to Server B.](docs/images/anycast-dns-bfd-bgp.gif)
 
 ## Before you begin
 

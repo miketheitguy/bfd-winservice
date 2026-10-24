@@ -9,8 +9,8 @@ offline setup bundle provisions. For installation commands, follow
 
 The bundle installs these resources for all users:
 
-- Both executables, the manifest, `Initialize-Logging.ps1`, and
-  `Set-BfdAuthenticationKey.ps1` in
+- `bfd-winservice.exe`, `bfd-bgp-broker.exe`, `BFD-Service.man`,
+  `Initialize-Logging.ps1`, and `Set-BfdAuthenticationKey.ps1` in
   `C:\Program Files\BfdWinService`.
 - The `BfdWinService` service with display name **BFD Windows Service**,
   the LocalService account, and **Automatic (Delayed Start)** startup. The bundle

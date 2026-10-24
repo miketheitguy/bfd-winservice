@@ -7,7 +7,14 @@ Start with the required checks, then choose the additional coverage your change 
 ## Required checks
 
 Turtle power means running the checks on your own changes. Get the validation
-receipts before committing Rust changes:
+receipts before committing Rust changes. Use PowerShell 7 for the commands here.
+Run native tests with a normal Windows process token and access to temporary
+HKEY_CURRENT_USER (HKCU) registry keys and local RPC endpoints. A restricted
+execution sandbox can prevent these fixtures from running. The default suite
+also reads a Common Information Model (CIM) schema in an isolated privilege-policy
+fixture; it requires namespace access but does not change BGP peers.
+
+Run the required checks:
 
 ```powershell
 cargo test --locked
@@ -16,19 +23,25 @@ cargo clippy --locked --all-targets -- `
 cargo fmt --check
 $env:RUSTDOCFLAGS = '-D warnings -D missing-docs'
 cargo doc --locked --no-deps
+.\scripts\Test-DocumentationLinks.ps1
 ```
 
 Confirm that the commands complete without errors. The documentation check also rejects undocumented public API elements.
+
+For documentation-only changes, run `scripts/Test-DocumentationLinks.ps1` in
+PowerShell 7. It checks repository-relative Markdown links and Markdown anchors
+in tracked files, including explicit HTML anchors; it does not query external
+URLs. If you change the checker, also run `scripts/Test-DocumentationLinkPolicy.ps1`.
 
 Configuration validation and protocol modules are portable. Registry loading, User Datagram Protocol (UDP) transport, ETW, native Management Infrastructure (MI), and Windows Service Control Manager (SCM) integration require Windows. IPv4 time-to-live (TTL) metadata requires `IP_RECVTTL` support.
 
 ## Run opt-in native provider checks
 
-Native tests use temporary `HKEY_CURRENT_USER` (HKCU) registry keys, private local RPC endpoints,
+Native tests use temporary HKCU registry keys, private local RPC endpoints,
 local MI fixtures, and loopback UDP sockets. They do not change installed service
 settings or Border Gateway Protocol (BGP) peers. The two
-[RPC/MI coexistence tests](#verify-native-rpc-boundaries) read a Common
-Information Model (CIM) class schema under the broker's COM security policy.
+[RPC/MI coexistence tests](#verify-native-rpc-boundaries) read a CIM class schema
+under the broker's COM security policy.
 They require namespace access and are opt-in.
 
 On a server with RRAS BGP configured, check the native status query against an

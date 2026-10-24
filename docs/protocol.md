@@ -195,7 +195,8 @@ traffic. Without a communicating peer, after a fatal (non-transient) transport
 error, or for an S-BFD initiator, shutdown attempts one role-permitted
 notification. Passive sessions with no learned discriminator and S-BFD
 reflectors send none. Shutdown leaves BGP eligible to run: local or received
-AdminDown withdraws a Stop that this BFD controller imposed. A queued Stop can
-be superseded by Start; a peer that BFD hasn't stopped remains unchanged.
+AdminDown replaces this controller's latest requested Stop with Start, including
+a queued Stop or one with an unknown outcome. The worker queries the peer and
+starts it if stopped; it does not track who actually stopped it.
 Waiting for the final broker action can extend total shutdown. See
 [BGP lifecycle policy](bgp.md).

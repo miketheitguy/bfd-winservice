@@ -186,7 +186,8 @@ fn final_exit_code(succeeded: bool, state: ServiceState) -> ServiceExitCode {
 }
 
 /// Ends the process when engine cleanup exceeds the stop budget. Windows
-/// reclaims sockets and handles; the BGP peer is left unchanged, as for any stop.
+/// reclaims sockets and handles. Termination requests no additional BGP action;
+/// an already issued provider operation can still complete in the broker.
 fn abandon_cleanup(reporter: &mut StatusReporter, log: &mut Logger, budget: Duration) -> ! {
     log.service_failed(format_args!(
         "BFD engine cleanup did not finish within {} seconds; ending the service process",

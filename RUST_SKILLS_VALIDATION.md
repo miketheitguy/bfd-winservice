@@ -1,9 +1,9 @@
 # Rust validation guide
 
 Cowabunga, validation crew. Use this guide to select checks for the code you
-change and record what they establish. Maintainers should apply the local
-[Rust engineering guidelines](.codex/skills/rust-skills/SKILL.md) to ownership,
-borrowing, initialization, error handling, and native boundaries.
+change and record what they establish. Apply the user-installed `$rust-skills`
+guidance and its referenced rules to ownership, borrowing, initialization,
+error handling, and native boundaries. See [Agent skills](AGENTS.md#agent-skills).
 
 ## Choose a validation task
 

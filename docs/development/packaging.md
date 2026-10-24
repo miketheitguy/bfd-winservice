@@ -97,7 +97,7 @@ validate a branch; require these jobs through branch protection:
 | --- | --- |
 | `asan` | Rust/native ASan tests with native instrumentation verification |
 | `fuzz` | Fuzz dependency audit, formatting, linting, regression tests, and four bounded ASan campaigns |
-| `build-msi` | Dependency audit, version/ACL/key/recovery fixtures, formatting, release Clippy/tests, RPC/MI coexistence, production hardening, and installer lifecycle tests |
+| `build-msi` | Dependency audit, version/ACL/key/recovery fixtures, documentation links and public API docs, formatting, release Clippy/tests, RPC/MI coexistence, production hardening, and installer lifecycle tests |
 
 Each job uses the pinned Rust toolchain on a separate `windows-2025` runner. Tag
 builds stamp their version before validation; pull requests use `Cargo.toml`.

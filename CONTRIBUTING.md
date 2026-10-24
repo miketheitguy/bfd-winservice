@@ -80,6 +80,8 @@ and protocol meanings still need to be clear.
 - Keep operator steps in the administrator guides. Put implementation details
   in the development, reference, or security documents.
 - Include prerequisites and verification with each procedure.
+- Run the [documentation link check](docs/development/validation.md#required-checks)
+  after changing documentation; keep links within the checkout valid.
 - Keep the PNG images, editable Draw.io pages, Mermaid views, and text
   explanations aligned. Follow [diagram maintenance](docs/development/diagrams.md).
 - Keep dated test receipts tied to their original revisions. A prose edit

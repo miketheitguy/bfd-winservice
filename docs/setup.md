@@ -137,9 +137,11 @@ executable doesn't install the manifest.
 
 ### 4. Start the service
 
-Start the configured service:
+Record the start time for the verification queries, then start the configured
+service:
 
 ```powershell
+$startedAt = Get-Date
 Start-Service BfdWinService
 ```
 
@@ -182,30 +184,25 @@ broker telemetry checks, see
 
 ### 6. Verify peer communication
 
-After configuring the remote peer, check startup and handshake events:
+After configuring the remote peer, check startup and handshake events since
+`$startedAt` from step 4. If you run this query separately, set `$startedAt` to
+the start time of the service run you want to verify:
 
 ```powershell
 $eventFilter = @{
     LogName = 'BFD-Service/Operational'
     Id = 1, 100, 102
+    StartTime = $startedAt
 }
 Get-WinEvent -FilterHashtable $eventFilter -MaxEvents 20 |
-    Select-Object Id, LevelDisplayName
+    Select-Object TimeCreated, Id, Message
 ```
 
-A successful first handshake produces entries such as:
-
-```text
- Id LevelDisplayName
- -- ----------------
-102 Information
-100 Information
-  1 Information
-```
-
-Event `1` confirms engine startup. Event `100` confirms valid peer communication;
-event `102` confirms BFD reached `Up`. Service startup alone doesn't establish
-peer communication. For other events, see [Logs and events](logging.md).
+Expect event `1` for engine startup, `100` for valid peer communication, and
+`102` when BFD reaches `Up`. Check their timestamps and messages against the
+session you configured. Event `102` confirms that this run reached `Up` at that
+time; it does not guarantee the session is still `Up`. Service startup alone
+doesn't establish peer communication. For other events, see [Logs and events](logging.md).
 For monitoring scripts, see [Monitor service status and BFD events](monitoring.md).
 
 ### 7. Optional: Stop the service

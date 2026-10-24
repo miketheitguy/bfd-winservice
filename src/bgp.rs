@@ -102,8 +102,9 @@ impl Pending {
 
     /// RFC 5882 section 4.1: while BFD is administratively disabled at either end,
     /// a control protocol adjacency MUST be allowed. Withdraws this controller's
-    /// latest Stop by starting the peer; a peer stopped by anyone else, or never
-    /// stopped by BFD, is left alone. Returns whether a Start was queued.
+    /// latest requested Stop, even if queued or of unknown outcome. The worker
+    /// queries the peer and starts it if stopped; it does not track who stopped
+    /// it. Returns whether a Start was queued.
     fn release(&mut self) -> bool {
         if self.desired != Some(Method::Stop) {
             return false;
@@ -623,6 +624,68 @@ mod tests {
     }
 
     #[test]
+    fn administrative_release_starts_stopped_peer_after_unexecuted_or_failed_stop() {
+        for stop_failed in [false, true] {
+            for local_admin_down in [false, true] {
+                let controller = Controller {
+                    log: None,
+                    cancel: StopSignal::new().unwrap(),
+                    mailbox: Mailbox::default(),
+                    worker: None,
+                };
+                controller.state_changed(State::Down, State::Up);
+                controller.mailbox.0.lock().unwrap().methods.clear();
+                // An operator stops the peer after establishment. BFD then
+                // requests Stop, but never successfully executes that request.
+                controller.state_changed(State::Up, State::Down);
+                if stop_failed {
+                    let method = controller.mailbox.0.lock().unwrap().methods.pop_front();
+                    assert_eq!(method, Some(Method::Stop));
+                    assert!(reconcile(
+                        method.unwrap(),
+                        || panic!("Stop does not query status"),
+                        |_| Err(io::Error::other("Stop failed before execution")),
+                        || true,
+                    )
+                    .is_err());
+                }
+                if local_admin_down {
+                    controller.state_changed(State::Down, State::AdminDown);
+                } else {
+                    controller.peer_admin_down();
+                }
+                // Drain the final action through the production worker and
+                // reconciliation path with a stopped provider fixture.
+                controller.mailbox.0.lock().unwrap().closed = true;
+                let queries = Cell::new(0);
+                let mut calls = Vec::new();
+                work(&controller.mailbox, |method| {
+                    reconcile(
+                        method,
+                        || {
+                            queries.set(queries.get() + 1);
+                            Ok(false)
+                        },
+                        |method| {
+                            calls.push(method);
+                            Ok(())
+                        },
+                        || start_is_current(&controller.mailbox),
+                    )
+                    .map(|_| ())
+                })
+                .unwrap();
+                assert_eq!(queries.get(), 1);
+                assert_eq!(
+                    calls,
+                    [Method::Start],
+                    "stop_failed={stop_failed}, local_admin_down={local_admin_down}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn administrative_disable_releases_only_a_stop_that_bfd_requested() {
         let controller = Controller {
             log: None,
@@ -637,7 +700,7 @@ mod tests {
                 pending.desired,
             )
         };
-        // Never stopped by BFD, for example stopped by an operator: unchanged.
+        // With no requested BFD Stop, administrative release queues no action.
         controller.peer_admin_down();
         controller.state_changed(State::Down, State::AdminDown);
         assert_eq!(methods(&controller), (vec![], None));

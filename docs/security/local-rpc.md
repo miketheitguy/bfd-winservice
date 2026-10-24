@@ -1,10 +1,9 @@
 # Local RPC security
 
-Cowabunga, RPC crew. Follow the identity checks in both directions. Developers
-and security reviewers, here's the local-RPC security lineup, dude. This
-reference traces identity checks, authorization, and resource ownership for the
-two private service Remote Procedure Call (RPC) channels. The call flows show
-logical security gates. For the identity matrix and visual overview, see
+Cowabunga, RPC crew. This reference explains authentication, authorization,
+and native resource ownership for the two private service Remote Procedure
+Call (RPC) channels. The call flows show logical security gates. For the
+identity matrix and visual overview, see
 [Local RPC authentication and authorization](../rpc-authentication.md). The
 [status contract](../rpc-session-status-design.md) owns wire fields and telemetry policy.
 
@@ -172,16 +171,9 @@ resources as the privileged broker. `EffectiveOnly=1` exposes enabled privileges
 only; it is not the service-group authorization check. See Microsoft's [QOS V5
 contract](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/ns-rpcdce-rpc_security_qos_v5_w).
 
-`QOS.Sid` identifies LocalService, while `ServerSecurityDescriptor` contains one
-conditional allow ACE requiring both LocalService and the BFD service SID.
-`Member_of` tests all listed enabled SIDs for an allow ACE; two independent
-allow ACEs would instead permit either identity. The descriptor adds the
-service-specific server check: the mutual-authentication capability flag alone
-is insufficient because a provider can report that capability without
-establishing the server's identity. See Microsoft's [conditional ACE
-semantics](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-definition-language-for-conditional-aces-)
-and [QOS provider
-caveat](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/ns-rpcdce-rpc_security_qos_v5_w).
+`QOS.Sid` identifies LocalService. The
+[server security descriptor](#server-security-descriptor) additionally requires
+the BFD service SID.
 
 On BFD, `RpcMgmtSetAuthorizationFn` denies every runtime management operation
 before the endpoint opens. This is separate from the application interface's ACL
@@ -211,7 +203,10 @@ ordering](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-r
 and [interface flag
 definitions](https://learn.microsoft.com/en-us/windows/win32/rpc/interface-registration-flags).
 
-The descriptor uses this form:
+#### Server security descriptor
+
+`ServerSecurityDescriptor` contains one conditional allow access control entry
+(ACE) requiring both LocalService and the BFD service SID:
 
 ```text
 D:(XA;;GA;;;WD;(Member_of {SID(S-1-5-19), SID(BFD_SERVICE_SID)}))
@@ -224,6 +219,10 @@ setting. `Member_of` requires all listed enabled SIDs. Two separate allow ACEs
 would permit either identity independently. `QOS.Sid` alone does not express the
 required service-group policy. See Microsoft's
 [conditional ACE semantics](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-definition-language-for-conditional-aces-).
+
+The mutual-authentication capability flag alone is also insufficient: a provider
+can report that capability without establishing the server's identity. See the
+[QOS provider caveat](https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/ns-rpcdce-rpc_security_qos_v5_w).
 
 An endpoint name is an address, not identity evidence. A process occupying the
 name cannot produce an accepted result without satisfying the server policy.

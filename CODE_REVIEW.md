@@ -2,9 +2,9 @@
 
 Cowabunga, review crew. Use this checklist when reviewing BFD changes. Verify
 each claim against the code and the relevant tests; record findings with their
-source locations and practical impact. Apply the repository's
-[Rust guidelines](.codex/skills/rust-skills/SKILL.md), giving memory safety,
-borrowing, ownership, and native lifetimes priority.
+source locations and practical impact. Apply the user-installed `$rust-skills`
+guidance and its referenced rules, giving memory safety, borrowing, ownership,
+and native lifetimes priority. See [Agent skills](AGENTS.md#agent-skills).
 
 ## Configuration and authentication keys
 
